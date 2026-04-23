@@ -15,9 +15,12 @@ import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
+import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
@@ -123,6 +126,9 @@ public final class ResultRenderer {
             case CommandRecord command -> "/" + command.target();
             case JoinRecord join -> join.target();
             case QuitRecord quit -> quit.target();
+            case ItemDropRecord drop -> drop.amount() + "x " + drop.target();
+            case ItemPickupRecord pickup -> pickup.amount() + "x " + pickup.target();
+            case TeleportRecord tp -> tp.target() + " via " + tp.cause();
         };
     }
 
