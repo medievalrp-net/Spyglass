@@ -1,0 +1,133 @@
+package net.medievalrp.spyglass.plugin;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
+import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
+import net.medievalrp.spyglass.plugin.command.OmniCommands;
+import net.medievalrp.spyglass.plugin.command.PageCache;
+import net.medievalrp.spyglass.plugin.command.RollbackRunner;
+import net.medievalrp.spyglass.plugin.command.param.BlockParam;
+import net.medievalrp.spyglass.plugin.command.param.EntityParam;
+import net.medievalrp.spyglass.plugin.command.param.EventParam;
+import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
+import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
+import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
+import net.medievalrp.spyglass.plugin.command.param.TimeParam;
+import net.medievalrp.spyglass.plugin.command.param.WorldParam;
+import net.medievalrp.spyglass.plugin.command.render.ResultRenderer;
+import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
+import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
+import net.medievalrp.spyglass.plugin.listener.block.BlockBreakExtractor;
+import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceExtractor;
+import net.medievalrp.spyglass.plugin.listener.chat.ChatExtractor;
+import net.medievalrp.spyglass.plugin.listener.chat.CommandExtractor;
+import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionExtractor;
+import net.medievalrp.spyglass.plugin.listener.player.JoinExtractor;
+import net.medievalrp.spyglass.plugin.listener.player.QuitExtractor;
+import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
+import net.medievalrp.spyglass.plugin.pipeline.ExtractorRegistry;
+import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
+import net.medievalrp.spyglass.plugin.rollback.UndoStack;
+import net.medievalrp.spyglass.plugin.storage.IndexManager;
+import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
+import org.bukkit.Bukkit;
+import org.bukkit.plugin.ServicePriority;
+import org.bukkit.plugin.java.JavaPlugin;
+
+public final class SpyglassPlugin extends JavaPlugin {
+
+    private AsyncRecorder recorder;
+    private MongoRecordStore recordStore;
+    private Executor queryExecutor;
+    private SpyglassConfig config;
+
+    @Override
+    public void onEnable() {
+        try {
+            config = SpyglassConfig.load(this);
+        } catch (Exception ex) {
+            getLogger().severe("Failed to load config: " + ex.getMessage());
+            setEnabled(false);
+            return;
+        }
+
+        try {
+            IndexManager indexManager = new IndexManager();
+            recordStore = new MongoRecordStore(config.database(), indexManager);
+        } catch (Exception ex) {
+            getLogger().severe("Failed to connect to MongoDB: " + ex.getMessage());
+            setEnabled(false);
+            return;
+        }
+
+        queryExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        recorder = new AsyncRecorder(config.storage().queueCapacity(), recordStore, getLogger());
+
+        Set<String> enabledEvents = config.events().entrySet().stream()
+                .filter(entry -> entry.getValue().enabled())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
+
+        ExtractorSupport support = new ExtractorSupport(config.storage().retention());
+        ExtractorRegistry registry = new ExtractorRegistry(recorder);
+        if (enabledEvents.contains("break")) registry.register(this, new BlockBreakExtractor(support));
+        if (enabledEvents.contains("place")) registry.register(this, new BlockPlaceExtractor(support));
+        if (enabledEvents.contains("deposit") || enabledEvents.contains("withdraw"))
+            registry.register(this, new ContainerTransactionExtractor(support));
+        if (enabledEvents.contains("say")) registry.register(this, new ChatExtractor(support));
+        if (enabledEvents.contains("command")) registry.register(this, new CommandExtractor(support));
+        if (enabledEvents.contains("join")) registry.register(this, new JoinExtractor(support));
+        if (enabledEvents.contains("quit")) registry.register(this, new QuitExtractor(support));
+
+        SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
+        apiImpl.registerQueryParamHandler(new PlayerParam());
+        apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
+        apiImpl.registerQueryParamHandler(new RadiusParam());
+        apiImpl.registerQueryParamHandler(new TimeParam());
+        apiImpl.registerQueryParamHandler(new BlockParam());
+        apiImpl.registerQueryParamHandler(new EntityParam());
+        apiImpl.registerQueryParamHandler(new WorldParam());
+
+        Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
+
+        RollbackEngine engine = new RollbackEngine();
+        UndoStack undoStack = new UndoStack(recordStore.database(), recordStore.codecRegistry());
+
+        QueryStringParser parser = new QueryStringParser(apiImpl, config);
+        ResultRenderer renderer = new ResultRenderer(config);
+        PageCache pageCache = new PageCache();
+        getServer().getPluginManager().registerEvents(pageCache, this);
+
+        RollbackRunner rollbackRunner = new RollbackRunner(this, apiImpl, engine, undoStack);
+        OmniCommands commands = new OmniCommands(this, apiImpl, parser, renderer, pageCache, rollbackRunner, undoStack, config);
+        commands.register();
+
+        getLogger().info("Spyglass enabled; events=" + enabledEvents);
+    }
+
+    @Override
+    public void onDisable() {
+        if (recorder != null) {
+            try {
+                AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("5s"));
+                getLogger().info("Recorder drained=" + report.drained()
+                        + " dropped=" + report.dropped()
+                        + " remaining=" + report.remaining());
+            } catch (Exception ex) {
+                getLogger().warning("Recorder shutdown failed: " + ex.getMessage());
+            }
+        }
+        if (recordStore != null) {
+            try {
+                recordStore.close();
+            } catch (Exception ignored) {
+            }
+        }
+        Bukkit.getServicesManager().unregisterAll(this);
+    }
+}
