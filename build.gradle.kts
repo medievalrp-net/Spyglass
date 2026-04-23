@@ -36,6 +36,14 @@ subprojects {
     }
 }
 
+tasks.register<Exec>("regression") {
+    group = "verification"
+    description = "Runs the Omniscience2 regression harness (requires ../RP_Server up)."
+    dependsOn("deployToRpServer")
+    workingDir = rootProject.rootDir
+    commandLine = listOf("python3", "regression/run.py")
+}
+
 tasks.register("deployToRpServer") {
     group = "deployment"
     description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Omniscience2.jar."
