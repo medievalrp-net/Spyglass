@@ -44,15 +44,19 @@ import org.bson.conversions.Bson;
 
 public final class MongoRecordStore implements RecordStore {
 
-    private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = Map.of(
-            "break", BlockBreakRecord.class,
-            "place", BlockPlaceRecord.class,
-            "say", ChatRecord.class,
-            "command", CommandRecord.class,
-            "join", JoinRecord.class,
-            "quit", QuitRecord.class,
-            "deposit", ContainerDepositRecord.class,
-            "withdraw", ContainerWithdrawRecord.class);
+    private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = Map.ofEntries(
+            Map.entry("break", BlockBreakRecord.class),
+            Map.entry("place", BlockPlaceRecord.class),
+            Map.entry("say", ChatRecord.class),
+            Map.entry("command", CommandRecord.class),
+            Map.entry("join", JoinRecord.class),
+            Map.entry("quit", QuitRecord.class),
+            Map.entry("deposit", ContainerDepositRecord.class),
+            Map.entry("withdraw", ContainerWithdrawRecord.class),
+            Map.entry("decay", BlockBreakRecord.class),
+            Map.entry("form", BlockPlaceRecord.class),
+            Map.entry("grow", BlockPlaceRecord.class),
+            Map.entry("ignite", BlockPlaceRecord.class));
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;
@@ -107,10 +111,10 @@ public final class MongoRecordStore implements RecordStore {
 
         List<EventRecord> records = new ArrayList<>();
         for (Class<? extends EventRecord> type : candidateTypes(request.predicates())) {
-            String eventName = eventNameFor(type);
-            Bson typeFilter = eventName == null
+            Set<String> typeEvents = eventNamesForType(type);
+            Bson typeFilter = typeEvents.isEmpty()
                     ? baseFilter
-                    : Filters.and(baseFilter, Filters.eq(RecordFields.EVENT, eventName));
+                    : Filters.and(baseFilter, Filters.in(RecordFields.EVENT, typeEvents));
             FindIterable<? extends EventRecord> iterable = collection(type)
                     .find(typeFilter)
                     .sort(sort)
@@ -189,13 +193,14 @@ public final class MongoRecordStore implements RecordStore {
         return database.getCollection(collectionName, (Class<T>) type);
     }
 
-    private static String eventNameFor(Class<? extends EventRecord> type) {
+    private static Set<String> eventNamesForType(Class<? extends EventRecord> type) {
+        Set<String> names = new java.util.HashSet<>();
         for (Map.Entry<String, Class<? extends EventRecord>> entry : EVENT_TYPES.entrySet()) {
             if (entry.getValue().equals(type)) {
-                return entry.getKey();
+                names.add(entry.getKey());
             }
         }
-        return null;
+        return Set.copyOf(names);
     }
 
     @SuppressWarnings("unchecked")
