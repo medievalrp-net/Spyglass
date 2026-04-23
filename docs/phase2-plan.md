@@ -56,12 +56,6 @@ Priority-ordered list of work deferred from Phase 1. Each item is self-contained
 - `-we` query flag: build a `QueryPredicate` group from the invoker's WE selection.
 - Batched rollback path: `FaweBatchRollback` that opens one `EditSession` per world for rollbacks above a threshold (~500 effects). Writes via FAWE are order-of-magnitude faster than per-block Bukkit.
 
-### B2. AI query assistant
-- Port the Vertex AI integration from v1 (`docs/analysis/05-commands-and-display.md` § AiHandler).
-- Virtual thread for the HTTP call (no `BukkitRunnable` nesting).
-- System prompt from `plugin/src/main/resources/ai-prompt.txt`.
-- `/omniv2 ai <question>` command; extract `/omniv2 ...` suggestions from the response and render them as clickable chips with `ClickEvent.suggestCommand(...)`.
-
 ### B3. Inspection wand (`/omniv2 tool`)
 - Toggle a per-player flag + give the configured material (default `REDSTONE_LAMP`).
 - Right-click a block → run a location-scoped search and render results.
@@ -115,6 +109,7 @@ Priority-ordered list of work deferred from Phase 1. Each item is self-contained
 
 ## Non-goals (not planned)
 
+- AI query assistant. Dropped from scope — `/omniv2 ai ...` and Vertex AI integration will not ship.
 - DynamoDB backend. v1's Dynamo was non-functional; v2 ships Mongo-only.
 - Custom NMS reflection beyond what Paper exposes. Entity NBT rollback is the only place NMS peeking is tempting — evaluate Paper API first (`Entity.persistentDataContainer`, `Entity.saveAsTag()` if it lands).
 - Multi-server (cross-server) support. The `server.` parameter space is non-functional in v1 and isn't a MedievalRP requirement.
