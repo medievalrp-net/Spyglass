@@ -9,8 +9,8 @@ import net.medievalrp.omniscience2.api.Omniscience2Api;
 import net.medievalrp.omniscience2.api.util.Duration;
 import net.medievalrp.omniscience2.plugin.api.Omniscience2ApiImpl;
 import net.medievalrp.omniscience2.plugin.command.OmniCommands;
+import net.medievalrp.omniscience2.plugin.command.OmniSuggestions;
 import net.medievalrp.omniscience2.plugin.command.PageCache;
-import net.medievalrp.omniscience2.plugin.command.RollbackRunner;
 import net.medievalrp.omniscience2.plugin.command.param.BlockParam;
 import net.medievalrp.omniscience2.plugin.command.param.EntityParam;
 import net.medievalrp.omniscience2.plugin.command.param.EventParam;
@@ -20,6 +20,14 @@ import net.medievalrp.omniscience2.plugin.command.param.RadiusParam;
 import net.medievalrp.omniscience2.plugin.command.param.TimeParam;
 import net.medievalrp.omniscience2.plugin.command.param.WorldParam;
 import net.medievalrp.omniscience2.plugin.command.render.ResultRenderer;
+import net.medievalrp.omniscience2.plugin.command.service.EventsService;
+import net.medievalrp.omniscience2.plugin.command.service.HelpService;
+import net.medievalrp.omniscience2.plugin.command.service.PageService;
+import net.medievalrp.omniscience2.plugin.command.service.RollbackService;
+import net.medievalrp.omniscience2.plugin.command.service.SearchService;
+import net.medievalrp.omniscience2.plugin.command.service.ServiceSupport;
+import net.medievalrp.omniscience2.plugin.command.service.ToolService;
+import net.medievalrp.omniscience2.plugin.command.service.UndoService;
 import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockBreakExtractor;
@@ -97,14 +105,32 @@ public final class Omniscience2Plugin extends JavaPlugin {
 
         RollbackEngine engine = new RollbackEngine();
         UndoStack undoStack = new UndoStack(recordStore.database(), recordStore.codecRegistry());
+        ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
         ResultRenderer renderer = new ResultRenderer(config);
         PageCache pageCache = new PageCache();
         getServer().getPluginManager().registerEvents(pageCache, this);
 
-        RollbackRunner rollbackRunner = new RollbackRunner(this, apiImpl, engine, undoStack);
-        OmniCommands commands = new OmniCommands(this, apiImpl, parser, renderer, pageCache, rollbackRunner, undoStack, config);
+        HelpService helpService = new HelpService();
+        EventsService eventsService = new EventsService(apiImpl);
+        SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
+        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
+        UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
+        PageService pageService = new PageService(pageCache);
+        ToolService toolService = new ToolService();
+        OmniSuggestions suggestions = new OmniSuggestions(apiImpl);
+
+        OmniCommands commands = new OmniCommands(
+                this,
+                helpService,
+                eventsService,
+                searchService,
+                rollbackService,
+                undoService,
+                pageService,
+                toolService,
+                suggestions);
         commands.register();
 
         getLogger().info("Omniscience2 enabled; events=" + enabledEvents);
