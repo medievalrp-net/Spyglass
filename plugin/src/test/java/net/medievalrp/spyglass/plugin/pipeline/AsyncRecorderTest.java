@@ -1,0 +1,138 @@
+package net.medievalrp.spyglass.plugin.pipeline;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Logger;
+import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.JoinRecord;
+import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.query.QueryRequest;
+import net.medievalrp.spyglass.api.query.QueryResult;
+import net.medievalrp.spyglass.api.util.BlockLocation;
+import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import org.junit.jupiter.api.Test;
+
+class AsyncRecorderTest {
+
+    private static JoinRecord sampleRecord() {
+        Instant now = Instant.now();
+        return new JoinRecord(
+                UUID.randomUUID(),
+                1,
+                "join",
+                now,
+                now.plusSeconds(60),
+                Origin.player(),
+                Source.player(UUID.randomUUID(), "tester"),
+                new BlockLocation(UUID.randomUUID(), "world", 0, 64, 0),
+                "tester",
+                "127.0.0.1");
+    }
+
+    @Test
+    void drainsBatchesToStore() throws Exception {
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            for (int index = 0; index < 50; index++) {
+                recorder.record(sampleRecord());
+            }
+            long deadline = System.currentTimeMillis() + 3_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < 50) {
+                Thread.sleep(50L);
+            }
+            assertThat(store.totalSaved()).isEqualTo(50);
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
+    void dropsRecordsWhenQueueIsFull() throws Exception {
+        LatchedStore store = new LatchedStore();
+        AsyncRecorder recorder = new AsyncRecorder(5, store, Logger.getLogger("test"));
+        try {
+            for (int index = 0; index < 50; index++) {
+                recorder.record(sampleRecord());
+            }
+            // Let the drain proceed so shutdown can complete.
+            store.open();
+            AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("3s"));
+            assertThat(report.dropped()).isGreaterThan(0L);
+        } finally {
+            store.open();
+        }
+    }
+
+    @Test
+    void flushesRemainingOnShutdown() {
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        for (int index = 0; index < 10; index++) {
+            recorder.record(sampleRecord());
+        }
+        AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("3s"));
+        assertThat(report.remaining()).isZero();
+        assertThat(store.totalSaved()).isEqualTo(10);
+    }
+
+    private static final class CapturingStore implements RecordStore {
+        private final CopyOnWriteArrayList<EventRecord> all = new CopyOnWriteArrayList<>();
+
+        int totalSaved() {
+            return all.size();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            all.addAll(records);
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class LatchedStore implements RecordStore {
+        private final CountDownLatch gate = new CountDownLatch(1);
+        private final AtomicInteger saved = new AtomicInteger();
+
+        void open() {
+            gate.countDown();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            try {
+                gate.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            saved.addAndGet(records.size());
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+}
