@@ -35,6 +35,12 @@ import net.medievalrp.omniscience2.plugin.listener.block.BlockPlaceExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.CommandExtractor;
 import net.medievalrp.omniscience2.plugin.listener.container.ContainerTransactionExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockFadeExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockFormExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockGrowExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockIgniteExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.LeavesDecayExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.StructureGrowExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.JoinExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.QuitExtractor;
 import net.medievalrp.omniscience2.plugin.pipeline.AsyncRecorder;
@@ -91,6 +97,16 @@ public final class Omniscience2Plugin extends JavaPlugin {
         if (enabledEvents.contains("command")) registry.register(this, new CommandExtractor(support));
         if (enabledEvents.contains("join")) registry.register(this, new JoinExtractor(support));
         if (enabledEvents.contains("quit")) registry.register(this, new QuitExtractor(support));
+        if (enabledEvents.contains("decay")) {
+            registry.register(this, new LeavesDecayExtractor(support));
+            registry.register(this, new BlockFadeExtractor(support));
+        }
+        if (enabledEvents.contains("form")) registry.register(this, new BlockFormExtractor(support));
+        if (enabledEvents.contains("grow")) {
+            registry.register(this, new BlockGrowExtractor(support));
+            registry.register(this, new StructureGrowExtractor(support));
+        }
+        if (enabledEvents.contains("ignite")) registry.register(this, new BlockIgniteExtractor(support));
 
         Omniscience2ApiImpl apiImpl = new Omniscience2ApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());

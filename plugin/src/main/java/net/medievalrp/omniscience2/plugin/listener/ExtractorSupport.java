@@ -31,6 +31,18 @@ public final class ExtractorSupport {
         return Origin.player();
     }
 
+    public Source environmentSource(String description) {
+        return Source.environment(description);
+    }
+
+    public Origin environmentOrigin(String description) {
+        return Origin.environment(description);
+    }
+
+    public Source entitySource(java.util.UUID entityId, String entityType) {
+        return Source.entity(entityId, entityType);
+    }
+
     public UUID newId() {
         return UUID.randomUUID();
     }
