@@ -44,8 +44,11 @@ import net.medievalrp.spyglass.plugin.listener.environment.BlockIgniteExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.EntityExplodeExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowExtractor;
+import net.medievalrp.spyglass.plugin.listener.item.ItemDropExtractor;
+import net.medievalrp.spyglass.plugin.listener.item.ItemPickupExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.JoinExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.QuitExtractor;
+import net.medievalrp.spyglass.plugin.listener.player.TeleportExtractor;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.pipeline.ExtractorRegistry;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
@@ -117,6 +120,9 @@ public final class SpyglassPlugin extends JavaPlugin {
             registry.register(this, new StructureGrowExtractor(support));
         }
         if (enabledEvents.contains("ignite")) registry.register(this, new BlockIgniteExtractor(support));
+        if (enabledEvents.contains("drop")) registry.register(this, new ItemDropExtractor(support));
+        if (enabledEvents.contains("pickup")) registry.register(this, new ItemPickupExtractor(support));
+        if (enabledEvents.contains("teleport")) registry.register(this, new TeleportExtractor(support));
 
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());

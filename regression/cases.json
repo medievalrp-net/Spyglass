@@ -109,5 +109,29 @@
     "v2_follow_up": "sg page 1",
     "expected_count": 5,
     "compare": "exact"
+  },
+  {
+    "id": "drop-count",
+    "description": "Block 3.4 added ItemDropRecord",
+    "v2": "sg search a:drop t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "pickup-count",
+    "description": "Block 3.4 added ItemPickupRecord",
+    "v2": "sg search a:pickup t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "teleport-count",
+    "description": "Block 3.4 added TeleportRecord",
+    "v2": "sg search a:teleport t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
   }
 ]
