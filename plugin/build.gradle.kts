@@ -12,6 +12,7 @@ val junitVersion: String by rootProject.extra
 val assertjVersion: String by rootProject.extra
 val mockitoVersion: String by rootProject.extra
 val testcontainersVersion: String by rootProject.extra
+val jetbrainsAnnotationsVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -24,6 +25,7 @@ dependencies {
     implementation(project(":api"))
 
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
+    compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     implementation("org.mongodb:mongodb-driver-sync:$mongoDriverVersion")
     implementation("org.mongodb:bson-record-codec:$mongoDriverVersion")
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
@@ -59,4 +61,12 @@ tasks.jar {
 
 tasks.build {
     dependsOn(tasks.shadowJar)
+}
+
+tasks.withType<JacocoReport>().configureEach {
+    dependsOn(tasks.named<Test>("test"))
+}
+
+tasks.test {
+    finalizedBy(tasks.named("jacocoTestReport"))
 }
