@@ -9,3 +9,12 @@ bin/
 
 # FAWE jar (dropped in per-dev; not redistributable)
 plugin/libs/
+
+# Regression harness local state
+regression/bot/node_modules/
+regression/bot/package-lock.json
+regression/.runtime/
+
+# Local IDE scratch
+*.swp
+*.swo
