@@ -1,0 +1,33 @@
+package net.medievalrp.omniscience2.api.event;
+
+import java.time.Instant;
+import java.util.UUID;
+import net.medievalrp.omniscience2.api.rollback.RollbackEffect;
+import net.medievalrp.omniscience2.api.rollback.Rollbackable;
+import net.medievalrp.omniscience2.api.util.BlockLocation;
+
+
+
+public record BlockPlaceRecord(
+        UUID id,
+        int schemaVersion,
+        String event,
+        Instant occurred,
+        Instant expiresAt,
+        Origin origin,
+        Source source,
+        BlockLocation location,
+        String target,
+        BlockSnapshot originalBlock,
+        BlockSnapshot newBlock) implements EventRecord, Rollbackable {
+
+    @Override
+    public RollbackEffect rollbackEffect() {
+        return new RollbackEffect.BlockReplace(location, newBlock, originalBlock);
+    }
+
+    @Override
+    public RollbackEffect restoreEffect() {
+        return new RollbackEffect.BlockReplace(location, originalBlock, newBlock);
+    }
+}

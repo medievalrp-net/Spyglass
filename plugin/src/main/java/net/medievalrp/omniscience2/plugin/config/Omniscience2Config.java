@@ -1,0 +1,91 @@
+package net.medievalrp.omniscience2.plugin.config;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import net.medievalrp.omniscience2.api.util.Duration;
+import org.bukkit.Material;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.spongepowered.configurate.ConfigurationNode;
+import org.spongepowered.configurate.hocon.HoconConfigurationLoader;
+
+public record Omniscience2Config(
+        Database database,
+        Storage storage,
+        Defaults defaults,
+        Limits limits,
+        Map<String, EventSettings> events,
+        Tool tool) {
+
+    public static Omniscience2Config load(JavaPlugin plugin) throws IOException {
+        Path path = plugin.getDataFolder().toPath().resolve("config.conf");
+        Files.createDirectories(path.getParent());
+        if (Files.notExists(path)) {
+            plugin.saveResource("config.conf", false);
+        }
+
+        HoconConfigurationLoader loader = HoconConfigurationLoader.builder()
+                .path(path)
+                .build();
+        ConfigurationNode root = loader.load();
+
+        Map<String, EventSettings> events = new LinkedHashMap<>();
+        root.node("events").childrenMap().forEach((key, value) -> events.put(
+                String.valueOf(key),
+                new EventSettings(
+                        value.node("enabled").getBoolean(true),
+                        value.node("past-tense").getString(String.valueOf(key)))));
+
+        return new Omniscience2Config(
+                new Database(
+                        root.node("database", "uri").getString("mongodb://localhost:27017"),
+                        root.node("database", "name").getString("Omniscience2"),
+                        root.node("database", "collection").getString("EventRecords")),
+                new Storage(
+                        Duration.parse(root.node("storage", "retention").getString("4w")),
+                        root.node("storage", "queue-capacity").getInt(100_000),
+                        Duration.parse(root.node("storage", "flush-timeout").getString("5s"))),
+                new Defaults(
+                        root.node("defaults", "enabled").getBoolean(true),
+                        root.node("defaults", "radius").getInt(5),
+                        Duration.parse(root.node("defaults", "time").getString("3d"))),
+                new Limits(
+                        root.node("limits", "max-radius").getInt(250),
+                        root.node("limits", "search-result").getInt(1_000),
+                        root.node("limits", "rollback-result").getInt(10_000),
+                        root.node("limits", "chat-dump").getInt(50)),
+                Map.copyOf(events),
+                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)));
+    }
+
+    public boolean enabled(String eventName) {
+        return events.getOrDefault(eventName, new EventSettings(false, eventName)).enabled();
+    }
+
+    public String pastTense(String eventName) {
+        return events.getOrDefault(eventName, new EventSettings(false, eventName)).pastTense();
+    }
+
+    public record Database(String uri, String name, String collection) {
+    }
+
+    public record Storage(Duration retention, int queueCapacity, Duration flushTimeout) {
+    }
+
+    public record Defaults(boolean enabled, int radius, Duration time) {
+    }
+
+    public record Limits(int maxRadius, int searchResult, int rollbackResult, int chatDump) {
+    }
+
+    public record EventSettings(boolean enabled, String pastTense) {
+    }
+
+    public record Tool(Material material) {
+        public Tool {
+            material = material == null ? Material.REDSTONE_LAMP : material;
+        }
+    }
+}

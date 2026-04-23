@@ -1,0 +1,15 @@
+name: Omniscience2
+version: ${version}
+main: net.medievalrp.omniscience2.plugin.Omniscience2Plugin
+api-version: "1.21"
+authors:
+  - MedievalRP
+permissions:
+  omniscience2.use:
+    default: op
+  omniscience2.search:
+    default: op
+  omniscience2.rollback:
+    default: op
+  omniscience2.tool:
+    default: op
