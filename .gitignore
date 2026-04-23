@@ -1,0 +1,11 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.DS_Store
+.vscode/
+bin/
+
+# FAWE jar (dropped in per-dev; not redistributable)
+plugin/libs/
