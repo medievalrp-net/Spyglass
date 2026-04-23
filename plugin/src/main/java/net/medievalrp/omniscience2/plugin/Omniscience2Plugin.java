@@ -31,14 +31,17 @@ import net.medievalrp.omniscience2.plugin.command.service.UndoService;
 import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockBreakExtractor;
+import net.medievalrp.omniscience2.plugin.listener.block.BlockMultiPlaceExtractor;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockPlaceExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.CommandExtractor;
 import net.medievalrp.omniscience2.plugin.listener.container.ContainerTransactionExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockExplodeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFadeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFormExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockGrowExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockIgniteExtractor;
+import net.medievalrp.omniscience2.plugin.listener.environment.EntityExplodeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.LeavesDecayExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.StructureGrowExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.JoinExtractor;
@@ -89,8 +92,15 @@ public final class Omniscience2Plugin extends JavaPlugin {
 
         ExtractorSupport support = new ExtractorSupport(config.storage().retention());
         ExtractorRegistry registry = new ExtractorRegistry(recorder);
-        if (enabledEvents.contains("break")) registry.register(this, new BlockBreakExtractor(support));
-        if (enabledEvents.contains("place")) registry.register(this, new BlockPlaceExtractor(support));
+        if (enabledEvents.contains("break")) {
+            registry.register(this, new BlockBreakExtractor(support));
+            registry.register(this, new BlockExplodeExtractor(support));
+            registry.register(this, new EntityExplodeExtractor(support));
+        }
+        if (enabledEvents.contains("place")) {
+            registry.register(this, new BlockPlaceExtractor(support));
+            registry.register(this, new BlockMultiPlaceExtractor(support));
+        }
         if (enabledEvents.contains("deposit") || enabledEvents.contains("withdraw"))
             registry.register(this, new ContainerTransactionExtractor(support));
         if (enabledEvents.contains("say")) registry.register(this, new ChatExtractor(support));
