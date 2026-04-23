@@ -31,6 +31,15 @@ public record SpyglassConfig(
                 .build();
         ConfigurationNode root = loader.load();
 
+        // Auto-merge: any event present in the jar's default config.conf but missing from
+        // the on-disk config gets added with defaults. Prevents silent "event not enabled"
+        // when a new plugin version introduces a new event name.
+        ConfigurationNode bundled = loadBundledDefaults(plugin);
+        boolean changed = mergeMissingEvents(root, bundled);
+        if (changed) {
+            loader.save(root);
+        }
+
         Map<String, EventSettings> events = new LinkedHashMap<>();
         root.node("events").childrenMap().forEach((key, value) -> events.put(
                 String.valueOf(key),
@@ -87,5 +96,35 @@ public record SpyglassConfig(
         public Tool {
             material = material == null ? Material.REDSTONE_LAMP : material;
         }
+    }
+
+    private static ConfigurationNode loadBundledDefaults(JavaPlugin plugin) throws IOException {
+        try (java.io.InputStream stream = plugin.getResource("config.conf")) {
+            if (stream == null) {
+                return HoconConfigurationLoader.builder().build().createNode();
+            }
+            return HoconConfigurationLoader.builder()
+                    .source(() -> new java.io.BufferedReader(new java.io.InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8)))
+                    .build()
+                    .load();
+        }
+    }
+
+    private static boolean mergeMissingEvents(ConfigurationNode root, ConfigurationNode bundled) {
+        ConfigurationNode rootEvents = root.node("events");
+        ConfigurationNode bundledEvents = bundled.node("events");
+        boolean changed = false;
+        for (Map.Entry<Object, ? extends ConfigurationNode> entry : bundledEvents.childrenMap().entrySet()) {
+            ConfigurationNode existing = rootEvents.node(entry.getKey());
+            if (existing.virtual()) {
+                try {
+                    existing.set(entry.getValue().raw());
+                } catch (org.spongepowered.configurate.serialize.SerializationException ex) {
+                    throw new RuntimeException(ex);
+                }
+                changed = true;
+            }
+        }
+        return changed;
     }
 }
