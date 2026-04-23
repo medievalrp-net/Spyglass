@@ -14,16 +14,24 @@ TEST_TAG = "sg-regression"
 
 
 def v2_record(event, target, source_uuid, source_name, x, y, z, extras=None,
-              original_material="STONE", new_material="AIR"):
+              original_material="STONE", new_material="AIR", env=False,
+              env_description=None):
     now = datetime.now(timezone.utc)
-    doc = {
-        "id": uuid.uuid4(),
-        "schemaVersion": 1,
-        "event": event,
-        "occurred": now,
-        "expiresAt": now + timedelta(weeks=4),
-        "origin": {"kind": "player", "detail": None},
-        "source": {
+    if env:
+        origin = {"kind": "environment", "detail": env_description or "test"}
+        source = {
+            "kind": "environment",
+            "playerId": None,
+            "playerName": None,
+            "entityId": None,
+            "entityType": None,
+            "pluginName": None,
+            "commandBlockLocation": None,
+            "description": env_description or "test",
+        }
+    else:
+        origin = {"kind": "player", "detail": None}
+        source = {
             "kind": "player",
             "playerId": source_uuid,
             "playerName": source_name,
@@ -32,7 +40,15 @@ def v2_record(event, target, source_uuid, source_name, x, y, z, extras=None,
             "pluginName": None,
             "commandBlockLocation": None,
             "description": None,
-        },
+        }
+    doc = {
+        "id": uuid.uuid4(),
+        "schemaVersion": 1,
+        "event": event,
+        "occurred": now,
+        "expiresAt": now + timedelta(weeks=4),
+        "origin": origin,
+        "source": source,
         "location": {
             "worldId": WORLD,
             "worldName": "world",
@@ -43,7 +59,7 @@ def v2_record(event, target, source_uuid, source_name, x, y, z, extras=None,
         "target": target,
         "_regressionTag": TEST_TAG,
     }
-    if event in ("break", "place"):
+    if event in ("break", "place", "decay", "form", "grow", "ignite"):
         doc["originalBlock"] = v2_snapshot(original_material)
         doc["newBlock"] = v2_snapshot(new_material)
     if event == "say":
@@ -121,6 +137,20 @@ def seed_v2(client, *, skip=False):
         v2_record("break", "IRON_ORE", BOB, "Bob", 20, 40, 20, original_material="IRON_ORE"),
         v2_record("say", "Alice", ALICE, "Alice", 0, 64, 0, extras={"message": "hello regression"}),
         v2_record("join", "Alice", ALICE, "Alice", 0, 64, 0, extras={"address": "127.0.0.1"}),
+        # environment events
+        v2_record("decay", "OAK_LEAVES", None, None, 5, 70, 5, env=True,
+                  env_description="leaves-decay", original_material="OAK_LEAVES"),
+        v2_record("decay", "OAK_LEAVES", None, None, 6, 70, 5, env=True,
+                  env_description="leaves-decay", original_material="OAK_LEAVES"),
+        v2_record("grow", "OAK_LOG", None, None, 3, 70, 3, env=True,
+                  env_description="structure-grow:OAK", original_material="AIR",
+                  new_material="OAK_LOG"),
+        v2_record("form", "SNOW", None, None, 0, 75, 0, env=True,
+                  env_description="block-form", original_material="AIR",
+                  new_material="SNOW"),
+        v2_record("ignite", "FIRE", None, None, 30, 65, 30, env=True,
+                  env_description="ignite:LAVA", original_material="AIR",
+                  new_material="FIRE"),
     ]
     db["EventRecords"].insert_many(docs)
     return removed, len(docs)

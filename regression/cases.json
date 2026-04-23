@@ -62,5 +62,52 @@
     "v2": "sg events",
     "expected_output_contains": "break",
     "compare": "contains"
+  },
+  {
+    "id": "events-lists-decay",
+    "description": "Block 3.1 added decay — /sg events lists it",
+    "v2": "sg events",
+    "expected_output_contains": "decay",
+    "compare": "contains"
+  },
+  {
+    "id": "decay-count",
+    "description": "2 seeded decay records",
+    "v2": "sg search a:decay t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 2,
+    "compare": "exact"
+  },
+  {
+    "id": "grow-count",
+    "description": "1 seeded grow record",
+    "v2": "sg search a:grow t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "form-count",
+    "description": "1 seeded form record",
+    "v2": "sg search a:form t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "ignite-count",
+    "description": "1 seeded ignite record",
+    "v2": "sg search a:ignite t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "break-and-decay-share-type",
+    "description": "a:break,decay both map to BlockBreakRecord; must return 3 break + 2 decay = 5 records",
+    "v2": "sg search a:break,decay t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 5,
+    "compare": "exact"
   }
 ]
