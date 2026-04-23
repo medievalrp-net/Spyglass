@@ -69,6 +69,23 @@ def v2_record(event, target, source_uuid, source_name, x, y, z, extras=None,
         doc["commandLine"] = extras.get("commandLine")
     if event == "join":
         doc["address"] = extras.get("address", "127.0.0.1")
+    if event in ("drop", "pickup"):
+        doc["amount"] = extras.get("amount", 1)
+        doc["item"] = {
+            "slot": 0,
+            "material": extras.get("item_material", "STONE"),
+            "data": extras.get("item_data", ""),
+        }
+    if event == "teleport":
+        doc["from"] = doc["location"]
+        doc["to"] = {
+            "worldId": WORLD,
+            "worldName": "world",
+            "x": extras.get("to_x", 100),
+            "y": extras.get("to_y", 64),
+            "z": extras.get("to_z", 100),
+        }
+        doc["cause"] = extras.get("cause", "COMMAND")
     return doc
 
 
@@ -151,6 +168,12 @@ def seed_v2(client, *, skip=False):
         v2_record("ignite", "FIRE", None, None, 30, 65, 30, env=True,
                   env_description="ignite:LAVA", original_material="AIR",
                   new_material="FIRE"),
+        v2_record("drop", "STONE", ALICE, "Alice", 0, 64, 0,
+                  extras={"amount": 3, "item_material": "STONE"}),
+        v2_record("pickup", "IRON_INGOT", ALICE, "Alice", 0, 64, 0,
+                  extras={"amount": 1, "item_material": "IRON_INGOT"}),
+        v2_record("teleport", "Alice", ALICE, "Alice", 0, 64, 0,
+                  extras={"to_x": 500, "to_y": 70, "to_z": 500, "cause": "COMMAND"}),
     ]
     db["EventRecords"].insert_many(docs)
     return removed, len(docs)

@@ -15,9 +15,12 @@ import net.medievalrp.omniscience2.api.event.CommandRecord;
 import net.medievalrp.omniscience2.api.event.ContainerDepositRecord;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
 import net.medievalrp.omniscience2.api.event.EventRecord;
+import net.medievalrp.omniscience2.api.event.ItemDropRecord;
+import net.medievalrp.omniscience2.api.event.ItemPickupRecord;
 import net.medievalrp.omniscience2.api.event.JoinRecord;
 import net.medievalrp.omniscience2.api.event.Origin;
 import net.medievalrp.omniscience2.api.event.QuitRecord;
+import net.medievalrp.omniscience2.api.event.TeleportRecord;
 import net.medievalrp.omniscience2.api.query.QueryResult;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
@@ -123,6 +126,9 @@ public final class ResultRenderer {
             case CommandRecord command -> "/" + command.target();
             case JoinRecord join -> join.target();
             case QuitRecord quit -> quit.target();
+            case ItemDropRecord drop -> drop.amount() + "x " + drop.target();
+            case ItemPickupRecord pickup -> pickup.amount() + "x " + pickup.target();
+            case TeleportRecord tp -> tp.target() + " via " + tp.cause();
         };
     }
 

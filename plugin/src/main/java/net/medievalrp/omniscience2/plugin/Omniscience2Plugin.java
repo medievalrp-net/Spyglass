@@ -44,8 +44,11 @@ import net.medievalrp.omniscience2.plugin.listener.environment.BlockIgniteExtrac
 import net.medievalrp.omniscience2.plugin.listener.environment.EntityExplodeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.LeavesDecayExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.StructureGrowExtractor;
+import net.medievalrp.omniscience2.plugin.listener.item.ItemDropExtractor;
+import net.medievalrp.omniscience2.plugin.listener.item.ItemPickupExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.JoinExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.QuitExtractor;
+import net.medievalrp.omniscience2.plugin.listener.player.TeleportExtractor;
 import net.medievalrp.omniscience2.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.omniscience2.plugin.pipeline.ExtractorRegistry;
 import net.medievalrp.omniscience2.plugin.rollback.RollbackEngine;
@@ -117,6 +120,9 @@ public final class Omniscience2Plugin extends JavaPlugin {
             registry.register(this, new StructureGrowExtractor(support));
         }
         if (enabledEvents.contains("ignite")) registry.register(this, new BlockIgniteExtractor(support));
+        if (enabledEvents.contains("drop")) registry.register(this, new ItemDropExtractor(support));
+        if (enabledEvents.contains("pickup")) registry.register(this, new ItemPickupExtractor(support));
+        if (enabledEvents.contains("teleport")) registry.register(this, new TeleportExtractor(support));
 
         Omniscience2ApiImpl apiImpl = new Omniscience2ApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());

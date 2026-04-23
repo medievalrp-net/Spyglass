@@ -12,7 +12,10 @@ public sealed interface EventRecord permits
         JoinRecord,
         QuitRecord,
         ContainerDepositRecord,
-        ContainerWithdrawRecord {
+        ContainerWithdrawRecord,
+        ItemDropRecord,
+        ItemPickupRecord,
+        TeleportRecord {
 
     UUID id();
 
