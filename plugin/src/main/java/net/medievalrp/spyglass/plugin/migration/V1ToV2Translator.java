@@ -30,6 +30,7 @@ import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.util.BlockLocation;
+import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import org.bson.Document;
 import org.jetbrains.annotations.ApiStatus;
 
