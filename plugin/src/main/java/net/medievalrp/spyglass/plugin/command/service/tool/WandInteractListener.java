@@ -1,4 +1,4 @@
-package net.medievalrp.spyglass.plugin.tool;
+package net.medievalrp.spyglass.plugin.command.service.tool;
 
 import java.time.Instant;
 import java.util.ArrayList;

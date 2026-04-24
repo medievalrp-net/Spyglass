@@ -1,5 +1,7 @@
 package net.medievalrp.spyglass.plugin.command.service;
 
+import net.medievalrp.spyglass.plugin.command.render.Feedback;
+
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -56,15 +58,15 @@ public final class RollbackService {
         try {
             request = forceNoGroup(parser.parse(sender, raw, config.limits().rollbackResult()), mode);
         } catch (ParamParseException ex) {
-            sender.sendMessage(ServiceSupport.errorMessage(ex.getMessage()));
+            sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
         }
-        sender.sendMessage(ServiceSupport.infoMessage(capitalize(mode.label()) + " running..."));
+        sender.sendMessage(Feedback.info(capitalize(mode.label()) + " running..."));
         api.query(request).whenComplete((result, error) -> {
             if (error != null) {
                 logger.warning("Spyglass " + mode.label() + " failed: " + error);
                 support.onMainThread(() -> sender.sendMessage(
-                        ServiceSupport.errorMessage(mode.label() + " failed: " + error.getMessage())));
+                        Feedback.error(mode.label() + " failed: " + error.getMessage())));
                 return;
             }
             support.onMainThread(() -> apply(sender, result, mode));
@@ -74,7 +76,7 @@ public final class RollbackService {
     private void apply(CommandSender sender, QueryResult result, RollbackMode mode) {
         List<RollbackEffect> effects = collectEffects(result, mode);
         if (effects.isEmpty()) {
-            sender.sendMessage(ServiceSupport.warnMessage("No rollbackable records matched."));
+            sender.sendMessage(Feedback.warn("No rollbackable records matched."));
             return;
         }
         List<RollbackResult> results = engine.applyAll(effects, sender);
