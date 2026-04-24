@@ -1,9 +1,9 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
@@ -29,18 +29,7 @@ public final class BlockFormExtractor implements EventExtractor<BlockFormEvent, 
         BlockSnapshot before = BlockSnapshots.capture(event.getBlock().getState());
         BlockSnapshot after = BlockSnapshots.capture(event.getNewState());
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
-        Instant occurred = support.now();
-        return Stream.of(new BlockPlaceRecord(
-                support.newId(),
-                1,
-                "form",
-                occurred,
-                support.expiresAt(occurred),
-                support.environmentOrigin("block-form"),
-                support.environmentSource("block-form"),
-                location,
-                after.material().name(),
-                before,
-                after));
+        RecordContext ctx = support.environmentContext("block-form", location);
+        return Stream.of(BlockPlaceRecord.of(ctx, "form", after.material().name(), before, after));
     }
 }

@@ -1,10 +1,10 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ContainerDepositRecord;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
 import net.medievalrp.omniscience2.api.event.EventRecord;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
@@ -55,26 +55,19 @@ public final class DecoratedPotExtractor implements EventExtractor<PlayerInterac
         boolean hasExisting = existing != null && existing.getType() != Material.AIR;
         boolean hasInHand = inHand != null && inHand.getType() != Material.AIR;
         Player player = event.getPlayer();
-        Instant occurred = support.now();
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
 
         if (player.isSneaking() && hasExisting) {
             StoredItem removed = ItemSerialization.storedItem(0, existing);
-            return Stream.of(new ContainerWithdrawRecord(
-                    support.newId(), 1, "pot-remove", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, existing.getType().name(), "DECORATED_POT",
-                    0, existing.getAmount(), removed, null));
+            RecordContext ctx = support.playerContext(player, location);
+            return Stream.of(ContainerWithdrawRecord.of(ctx, "pot-remove", existing.getType().name(),
+                    "DECORATED_POT", 0, existing.getAmount(), removed, null));
         }
         if (hasInHand && !hasExisting) {
             StoredItem inserted = ItemSerialization.storedItem(0, inHand);
-            return Stream.of(new ContainerDepositRecord(
-                    support.newId(), 1, "pot-insert", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, inHand.getType().name(), "DECORATED_POT",
-                    0, 1, null, inserted));
+            RecordContext ctx = support.playerContext(player, location);
+            return Stream.of(ContainerDepositRecord.of(ctx, "pot-insert", inHand.getType().name(),
+                    "DECORATED_POT", 0, 1, null, inserted));
         }
         return Stream.empty();
     }

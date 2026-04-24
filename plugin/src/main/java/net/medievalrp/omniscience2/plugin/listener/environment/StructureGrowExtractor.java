@@ -1,9 +1,9 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
@@ -27,27 +27,19 @@ public final class StructureGrowExtractor implements EventExtractor<StructureGro
 
     @Override
     public Stream<BlockPlaceRecord> extract(StructureGrowEvent event) {
-        Instant occurred = support.now();
-        String origin = event.getSpecies().name();
+        String species = event.getSpecies().name();
         String who = event.getPlayer() == null ? "structure-grow" : event.getPlayer().getName();
-        return event.getBlocks().stream().map(state -> fromState(state, occurred, origin, who));
+        return event.getBlocks().stream().map(state -> fromState(state, species, who));
     }
 
-    private BlockPlaceRecord fromState(BlockState state, Instant occurred, String species, String detail) {
+    private BlockPlaceRecord fromState(BlockState state, String species, String detail) {
         BlockSnapshot before = BlockSnapshots.air();
         BlockSnapshot after = BlockSnapshots.capture(state);
         BlockLocation location = BlockLocations.fromLocation(state.getLocation());
-        return new BlockPlaceRecord(
-                support.newId(),
-                1,
-                "grow",
-                occurred,
-                support.expiresAt(occurred),
+        RecordContext ctx = support.context(
                 support.environmentOrigin("structure-grow:" + species),
                 support.environmentSource("structure-grow:" + detail),
-                location,
-                after.material().name(),
-                before,
-                after);
+                location);
+        return BlockPlaceRecord.of(ctx, "grow", after.material().name(), before, after);
     }
 }

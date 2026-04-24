@@ -1,9 +1,9 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
 import net.medievalrp.omniscience2.api.event.EventRecord;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
@@ -33,14 +33,9 @@ public final class CrafterExtractor implements EventExtractor<CrafterCraftEvent,
             return Stream.empty();
         }
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
-        Instant occurred = support.now();
         StoredItem stored = ItemSerialization.storedItem(0, result);
-        return Stream.of(new ContainerWithdrawRecord(
-                support.newId(), 1, "crafter", occurred,
-                support.expiresAt(occurred),
-                support.environmentOrigin("crafter"),
-                support.environmentSource("crafter"),
-                location, result.getType().name(), "CRAFTER",
-                0, result.getAmount(), stored, null));
+        RecordContext ctx = support.environmentContext("crafter", location);
+        return Stream.of(ContainerWithdrawRecord.of(ctx, "crafter", result.getType().name(),
+                "CRAFTER", 0, result.getAmount(), stored, null));
     }
 }

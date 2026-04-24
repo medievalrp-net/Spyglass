@@ -1,12 +1,12 @@
 package net.medievalrp.omniscience2.plugin.listener.chat;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.omniscience2.api.event.ChatRecord;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
@@ -37,18 +37,7 @@ public final class ChatExtractor implements EventExtractor<AsyncChatEvent, ChatR
                 .filter(id -> !id.equals(sender.getUniqueId()))
                 .toList();
         BlockLocation location = BlockLocations.fromLocation(sender.getLocation());
-        Instant occurred = support.now();
-        return Stream.of(new ChatRecord(
-                support.newId(),
-                1,
-                "say",
-                occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(),
-                support.playerSource(sender),
-                location,
-                message,
-                message,
-                recipients));
+        RecordContext ctx = support.playerContext(sender, location);
+        return Stream.of(ChatRecord.of(ctx, message, message, recipients));
     }
 }

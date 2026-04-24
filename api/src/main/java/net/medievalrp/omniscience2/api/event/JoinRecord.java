@@ -17,4 +17,11 @@ public record JoinRecord(
         BlockLocation location,
         String target,
         String address) implements EventRecord {
+
+    public static JoinRecord of(RecordContext ctx, String target, String address) {
+        return new JoinRecord(
+                ctx.id(), ctx.schemaVersion(), "join", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, address);
+    }
 }

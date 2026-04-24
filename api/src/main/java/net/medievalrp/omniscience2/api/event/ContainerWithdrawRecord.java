@@ -22,6 +22,15 @@ public record ContainerWithdrawRecord(
         StoredItem beforeItem,
         StoredItem afterItem) implements EventRecord, Rollbackable {
 
+    public static ContainerWithdrawRecord of(RecordContext ctx, String event, String target,
+                                             String containerType, int slot, int amount,
+                                             StoredItem beforeItem, StoredItem afterItem) {
+        return new ContainerWithdrawRecord(
+                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, containerType, slot, amount, beforeItem, afterItem);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
         // Undo the withdraw: put the item back in the slot.

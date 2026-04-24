@@ -17,4 +17,12 @@ public record TeleportRecord(
         BlockLocation from,
         BlockLocation to,
         String cause) implements EventRecord {
+
+    public static TeleportRecord of(RecordContext ctx, String target,
+                                    BlockLocation from, BlockLocation to, String cause) {
+        return new TeleportRecord(
+                ctx.id(), ctx.schemaVersion(), "teleport", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, from, to, cause);
+    }
 }

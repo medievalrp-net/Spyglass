@@ -1,8 +1,8 @@
 package net.medievalrp.omniscience2.plugin.listener.chat;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.CommandRecord;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
@@ -26,19 +26,9 @@ public final class CommandExtractor implements EventExtractor<PlayerCommandPrepr
     public Stream<CommandRecord> extract(PlayerCommandPreprocessEvent event) {
         String line = event.getMessage();
         BlockLocation location = BlockLocations.fromLocation(event.getPlayer().getLocation());
-        Instant occurred = support.now();
+        RecordContext ctx = support.playerContext(event.getPlayer(), location);
         String head = extractHead(line);
-        return Stream.of(new CommandRecord(
-                support.newId(),
-                1,
-                "command",
-                occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(),
-                support.playerSource(event.getPlayer()),
-                location,
-                head,
-                line));
+        return Stream.of(CommandRecord.of(ctx, head, line));
     }
 
     private static String extractHead(String line) {

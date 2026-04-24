@@ -22,6 +22,15 @@ public record ContainerDepositRecord(
         StoredItem beforeItem,
         StoredItem afterItem) implements EventRecord, Rollbackable {
 
+    public static ContainerDepositRecord of(RecordContext ctx, String event, String target,
+                                            String containerType, int slot, int amount,
+                                            StoredItem beforeItem, StoredItem afterItem) {
+        return new ContainerDepositRecord(
+                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, containerType, slot, amount, beforeItem, afterItem);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
         // Undo the deposit: restore the slot to its pre-deposit state.

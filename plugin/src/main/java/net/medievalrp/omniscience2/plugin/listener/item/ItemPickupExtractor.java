@@ -1,10 +1,10 @@
 package net.medievalrp.omniscience2.plugin.listener.item;
 
-import java.time.Instant;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ItemPickupRecord;
 import net.medievalrp.omniscience2.api.event.Origin;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.Source;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
@@ -37,7 +37,6 @@ public final class ItemPickupExtractor implements EventExtractor<EntityPickupIte
             return Stream.empty();
         }
         BlockLocation location = BlockLocations.fromLocation(event.getItem().getLocation());
-        Instant occurred = support.now();
         Origin origin;
         Source source;
         if (event.getEntity() instanceof Player player) {
@@ -49,17 +48,7 @@ public final class ItemPickupExtractor implements EventExtractor<EntityPickupIte
             origin = support.environmentOrigin("pickup:" + entityType);
             source = support.entitySource(entityId, entityType);
         }
-        return Stream.of(new ItemPickupRecord(
-                support.newId(),
-                1,
-                "pickup",
-                occurred,
-                support.expiresAt(occurred),
-                origin,
-                source,
-                location,
-                stack.getType().name(),
-                stack.getAmount(),
-                stored));
+        RecordContext ctx = support.context(origin, source, location);
+        return Stream.of(ItemPickupRecord.of(ctx, stack.getType().name(), stack.getAmount(), stored));
     }
 }

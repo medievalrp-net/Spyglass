@@ -21,6 +21,14 @@ public record BlockPlaceRecord(
         BlockSnapshot originalBlock,
         BlockSnapshot newBlock) implements EventRecord, Rollbackable {
 
+    public static BlockPlaceRecord of(RecordContext ctx, String event, String target,
+                                      BlockSnapshot originalBlock, BlockSnapshot newBlock) {
+        return new BlockPlaceRecord(
+                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, originalBlock, newBlock);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
         return new RollbackEffect.BlockReplace(location, newBlock, originalBlock);

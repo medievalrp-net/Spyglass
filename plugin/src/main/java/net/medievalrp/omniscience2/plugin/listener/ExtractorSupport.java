@@ -3,7 +3,9 @@ package net.medievalrp.omniscience2.plugin.listener;
 import java.time.Instant;
 import java.util.UUID;
 import net.medievalrp.omniscience2.api.event.Origin;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.Source;
+import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.api.util.Duration;
 import org.bukkit.entity.Player;
 
@@ -45,5 +47,25 @@ public final class ExtractorSupport {
 
     public UUID newId() {
         return UUID.randomUUID();
+    }
+
+    /**
+     * One-shot builder for the 7-field {@link RecordContext} header shared by
+     * every record. Callers hand the result to a record's static {@code of()}
+     * factory along with the type-specific fields.
+     */
+    public RecordContext context(Origin origin, Source source, BlockLocation location) {
+        Instant now = Instant.now();
+        return RecordContext.fresh(now, retention.after(now), origin, source, location);
+    }
+
+    /** Shortcut: player-origin, player-source context for a located event. */
+    public RecordContext playerContext(Player player, BlockLocation location) {
+        return context(playerOrigin(), playerSource(player), location);
+    }
+
+    /** Shortcut: environment-origin, environment-source context. */
+    public RecordContext environmentContext(String description, BlockLocation location) {
+        return context(environmentOrigin(description), environmentSource(description), location);
     }
 }

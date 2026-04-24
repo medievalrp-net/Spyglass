@@ -1,9 +1,9 @@
 package net.medievalrp.omniscience2.plugin.listener.entity;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.EntityMountRecord;
 import net.medievalrp.omniscience2.api.event.Origin;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.Source;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
@@ -30,7 +30,6 @@ public final class EntityMountExtractor implements EventExtractor<EntityMountEve
     public Stream<EntityMountRecord> extract(EntityMountEvent event) {
         Entity rider = event.getEntity();
         Entity mount = event.getMount();
-        Instant occurred = support.now();
         BlockLocation location = BlockLocations.fromLocation(mount.getLocation());
         String mountType = mount.getType().getKey().getKey();
 
@@ -44,18 +43,7 @@ public final class EntityMountExtractor implements EventExtractor<EntityMountEve
             source = support.entitySource(rider.getUniqueId(), rider.getType().getKey().getKey());
         }
 
-        return Stream.of(new EntityMountRecord(
-                support.newId(),
-                1,
-                "mount",
-                occurred,
-                support.expiresAt(occurred),
-                origin,
-                source,
-                location,
-                mountType,
-                mountType,
-                mount.getUniqueId(),
-                false));
+        RecordContext ctx = support.context(origin, source, location);
+        return Stream.of(EntityMountRecord.of(ctx, "mount", mountType, mountType, mount.getUniqueId(), false));
     }
 }

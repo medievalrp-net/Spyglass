@@ -1,8 +1,8 @@
 package net.medievalrp.omniscience2.plugin.listener.item;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ItemDropRecord;
+import net.medievalrp.omniscience2.api.event.RecordContext;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
@@ -33,18 +33,7 @@ public final class ItemDropExtractor implements EventExtractor<PlayerDropItemEve
             return Stream.empty();
         }
         BlockLocation location = BlockLocations.fromLocation(event.getPlayer().getLocation());
-        Instant occurred = support.now();
-        return Stream.of(new ItemDropRecord(
-                support.newId(),
-                1,
-                "drop",
-                occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(),
-                support.playerSource(event.getPlayer()),
-                location,
-                stack.getType().name(),
-                stack.getAmount(),
-                stored));
+        RecordContext ctx = support.playerContext(event.getPlayer(), location);
+        return Stream.of(ItemDropRecord.of(ctx, stack.getType().name(), stack.getAmount(), stored));
     }
 }
