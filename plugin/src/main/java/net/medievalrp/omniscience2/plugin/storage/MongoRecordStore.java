@@ -51,6 +51,7 @@ public final class MongoRecordStore implements RecordStore {
                 CodecRegistries.fromProviders(
                         new Jsr310CodecProvider(),
                         new RecordCodecProvider(),
+                        RollbackEffectCodec.provider(),
                         PojoCodecProvider.builder().automatic(true).build()));
         MongoClientSettings settings = MongoClientSettings.builder()
                 .uuidRepresentation(UuidRepresentation.STANDARD)

@@ -36,7 +36,7 @@ class UndoServiceTest {
         new UndoService(engine, stack, ServiceSupport.synchronous()).execute(sender);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .containsExactly("Only players can undo.");
+                .anyMatch(line -> line.contains("must be a player"));
         verifyNoInteractions(stack);
     }
 
@@ -53,7 +53,7 @@ class UndoServiceTest {
         new UndoService(engine, stack, ServiceSupport.synchronous()).execute(player);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .containsExactly("Nothing to undo.");
+                .anyMatch(line -> line.contains("no valid actions to undo"));
     }
 
     @Test
@@ -79,6 +79,6 @@ class UndoServiceTest {
 
         verify(engine).applyAll(ArgumentMatchers.any(), ArgumentMatchers.any());
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .anyMatch(line -> line.contains("1 applied") && line.contains("0 skipped"));
+                .anyMatch(line -> line.contains("1 reversals"));
     }
 }

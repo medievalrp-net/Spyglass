@@ -64,10 +64,9 @@ public final class BlockSnapshots {
 
     /**
      * Plain material + blockData snapshot for callers that don't have a
-     * {@link BlockState} handy (FAWE chunk diff, brush/vault delayed checks,
-     * v1 migration translation). Inventory / sign / banner / jukebox lists
-     * are empty — callers pass a {@link BlockState} to {@link #capture} when
-     * they want that data.
+     * {@link BlockState} handy (FAWE chunk diff, brush/vault delayed checks).
+     * Inventory / sign / banner / jukebox lists are empty — callers pass a
+     * {@link BlockState} to {@link #capture} when they want that data.
      */
     public static BlockSnapshot of(Material material, String blockData) {
         return new BlockSnapshot(material, blockData,

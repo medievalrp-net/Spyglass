@@ -24,8 +24,9 @@ class EventsServiceTest {
         new EventsService(api).send(sender);
 
         List<String> lines = ServiceTestSupport.plainTexts(captured);
-        assertThat(lines).hasSize(1);
-        assertThat(lines.get(0)).isEqualTo("Enabled events: break, place, say");
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).contains("Enabled Events:");
+        assertThat(lines.get(1)).isEqualTo("break, place, say");
     }
 
     @Test
@@ -38,7 +39,9 @@ class EventsServiceTest {
 
         new EventsService(api).send(sender);
 
-        assertThat(ServiceTestSupport.plainTexts(captured))
-                .containsExactly("Enabled events: (none)");
+        List<String> lines = ServiceTestSupport.plainTexts(captured);
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).contains("Enabled Events:");
+        assertThat(lines.get(1)).isEqualTo("(none)");
     }
 }

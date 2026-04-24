@@ -35,6 +35,6 @@ class PageServiceTest {
         new PageService(cache).show(sender, 1);
 
         assertThat(ServiceTestSupport.plainTexts(captured))
-                .containsExactly("No active search results.");
+                .anyMatch(line -> line.contains("No active search results."));
     }
 }

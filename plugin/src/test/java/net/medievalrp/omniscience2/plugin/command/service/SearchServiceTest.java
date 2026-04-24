@@ -78,7 +78,8 @@ class SearchServiceTest {
 
         fixture.subject.execute(fixture.sender, "p:bogus");
 
-        assertThat(ServiceTestSupport.plainTexts(messages)).containsExactly("bad param");
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("bad param"));
         verify(fixture.api, never()).query(any(QueryRequest.class));
     }
 
@@ -101,8 +102,8 @@ class SearchServiceTest {
 
         verify(fixture.pageCache).store(ArgumentMatchers.eq(fixture.sender), ArgumentMatchers.any());
         verify(fixture.pageCache).show(fixture.sender, 1);
-        // Searching... goes out first, then cache-store/show drive the page header.
-        assertThat(ServiceTestSupport.plainTexts(messages).get(0)).isEqualTo("Searching...");
+        // "Querying records..." goes out first, then cache-store/show drive the page header.
+        assertThat(ServiceTestSupport.plainTexts(messages).get(0)).contains("Querying records...");
     }
 
     @Test
@@ -124,7 +125,7 @@ class SearchServiceTest {
 
         verify(fixture.pageCache).clear(fixture.sender);
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .contains("No matching records.");
+                .anyMatch(line -> line.contains("No results."));
     }
 
     @Test
