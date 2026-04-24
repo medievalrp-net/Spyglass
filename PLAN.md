@@ -1,601 +1,379 @@
-# Spyglass Phase 2 — execution plan (production hardening)
+# Spyglass Phase 3 — execution plan (ship v1.0.0)
 
 ## Context
 
-Phase 1 shipped as commit `9a0f4a1`. The repo at `/Volumes/External-NVME/Documents/GitHub/MedievalRP/Spyglass` already contains:
+Phase 2 landed at tag `v0.9.0`. The repo at `/Volumes/External-NVME/Documents/GitHub/MedievalRP/Spyglass` has 22 event types recorded, 4 rollbackable record types, vanilla-WorldEdit capture, a passing regression harness, and 34 unit tests.
 
-- Working skeleton on Paper 1.21.8 / JDK 21 / Gradle 9, Mongo POJO-codec storage, Cloud 2.x commands, Adventure rendering.
-- 8 event types (break, place, deposit, withdraw, say, command, join, quit) recorded, queried, rendered. Two of them (break, place) rollbackable.
-- Seeded-data verification passed via RCON against the MedievalRP dev server (`../RP_Server`) while running alongside the original MPL-licensed v1. Both plugins coexist without conflict.
-- Phase 1 details: [`docs/phase1-plan.md`](docs/phase1-plan.md), [`docs/phase1-notes.md`](docs/phase1-notes.md), [`docs/phase2-plan.md`](docs/phase2-plan.md) (backlog inventory).
+See [`docs/phase2-notes.md`](docs/phase2-notes.md) for the full commit chain and a Phase 3 backlog written at Phase 2 wrap-up. See [`docs/phase2-plan-execution.md`](docs/phase2-plan-execution.md) for the Phase 2 execution playbook (archived). See [`docs/analysis/`](docs/analysis/) for the original v1 dissection that still guides clean-room work.
 
-This plan is the execution playbook for Phase 2. Read it end-to-end before touching code, then follow the block order. **No AI query assistant** — explicitly dropped from scope.
+This plan is the execution playbook for Phase 3. Read it end-to-end before touching code, then follow the block order.
 
 ## Goal
 
-Take Spyglass from "working skeleton + vertical slice" to **production-ready replacement** of the MPL-licensed v1 on the MedievalRP server. That means:
+Ship `v1.0.0` — "production-ready replacement for the MPL v1 on the MedievalRP dev server." Concretely:
 
-- Every event v1 logs, v2 also logs (minus AI).
-- Every query v1 answers, v2 answers (minus AI).
-- Every rollback v1 performs, v2 performs.
-- All the Phase 1 rough edges smoothed: tab completion, rollback reply delivery, MiniMessage templates, tool wand, migrations, hidden internals.
-- Regression tests run **every commit**, not just at the end.
-- `./gradlew build` produces a publishable jar, ready to replace `v1.jar` in production.
+1. **Migration works.** An operator runs `/sg admin migrate-v1` on the dev server and the 384,482 records in `v1.DataEntry` end up as structurally-equivalent records in `Spyglass.EventRecords`.
+2. **FAWE users are covered.** `//set` / `//paste` / `//fill` produce v2 records, including container contents, regardless of FAWE's fast-placement mode.
+3. **Inspection wand works in-game.** `/sg tool` toggles a wand; right-clicking a block pages through location-scoped records.
+4. **Entity rollback** is a real (experimental) feature.
+5. **1.20+/1.21+ block interactions** (bookshelf/pot/brush/sculk/crafter/vault/shulker/bundle) are logged.
+6. **Internals are hidden** (`@ApiStatus.Internal`) so the API module has a narrow, published surface.
+7. **Coverage gates enforced** — `./gradlew build` fails if JaCoCo line coverage drops below 90% on `api` or 80% on `plugin`.
+8. **Released artifact** — `net.medievalrp:spyglass-api:1.0.0` published (locally at minimum), `Spyglass-1.0.0.jar` tagged.
+
+## Non-goals (unchanged)
+
+- AI query assistant (dropped permanently).
+- DynamoDB.
+- Multi-server (`server.` parameter namespace).
+- Custom NMS reflection beyond Paper API.
 
 ## Clean-room constraints (unchanged)
 
-1. Do not open files under `../v1/the v1 core/src/` or `../v1/v1API/src/` unless you need a specific factual string the dissection docs don't give you (event-name strings, config keys, Mongo field names). Never copy implementation code. Paraphrase from `docs/analysis/`; write fresh code.
+1. Do not open files under `../v1/the v1 core/src/` or `../v1/v1API/src/` unless you need a specific factual string the dissection docs don't give you (v1 field names for migration, event-name strings). Never copy implementation code. Paraphrase from `docs/analysis/`, rewrite fresh.
 2. Package prefix stays `net.medievalrp.spyglass.*`.
 3. Command stays `/sg` (aliases `/o2`, `/spyglass`). Mongo database `Spyglass`, collection `EventRecords`.
-4. Architectural commitments in Phase 1's [PLAN](docs/phase1-plan.md) § "Architectural commitments" still apply.
+4. Architectural commitments from Phase 1 (typed records, sealed predicates, Adventure rendering, Cloud commands, virtual-thread drain, `onDisable` flush, indexes upfront) still apply.
 
-## Non-goals (explicit)
+## Regression-test discipline (unchanged)
 
-- **AI query assistant** is dropped. No `/sg ai`, no Vertex AI dependency, no `ai-prompt.txt`. If it's mentioned in the dissection docs, ignore those sections.
-- DynamoDB backend.
-- Multi-server (`server.` parameter namespace).
-- Custom NMS reflection beyond Paper API (evaluate Paper first; only go there for entity NBT rollback and only with `@ApiStatus.Experimental`).
+**`./gradlew test regression` after every commit.** The harness at `regression/run.py` seeds both v1 (`DataEntry`) and v2 (`EventRecords`) in Mongo and runs a query matrix. Red means stop and fix. Commit messages state the regression count (`regression: N/N green`).
 
-## The regression-test discipline
+The mineflayer-driven live-event layer lands in Block 12 — before that, seeded-data regression plus unit tests cover storage/query/render regressions. Event-extractor logic is covered by unit tests.
 
-**This is non-negotiable. Run after every commit, not every feature.**
+## Execution order
 
-Regression is structured in two tiers:
+Sequential:
 
-### Tier 1 — unit + integration (`./gradlew test`)
+1. Block 7 — v1 → v2 migration tool (unblocks production upgrade)
+2. Block 8 — FAWE fast-placement (common on MedievalRP; pair with Block 7 for the "switch in production" moment)
+3. Block 9 — Inspection wand (daily operator workflow)
+4. Block 10 — 1.20+/1.21+ block interactions (feature parity)
+5. Block 11 — `-we` flag, entity NBT rollback, HOTBAR/drag container clicks (bundled mid-size items)
+6. Block 12 — MiniMessage templates, `@ApiStatus.Internal`, mineflayer, Testcontainers IT
+7. Block 13 — Coverage gates, static analysis, v1.0.0 release
 
-Every public class under `plugin/src/main/java` has either unit or integration coverage. Targets to write as you add features:
+Don't skip ahead. Each block's acceptance gates land cleanly on the previous block.
 
-- `DurationTest` (exists)
-- `PredicateToBsonTest` (exists)
-- `AsyncRecorderTest` (exists)
-- `MongoRecordStoreIT` (Testcontainers) — seed every record type, round-trip through Mongo, verify indexes
-- `*ExtractorTest` — one per extractor, synthetic Bukkit event in, record stream out (use MockBukkit where it helps, direct event construction otherwise)
-- `RollbackEngineTest` — each `RollbackEffect` variant against a mocked world
-- `QueryStringParserTest` — full grammar, default-radius suppression, flag parsing, error cases
-- `ResultRendererTest` — record + aggregation + flag combinations produce expected `Component`
-- `SearchServiceTest`, `RollbackServiceTest`, `UndoServiceTest` — once the command refactor (Block 1) lands
-- `MigrationTest` — read sample v1 documents, produce v2 records
+---
 
-Gate: `./gradlew test` green. Target line coverage with JaCoCo: ≥ 80% on the plugin module, ≥ 90% on the api module.
+## Block 7 — v1 → v2 migration tool (ship-blocker for 1.0)
 
-### Tier 2 — live regression (`./gradlew regression`)
+**Why first:** MedievalRP's dev server has 384,482 v1 records. Without a migration path, v2 ships empty and the history lookup story breaks on day one.
 
-A fresh Gradle task that:
+### Scope
 
-1. Kills any running Paper at `../RP_Server`.
-2. Starts Paper fresh with **both** `v1.jar` (v1) and `Spyglass.jar` (v2) loaded.
-3. Waits for the "Done" startup banner.
-4. Runs a deterministic event generator (see below) to produce identical events that flow into both v1 and v2.
-5. Executes a parallel query matrix over RCON:
-   - Every v1 `/sg search ...` has a matching v2 `/sg search ...` (same parameters).
-   - For queries with `-ng` (ungrouped): compare record counts + per-record (source, event, target).
-   - For grouped queries: compare count-per-bucket.
-   - For rollback/restore: apply to v1 AND v2 on structurally-identical test worlds or sandboxed regions; compare resulting block states.
-6. Stops the server cleanly.
-7. Writes a JUnit-style report at `plugin/build/reports/regression/index.html` and fails the build on any mismatch.
-
-**Event generator options** (pick one, commit to it for the whole phase):
-
-- **Option A — `mineflayer` bot** (recommended). Node-based MC client library, supports 1.21.x. Script a connect → action sequence → disconnect per test run. Requires `node` + `npm`.
-- **Option B — Paper's Bukkit event-fire API**. A tiny harness plugin that exposes a `/regress fire <event>` command; the Gradle task dispatches via RCON. Harder to simulate player identity convincingly.
-
-Prefer Option A. Put the bot script at `regression/bot/`. Commit the scripts.
-
-### The iron rule
-
-**After every commit that could affect v1/v2 equivalence**, run `./gradlew test regression`. Red means stop and fix. Don't batch.
-
-Commit messages for feature commits must include a one-line regression status, e.g. `regression: 14/14 cases green`.
-
-## Repo reorganization (Block 0, do first)
-
-Before any feature work, set up the polish work cleanly.
-
-- Move Phase 1's `/Volumes/External-NVME/Documents/GitHub/MedievalRP/Spyglass/PLAN.md` → `docs/phase1-plan.md` (already done).
-- Make `PLAN.md` (this file) the current execution plan.
-- Add `JaCoCo` to gradle. `./gradlew jacocoTestReport` produces the coverage report.
-- Add `.github/workflows/build.yml` that runs `./gradlew test` on push + PR. Regression doesn't run in CI (needs the dev server + mineflayer); it's a local gate.
-- Add a `deployToRpServer` Gradle task:
-  ```kotlin
-  tasks.register("deployToRpServer") {
-      dependsOn(":plugin:shadowJar")
-      doLast {
-          val src = project(":plugin").buildDir.resolve("libs/Spyglass-$version.jar")
-          val dst = file("../RP_Server/plugins/Spyglass.jar")
-          src.copyTo(dst, overwrite = true)
-          println("Deployed $dst")
-      }
-  }
-  ```
-- Add `.gitattributes` to normalize line endings; add `.editorconfig` matching the indentation in the codebase (4-space, LF).
-
-## Block 1 — Command layer refactor (consolidate + outsource)
-
-**Problem to solve:** `plugin/src/main/java/.../command/SpyglassCommands.java` is the only place commands live, but it mixes Cloud registration with business logic. Production pattern: registration in one place, each command's flow in a named service.
-
-**Target shape:**
-
-```
-command/
-├── SpyglassCommands.java — ONE place, registration only; each handler is a one-liner delegate.
-├── sg.java — (optional) flags + suggestions providers, shared across commands.
-├── service/
-│ ├── SearchService.java — parse → query → render → cache → reply
-│ ├── RollbackService.java — parse → query → apply → reply → persist undo
-│ ├── UndoService.java — pop → apply → reply
-│ ├── HelpService.java — render /help
-│ ├── EventsService.java — render /events
-│ ├── PageService.java — cache-backed paged display (absorbs PageCache + page command)
-│ └── ToolService.java — wand toggle
-├── param/ (existing) — untouched; handlers implement suggestions()
-├── render/ (existing)
-└── RollbackRunner.java — delete (logic absorbed into RollbackService)
-```
-
-**Each service:**
-
-- Public final class.
-- Constructor injection — takes only the collaborators it needs (e.g. `SearchService(api, parser, renderer, pageCache, logger)`).
-- Single entry point method named `execute(...)`. No `handleResults` helpers at command level.
-- No references to Cloud types. Services are Cloud-agnostic.
-
-**SpyglassCommands after refactor:**
-
-```java
-public final class SpyglassCommands {
-    // dependencies held for wiring only
-    private final JavaPlugin plugin;
-    private final HelpService helpService;
-    private final EventsService eventsService;
-    private final SearchService searchService;
-    private final RollbackService rollbackService;
-    private final UndoService undoService;
-    private final PageService pageService;
-    private final ToolService toolService;
-    private final SpyglassSuggestions suggestions;
-
-    public CommandManager<CommandSender> register() {
-        var manager = LegacyPaperCommandManager.createNative(plugin, ExecutionCoordinator.simpleCoordinator());
-        for (var root : List.of("sg", "o2", "spyglass")) {
-            manager.command(manager.commandBuilder(root)
-                    .permission("spyglass.use")
-                    .handler(ctx -> helpService.send(ctx.sender())));
-            manager.command(manager.commandBuilder(root).literal("help")
-                    .permission("spyglass.use")
-                    .handler(ctx -> helpService.send(ctx.sender())));
-            manager.command(manager.commandBuilder(root).literal("events")
-                    .permission("spyglass.use")
-                    .handler(ctx -> eventsService.send(ctx.sender())));
-            manager.command(manager.commandBuilder(root).literal("search")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.search")
-                    .handler(ctx -> searchService.execute(ctx.sender(), ctx.get("params"))));
-            manager.command(manager.commandBuilder(root).literal("rollback")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> rollbackService.execute(ctx.sender(), ctx.get("params"), RollbackMode.ROLLBACK)));
-            manager.command(manager.commandBuilder(root).literal("restore")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> rollbackService.execute(ctx.sender(), ctx.get("params"), RollbackMode.RESTORE)));
-            manager.command(manager.commandBuilder(root).literal("undo")
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> undoService.execute(ctx.sender())));
-            manager.command(manager.commandBuilder(root).literal("page")
-                    .required("number", IntegerParser.integerParser(1))
-                    .permission("spyglass.use")
-                    .handler(ctx -> pageService.show(ctx.sender(), ctx.get("number"))));
-            manager.command(manager.commandBuilder(root).literal("tool")
-                    .permission("spyglass.tool")
-                    .handler(ctx -> toolService.toggle(ctx.sender())));
-        }
-        return manager;
-    }
-}
-```
-
-Total ~50 lines. Every handler a one-liner. Every behaviour in a named, injectable, testable service.
-
-**Fix while you're in there:**
-
-- Remove the diagnostic `plugin.getLogger().info("Spyglass: ... handler fired")` left in Phase 1.
-- The "Searching..." / "ROLLBACK running..." status lines move into the services.
-- `RollbackRunner`'s main-thread hop via `Bukkit.getScheduler().callSyncMethod(...).get()` didn't deliver summary lines cleanly. Replace with `plugin.getServer().getScheduler().runTask(plugin, () -> { ... apply ... reply ... })` inside the async query's `whenComplete`. Report the summary via `sender.sendMessage` on the main thread.
-
-**Acceptance for Block 1:**
-
-- `SpyglassCommands.java` ≤ 80 lines.
-- Every service has a `*Test` with ≥ 5 test cases.
-- `./gradlew test regression` green. The regression matrix must include: search happy path, search with every param, rollback for block break, undo, search with no results, search with paging (30+ results → verify `page 2` works).
-- Commit message: `Phase 2 block 1: command layer refactor + service outsourcing`.
-
-## Block 2 — Regression harness
-
-Before writing any more feature code, **commit the regression harness**. Not after. The harness is what lets you ship the rest of Phase 2 safely.
-
-### Task order
-
-1. **Install `mineflayer`** at `regression/bot/`:
-   ```
-   regression/
-   ├── bot/
-   │ ├── package.json
-   │ ├── scenario-basic.js — connect → break 5 blocks → place 5 → chat "hello" → disconnect
-   │ ├── scenario-rollback.js — connect → break a chest with contents → disconnect (triggers break event; used to test rollback)
-   │ ├── scenario-entity.js — spawn and kill an entity (for Block 3's entity work)
-   │ └── scenario-worldedit.js — run //set via the bot (for Block 4)
-   └── gradle/
-       └── regression.gradle.kts — the `regression` task wiring
-   ```
-2. **Write the parallel query matrix** at `regression/queries.json`:
-   ```json
-   [
-     {"id": "break-all", "v1": "sg search a:break t:5m -ng", "v2": "sg search a:break t:5m -ng", "compare": "count"},
-     {"id": "place-all", "v1": "sg search a:place t:5m -ng", "v2": "sg search a:place t:5m -ng", "compare": "count"},
-     {"id": "say", "v1": "sg search a:say t:5m -ng", "v2": "sg search a:say t:5m -ng", "compare": "message-text"},
-     ...
-   ]
-   ```
-3. **Write the regression runner** — a Python or Java script that:
-   - Starts Paper with both plugins.
-   - Waits for Done.
-   - Connects mineflayer bot, runs `scenario-basic.js`, disconnects.
-   - Waits 2 seconds for queues to drain on both plugins.
-   - For each query in `queries.json`, executes v1 and v2 via RCON, normalizes output (strip colors, extract record lines), compares.
-   - Reports mismatches (v1 count vs v2 count, or per-record diffs).
-   - Kills Paper.
-4. **Gradle task:**
-   ```kotlin
-   tasks.register<Exec>("regression") {
-       dependsOn(":plugin:shadowJar", "deployToRpServer")
-       workingDir = rootProject.projectDir
-       commandLine = listOf("python3", "regression/run.py")
-   }
-   ```
-5. **Document** the harness in `regression/README.md`.
-
-### Expected behavior
-
-When v2 is correct, every query produces ≥ v1's count (v2 may capture slightly more — e.g. it doesn't have v1's `EventName` typo bug). The comparator should flag "v2 < v1" as an error, and "v2 ≥ v1" as pass.
-
-For exact-equality comparisons (e.g. individual message text), strict match required.
+- New subpackage: `plugin/src/main/java/net/medievalrp/spyglass/plugin/migration/`.
+- `V1DocumentReader` — iterates `v1.DataEntry` in batches (`batchSize = 1000` default), respects a cursor so the migration can be resumed.
+- `V1ToV2Translator` — pure function from a v1 BSON `Document` to an `Optional<EventRecord>`. Handles each event name we support:
+  - `break` → `BlockBreakRecord` (read `OriginalBlock.MaterialType` + `BlockData`; map `Player` UUID to `Source.PlayerSource`; `Cause` → `Source.EnvironmentSource` or `Source.EntitySource`)
+  - `place` → `BlockPlaceRecord`
+  - `decay` / `form` / `grow` / `ignite` → same shape, env source
+  - `say` → `ChatRecord` (read `Message`; `Recipient` comma-split into `List<UUID>`)
+  - `command` → `CommandRecord`
+  - `join` → `JoinRecord` (read `IpAddress`)
+  - `quit` → `QuitRecord`
+  - `deposit` / `withdraw` → `ContainerDepositRecord` / `ContainerWithdrawRecord` (read `Inventory` sub-doc; convert v1's `ConfigurationSerialization` items to `StoredItem` via `ItemSerialization.encode(ItemStack)` — requires Bukkit `ConfigurationSerialization.deserializeObject`)
+  - `drop` / `pickup` → `ItemDropRecord` / `ItemPickupRecord`
+  - `teleport` → `TeleportRecord`
+  - `death` / `hit` / `shot` / `mount` / `dismount` → entity records
+  - Skip with a logged warning: anything else (e.g. the 1.20+ events v1 added that v2 hasn't yet — `bookshelf-*`, `pot-*`, `brush`, `sculk`, `crafter`, `vault`, `shulker-*`, `bundle-*`, `entity-deposit`, `entity-withdraw`, `useSign`, `named`, `craft`, `clone`, `close`, `open`, `use`). These get skipped with `log.info("migration: event X deferred, N skipped")`. They can be migrated once Block 10 lands; until then, don't fail on them.
+  - Handle the `components=null` bug: v1 docs may have items whose `components` field is null. Log-and-skip the single item, don't fail the entire record.
+- `MigrationService` — orchestrates:
+  - Progress reporting every 10k docs via `sender.sendActionBar` + `plugin.getLogger().info`
+  - Error handling: single-document failures log + increment a skip counter; bulk failures abort cleanly
+  - Resume: persist the last processed `_id` in a Mongo collection `MigrationProgress`. On re-run, skip docs already processed.
+- `/sg admin migrate-v1 [--dry-run] [--batch-size N] [--resume]` — console-only command (gated on `spyglass.admin`), via the existing Cloud command registration.
+- `MigrationTest` (unit): for each v1 event shape, assert the translator produces the right v2 record.
+- `MigrationIT` (Testcontainers): seed a fake v1 DB with sample docs, run the migration, verify v2 counts.
 
 ### Acceptance
 
-- `./gradlew regression` runs clean against Block 1's code.
-- Matrix includes every query shape used in `docs/phase1-notes.md` (search variations) — at least 12 test cases.
-- Regression docs describe how to add a new case.
-- CI workflow doesn't run regression (too heavy); document as a local gate.
-
-## Block 3 — Feature parity (events)
-
-All remaining v1 events. Work in this order — later ones build on earlier ones.
-
-### 3.1 Environment block events
-
-Records: no new records needed — reuse `BlockBreakRecord` / `BlockPlaceRecord` with `Source.environment(description)` + `Origin.environment(description)`.
-
-Extractors:
-- `LeavesDecayExtractor` (event `decay`) → BlockBreakRecord, source `environment("leaves-decay")`.
-- `BlockFadeExtractor` (event `decay`) → BlockBreakRecord.
-- `BlockFormExtractor` (event `form`) → BlockBreakRecord (represents the before) or BlockPlaceRecord (represents the after) — pick one consistent direction.
-- `BlockGrowExtractor` (event `grow`) → BlockPlaceRecord with env source.
-- `StructureGrowExtractor` (event `grow`) → BlockPlaceRecord with env source; may need to emit multiple records (structure covers N blocks).
-- `BlockIgniteExtractor` (event `ignite`) → BlockPlaceRecord (FIRE block appearing).
-
-Update `config.conf` with the new events + past-tense strings: `decayed`, `formed`, `grew`, `ignited`.
-
-### 3.2 Explosion events
-
-`BlockExplodeEvent` and `EntityExplodeEvent` cascade into many blocks. Extractors return a stream.
-
-- `BlockExplodeExtractor` → one `BlockBreakRecord` per affected block.
-- `EntityExplodeExtractor` → same, but source is the entity that exploded (e.g. `Source.entity(creeperId, "CREEPER")`).
-
-### 3.3 `BlockMultiPlaceEvent`
-
-Beds and doors place two blocks. Extractor emits two `BlockPlaceRecord`s.
-
-### 3.4 Drop / pickup / teleport
-
-New records:
-- `ItemDropRecord(id, schemaVersion, event, occurred, expiresAt, origin, source, location, target, StoredItem item)` — event name `drop`. Sources: `PlayerDropItemEvent` (player), `EntityDropItemEvent` (entity), `BlockDispenseEvent` (block source).
-- `ItemPickupRecord(...)` — event `pickup`. Source: `EntityPickupItemEvent`.
-- `TeleportRecord(id, schemaVersion, ..., BlockLocation from, BlockLocation to, String cause)` — event `teleport`.
-
-None of these are rollbackable in Phase 2 (drops might be, as a Tier-C follow-up; deferred).
-
-### 3.5 Entity events + entity rollback
-
-Records:
-- `EntityDeathRecord(..., String entityType, String serializedNbt, BlockLocation where, Source killer)` — event `death`, rollbackable.
-- `EntityHitRecord(..., String attacker, String victim, double damage)` — event `hit`.
-- `EntityShotRecord(..., String attacker, String projectile, String victim)` — event `shot`.
-- `EntityMountRecord(..., String rider, String mount)` — event `mount`.
-- `EntityDismountRecord(...)` — event `dismount`.
-
-Implementation:
-- Extractors for `EntityDeathEvent`, `EntityDamageByEntityEvent` (split into hit/shot based on damager instance), `EntityMountEvent`, `EntityDismountEvent`.
-- Entity NBT capture: use Paper's `Entity.saveAsTag()` and `Entity.fromTag()` if available (Paper 1.21+ exposes these). Serialize the `CompoundTag` to Base64. Fall back to `@ApiStatus.Experimental` reflective NMS if the Paper API isn't complete.
-- Rollback: `EntityDeathRecord.rollbackEffect()` returns `RollbackEffect.EntitySpawn(location, entityType, serializedNbt)`. `RollbackEngine.applyEntitySpawn(...)` — spawn at location, restore NBT.
-- `EntityRemove` effect (used for undoing a spawn) — already in `RollbackEffect` sealed type.
-
-Mark the entity rollback path `@ApiStatus.Experimental` — NBT across MC versions is known-brittle.
-
-### 3.6 Item frame / armor stand
-
-`PlayerArmorStandManipulateEvent`, `PlayerInteractEntityEvent` on item frames.
-
-Records:
-- `EntityDepositRecord`, `EntityWithdrawRecord` — similar shape to `ContainerDepositRecord` but with an `entityType` field and no slot (item frames have a single slot; armor stands have 4 equipment slots + a hand = make the slot field an enum).
-
-Rollbackable: yes — rollback restores the item frame/armor stand's item.
-
-### 3.7 1.20+/1.21+ block interactions
-
-Bookshelves, decorated pots, brushes, sculk, crafters, vaults, shulker interactions, bundles.
-
-These are variations on container deposit/withdraw with a specific inventory shape. Refactor `ContainerTransactionExtractor` to accept any `InventoryHolder` subclass, not just `Container`.
-
-Events: `bookshelf-insert`, `bookshelf-remove`, `pot-insert`, `pot-remove`, `brush`, `sculk`, `crafter`, `vault`, `shulker-open`, `shulker-close`, `shulker-deposit`, `shulker-withdraw`, `bundle-insert`, `bundle-extract`.
-
-These share one new record:
-- `InteractRecord(..., String interactionType, ...)` — or specific records per shape. Pick based on whether queries want to filter.
-
-Reuse `ContainerDepositRecord` / `ContainerWithdrawRecord` where possible with a new `kind` field or similar. Don't over-proliferate record types.
-
-### 3.8 Tighten `ContainerTransactionExtractor`
-
-Current extractor handles only PLACE_* and PICKUP_* click actions. Complete set:
-
-| InventoryAction | Record | Notes |
-|---|---|---|
-| PLACE_ALL / PLACE_ONE / PLACE_SOME | deposit | (done) |
-| PICKUP_ALL / PICKUP_HALF / PICKUP_ONE / PICKUP_SOME | withdraw | (done) |
-| SWAP_WITH_CURSOR | deposit + withdraw (pair) | Before/after both non-null |
-| MOVE_TO_OTHER_INVENTORY | diff-based | Multi-slot — use a slot-diff helper |
-| HOTBAR_MOVE_AND_READD | deposit + withdraw pair | Hotbar swap |
-| HOTBAR_SWAP | deposit + withdraw pair | |
-| COLLECT_TO_CURSOR | multi-slot diff | Gather same-type items |
-| DROP_ALL_CURSOR / DROP_ONE_CURSOR | drop (extends 3.4) | |
-| DROP_ALL_SLOT / DROP_ONE_SLOT | drop (extends 3.4) | |
-| NOTHING / UNKNOWN | — | Skip |
-| CLONE_STACK | clone | New event kind |
-
-Also: `InventoryDragEvent` handling (multi-slot drop). Extract `InventoryUtil.identifyTransactions`-equivalent logic — see `docs/analysis/09-utilities-and-gaps.md` § InventoryUtil for the spec, rewrite clean-room.
-
-### 3.9 Container rollback
-
-Make `ContainerDepositRecord` and `ContainerWithdrawRecord` implement `Rollbackable`. `RollbackEffect.ContainerSlotWrite` already exists and `RollbackEngine.applyContainerSlotWrite` already implements it. Wire the factory methods.
-
-### Block 3 acceptance
-
-- Every event name listed by v1's `/sg events` command (minus AI-related) is registered and enabled in v2's `/sg events` output.
-- Every break/place/container/entity record is rollbackable.
-- `regression/scenario-basic.js` expands to cover every event type.
-- `queries.json` gets 40+ test cases.
 - `./gradlew test regression` green.
-- Commit message: `Phase 2 block 3: event parity — regression 40/40 green`.
+- In-server test: rename `v1.jar` → `.disabled`, boot server, RCON `sg admin migrate-v1 --dry-run` reports the right counts; `sg admin migrate-v1` runs without error; post-migration `sg search a:break t:30d -g` returns v1's historical data.
+- Commit: `Phase 3 block 7: v1 → v2 migration tool`.
 
-## Block 4 — WorldEdit / FastAsyncWorldEdit integration
+---
 
-### 4.1 FAWE dependency
+## Block 8 — FAWE fast-placement capture
 
-Drop the local-jar approach from v1. In `plugin/build.gradle.kts`:
+**Why next:** MedievalRP uses FAWE. Without this block, `//set` over a chest logs as air (fast-placement skips the vanilla WE extent chain).
+
+### Scope
+
+- Add FAWE as a `compileOnly` Maven dep:
+  ```kotlin
+  compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Bukkit:2.15.1")
+  ```
+  Repo: IntellectualSites (`https://mvn.intellectualsites.com/content/groups/public/`).
+- `FaweHook.tryInstall(EditSessionEvent, Player, World)` — walks the extent chain up to 16 deep. When it finds an `ExtentBatchProcessorHolder`, calls `.addProcessor(new FaweBatchLogger(player, world))`. Returns true if installed.
+- `FaweBatchLogger implements IBatchProcessor`:
+  - `processSet(IChunk, IChunkGet, IChunkSet)` runs per-chunk on FAWE worker threads.
+  - Walks each section's 4096-slot char array.
+  - For each set block: compare pre-commit state from `IChunkGet.getBlock(lx,y,lz)` against post-commit state from `blocks[i]`. Skip unchanged.
+  - Capture tile NBT via `get.getTile(lx, y, lz)` for containers.
+  - Emit `BlockBreakRecord` + `BlockPlaceRecord` with `Origin.fawe()`.
+- `FaweTileCapture` — converts FAWE `CompoundTag` container inventory to Bukkit `ItemStack` via `BaseItemStack(itemType, compoundTag, count)` + `BukkitAdapter.adapt(BaseItemStack)`. Produces `StoredItem` that slots into the existing `BlockSnapshot.containerItems`.
+- `WorldEditSubscriber.onEditSession`: when FAWE is present, try `FaweHook.tryInstall` first; if it fails, fall through to `LoggingExtent` (which FAWE will reject unless its `extent.allowed-plugins` whitelist is updated — document the whitelist entry for admins).
+- Unit tests: synthetic `CompoundTag` → `StoredItem` round-trip via a Mock FAWE adapter (or skip this path; pattern already proven in v1).
+
+### Acceptance
+
+- In-server test: `//set stone` over a placed chest → `/sg search a:break t:1m -g -ng` shows the chest break with its inventory preserved.
+- `/sg rollback a:break t:5m -g` restores the chest with contents.
+- Commit: `Phase 3 block 8: FAWE fast-placement logging + tile NBT capture`.
+
+---
+
+## Block 9 — Inspection wand (`/sg tool`)
+
+### Scope
+
+- `ToolService` implementation (replace the Phase 2 placeholder):
+  - Mongo-persisted per-player state: new collection `Tools` in `Spyglass` DB, schema `{ _id: playerId, enabledAt: Instant }`.
+  - `toggle(Player)` flips the state; gives/takes the configured wand material.
+  - `isActive(Player)` checks the collection (cached in-memory, invalidated on toggle).
+- `WandInteractListener implements Listener`:
+  - `PlayerInteractEvent` → if active wand && right-click block → run location-scoped `/sg search a:* r:0 t:7d -g -ng` at the clicked location, render inline.
+  - `BlockBreakEvent` / `BlockPlaceEvent` → if active wand → cancel event, fire the same search instead. Bonus: skip emitting the break/place record when wand is active (use a per-player thread-local or `PlayerMetadata` flag read by the extractors).
+- Registered in `SpyglassPlugin.onEnable` alongside `PageCache`.
+- `ToolServiceTest` (unit): mock Mongo collection, verify toggle persists.
+
+### Acceptance
+
+- In-game test: log in, `/sg tool` → wand given; right-click a recently-broken block → see who broke it + when. Break an unrelated block with wand active → nothing logged.
+- Commit: `Phase 3 block 9: inspection wand`.
+
+---
+
+## Block 10 — 1.20+/1.21+ block interactions
+
+Most of these reuse the `ContainerTransactionExtractor` shape; the extractor's filter needs to accept any `InventoryHolder`, not just `Container`.
+
+### New event names
+
+- `bookshelf-insert`, `bookshelf-remove` (chiseled bookshelves)
+- `pot-insert`, `pot-remove` (decorated pots)
+- `brush` (suspicious sand/gravel — needs delayed-verification helper)
+- `sculk` (sensor/shrieker triggers)
+- `crafter` (CrafterCraftEvent)
+- `vault` (trial key consumption; delayed check)
+- `shulker-open`, `shulker-close`, `shulker-deposit`, `shulker-withdraw`
+- `bundle-insert`, `bundle-extract`
+
+### Scope
+
+- Refactor `ContainerTransactionExtractor` to accept arbitrary `InventoryHolder` shapes. Dispatch to sub-handlers per holder class (bookshelf, pot, shulker, crafter, bundle).
+- Add `BrushExtractor`, `SculkExtractor`, `VaultExtractor` for the non-inventory events.
+- `DelayedInteractionTracker` helper shared by `BrushExtractor` and `VaultExtractor` (both need a short `runTaskLater` to verify the block state changed).
+- Config + event-name map entries for each new event.
+- Unit tests for the `InventoryHolder` sub-handlers.
+
+### Acceptance
+
+- Each event appears in `sg events` output.
+- A minimal bookshelf-insert / pot-insert / shulker-open scenario produces the right records (live in-game test required; automated regression deferred to mineflayer in Block 12).
+- Commit: `Phase 3 block 10: 1.20+/1.21+ block interactions`.
+
+---
+
+## Block 11 — `-we` flag + entity NBT rollback + HOTBAR/drag clicks
+
+Bundled mid-sized items.
+
+### 11a — `-we` flag
+
+- New flag handler: when `-we` is in the query and the sender is a `Player` with an active WorldEdit selection, replace the default radius predicate with a cuboid predicate built from the selection's bounding box.
+- `FlagHandler` registry (promote `QueryStringParser`'s inline flag handling to the registry pattern matching `QueryParamHandler`).
+- `-we` gated on `spyglass.worldedit` permission (new).
+
+### 11b — Entity NBT rollback
+
+- `EntityDeathRecord` implements `Rollbackable` via `@ApiStatus.Experimental`.
+- Capture path: `Entity.saveAsTag()` (Paper 1.21.x API) → `String` of NBT-in-SNBT → store on the record.
+- `RollbackEngine.applyEntitySpawn`:
+  - Spawn new entity at `BlockLocation` via `world.spawnEntity(location, EntityType, SpawnReason.COMMAND)`
+  - Restore NBT via Paper's entity tag APIs
+  - Inverse effect: `RollbackEffect.EntityRemove(location, entityType, entityId)`
+- Document the "NBT cross-version brittleness" caveat in code + docs.
+
+### 11c — HOTBAR / drag clicks
+
+Port v1's `InventoryUtil.identifyTransactions` clean-room. Spec in `docs/analysis/09-utilities-and-gaps.md`.
+
+Covers:
+- `HOTBAR_SWAP`
+- `HOTBAR_MOVE_AND_READD`
+- `COLLECT_TO_CURSOR` (multi-slot diffing — walk the container inventory, report slots that lost stacks)
+- `InventoryDragEvent` (multi-slot drop)
+
+### Acceptance
+
+- `-we` narrows searches correctly (in-game test).
+- `/sg rollback a:death t:5m` resurrects killed mobs with their attributes (in-game test).
+- Container shift-clicks with all action types log correctly.
+- Commit: `Phase 3 block 11: -we flag + entity NBT rollback + HOTBAR/drag`.
+
+---
+
+## Block 12 — Polish
+
+### 12a — MiniMessage template extraction
+
+- Port every `Component.text(...)` in `ResultRenderer`, `HelpService`, `EventsService`, `ServiceSupport` error/info/warn helpers to MiniMessage templates loaded from `messages.conf`.
+- Use `TagResolver.resolver(Placeholder.unparsed(...))` for dynamic values.
+- Server ops can edit `messages.conf` in-place to customize copy without rebuilding.
+
+### 12b — `@ApiStatus.Internal`
+
+Every class in these packages that's currently `public` only to satisfy cross-package wiring gets `@ApiStatus.Internal`:
+
+- `plugin/api/SpyglassApiImpl`
+- `plugin/pipeline/*` (Recorder, AsyncRecorder, ExtractorRegistry)
+- `plugin/storage/*` (MongoRecordStore, IndexManager, RecordStore, PredicateToBson)
+- `plugin/rollback/*` (RollbackEngine, UndoStack)
+- `plugin/command/service/*` (all eight services, ServiceSupport)
+- `plugin/command/SpyglassSuggestions`, `SpyglassCommands`, `PageCache`
+- `plugin/command/render/Messages`, `ResultRenderer`
+- `plugin/migration/*`
+- `plugin/worldedit/*`
+
+Don't touch `api/` classes — those are the public surface.
+
+### 12c — Mineflayer-driven regression
+
+- `regression/bot/` gets the `package.json`, `scenario-basic.js`, `scenario-rollback.js`, `scenario-worldedit.js` described in Phase 2 PLAN.md Block 2.
+- `regression/run.py` gains an `--include-live` flag that:
+  - Starts the server if not running
+  - Runs each scenario
+  - Waits for events to drain
+  - Continues with the existing query matrix
+- CI config updated to run unit tests only (not live regression — too heavy for GH Actions).
+
+### 12d — `MongoRecordStoreIT`
+
+Testcontainers-based:
+- Spin `mongo:7.0` container
+- Instantiate `MongoRecordStore` with the container's connection string
+- Save one of each record type
+- Query back
+- Assert round-trip equality
+- Verify all 4 indexes + the TTL exist
+
+### Acceptance
+
+- `./gradlew test` green including `MongoRecordStoreIT`.
+- `messages.conf` has templates for every rendered line; in-game output looks identical to before the port.
+- `jdeps` or similar shows no external references to plugin-internal classes.
+- `./gradlew regression --include-live` runs the mineflayer scenarios to completion.
+- Commit: `Phase 3 block 12: polish (MiniMessage + @ApiStatus.Internal + mineflayer + IT)`.
+
+---
+
+## Block 13 — Hardening + v1.0.0 release
+
+### 13a — Coverage gates
+
+Add to root `build.gradle.kts`:
 
 ```kotlin
-repositories {
-    // ... existing
-    maven("https://maven.enginehub.org/repo/")
-    maven("https://mvn.intellectualsites.com/content/groups/public/")
-}
-dependencies {
-    compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Core:2.15.1")
-    compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Bukkit:2.15.1")
-    compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
-}
-```
-
-Verify resolvability with `./gradlew :plugin:dependencies | grep -i worldedit`.
-
-### 4.2 Vanilla WorldEdit `LoggingExtent`
-
-Subscribe to `EditSessionEvent` at `Stage.BEFORE_CHANGE`. Wrap `event.getExtent()` in a `LoggingExtent` that captures pre-change `BlockState` before `super.setBlock(...)`, then calls `Recorder.record(...)` with `Origin.worldEdit()` and the player as source.
-
-Capture tile entity state: read the live Bukkit `BlockState` and feed it to `BlockSnapshots.capture` — the same logic as `BlockBreakExtractor`.
-
-### 4.3 FAWE `IBatchProcessor`
-
-Walk the extent chain on the `EditSessionEvent`. If any extent in the chain is an `ExtentBatchProcessorHolder`, call `.addProcessor(new FaweBatchLogger(player, world))`. This is the sanctioned FAWE extension point and survives fast-placement mode.
-
-FAWE path:
-- Iterate set sections per chunk.
-- For each set block, read the pre-commit state from `IChunkGet`.
-- Capture tile entity NBT via `get.getTile(lx, y, lz)`.
-- Convert the FAWE NBT `CompoundTag` to a Bukkit `ItemStack` via `BaseItemStack` + `BukkitAdapter.adapt(...)` — the same dance v1 does.
-- Emit `BlockBreakRecord` + `BlockPlaceRecord` with `Origin.fawe()`.
-
-### 4.4 `-we` query flag
-
-Add a `WeSelectionFlag` to the flag parser. When set:
-- Read the invoking player's WorldEdit `LocalSession`.
-- If the selection is a `CuboidRegion`, add a `QueryPredicate.And` with `location.worldId` + `location.x/y/z` range predicates matching the selection's bounding box.
-- Suppress the default-radius predicate (the flag implies a spatial filter already).
-- Error cleanly if the selection is non-cuboid or missing.
-
-### 4.5 (Optional, defer if tight on time) Batched FAWE rollback
-
-For rollbacks affecting ≥ 500 blocks, open a single FAWE `EditSession` per world and call `setBlock(...)` in bulk. FAWE commits async, order-of-magnitude faster than per-block Bukkit path.
-
-### Block 4 acceptance
-
-- A WE `//set stone` over a chest records N `BlockBreakRecord`s (one per affected block) with container contents preserved and `Origin.fawe()` or `Origin.worldEdit()` correctly set.
-- `/sg rollback a:place -we` reverses the `//set`.
-- `regression/scenario-worldedit.js` covers the happy path.
-- `./gradlew test regression` green.
-- Commit: `Phase 2 block 4: WE/FAWE integration`.
-
-## Block 5 — Migration + tool wand + final polish
-
-### 5.1 v1 → v2 migration tool
-
-Collection: `v1.DataEntry` → `Spyglass.EventRecords`.
-
-Implementation:
-- New subproject `migration/` or standalone `plugin/src/main/java/net/medievalrp/spyglass/plugin/migration/V1MigrationTool.java`.
-- Exposed as a console-only command: `/sg admin migrate-v1 [--dry-run] [--batch-size=1000]`.
-- For each v1 document:
-  - Read `Event`, `Player` (UUID), `Cause`, `Target`, `Location.{X,Y,Z,World}`, `Created`, `Expires`, event-specific fields.
-  - Map to the appropriate v2 record type via a `switch` on event name.
-  - Insert into `EventRecords`.
-- Progress reporting via `sender.sendActionBar` every 10k docs.
-- Handles the v1 `components=null` bug: if an item's `components` field is null, skip it cleanly rather than failing.
-- Tests: `MigrationTest` with sample v1 documents for every event type.
-
-Dry-run mode: count + validate, don't write.
-
-### 5.2 Inspection wand
-
-`/sg tool` toggles a per-player boolean in `ToolService`. Active players get the configured material (`config.tool.material`, default `REDSTONE_LAMP`). State lives in a Mongo collection `Tools` with a `(playerId, enabledAt)` schema — survives restarts.
-
-Right-click behavior:
-- `PlayerInteractEvent` handler, gated on `toolService.isActive(player)`.
-- For a block click: run a location-scoped `/sg search a:* r:0 t:1d -g -ng` at the clicked block's coords. Render inline.
-- For air click: no-op.
-
-Break/place while wand is active: the break/place extractor skips emitting (the tool is inspection-only, don't log its use). Implement via a flag on the event via Paper's metadata API or a per-player thread-local in the extractor.
-
-### 5.3 Remaining flags
-
-- `-drain` — when rolling back, also empty surviving containers at the target location. Implement as an additional `RollbackEffect.ContainerClear` applied after the main `BlockReplace`.
-- `-pg=<n>` — initial page on search. Services accept it and call `PageService.show(sender, n)` instead of `1`.
-
-### 5.4 Tab completion wiring
-
-Every parameter's `suggestions(...)` method is already implemented. Wire them into Cloud:
-
-```java
-BlockingSuggestionProvider<CommandSender> paramsProvider() {
-    return (ctx, input) -> {
-        String remaining = input.remainingInput();
-        String lastToken = lastToken(remaining);
-        return suggestionsFor(ctx.sender(), lastToken).stream()
-                .map(Suggestion::suggestion)
-                .collect(Collectors.toList());
-    };
+subprojects {
+    tasks.withType<JacocoCoverageVerification>().configureEach {
+        violationRules {
+            rule {
+                element = "BUNDLE"
+                limit {
+                    counter = "LINE"
+                    minimum = when (project.name) {
+                        "api" -> 0.90.toBigDecimal()
+                        "plugin" -> 0.80.toBigDecimal()
+                        else -> 0.00.toBigDecimal()
+                    }
+                }
+            }
+        }
+    }
+    tasks.named("check") { dependsOn("jacocoTestCoverageVerification") }
 }
 ```
 
-Where `suggestionsFor` walks the registered `QueryParamHandler`s and dispatches to the matching one based on the `alias:` prefix. Handle flags (`-...`) and param aliases (`p:`, `a:`, etc.) separately.
+Run `./gradlew build` and fix tests until coverage meets the gates.
 
-Verify with an in-game client that tab completion actually works (RCON can't test this).
+### 13b — Static analysis
 
-### 5.5 MiniMessage templates
+- Add SpotBugs (via `com.github.spotbugs.spotbugs-gradle-plugin`) OR Error Prone.
+- Default to `ERROR` severity; fail the build on any finding.
+- `@SuppressWarnings` allowed only with a comment explaining why.
 
-Port `ResultRenderer` from inline `Component.text()` to MiniMessage templates loaded from `messages.conf`. Add templates for:
-- `search.entry-single`
-- `search.entry-aggregation`
-- `search.hover-line`
-- `rollback.summary`
-- `error.*`
-- `help.*`
+### 13c — Codebase hygiene
 
-Use `TagResolver.resolver(Placeholder.unparsed(...))` for dynamic values.
+- Grep the codebase: no `TODO`, `FIXME`, `XXX`, `HACK` under `plugin/` or `api/`. Every such marker either gets fixed or tracked to an issue.
+- No commented-out code.
+- No `public` widening that's now redundant after Block 12's `@ApiStatus.Internal` pass.
+- Verify the `deployToRpServer` task still works end-to-end.
 
-### 5.6 Hide internals
+### 13d — Maven publication
 
-Replace the `public` widening from Phase 1. Every class under:
-- `plugin/src/main/java/.../api/SpyglassApiImpl.java`
-- `plugin/src/main/java/.../pipeline/*`
-- `plugin/src/main/java/.../storage/*`
-- `plugin/src/main/java/.../rollback/*`
-- `plugin/src/main/java/.../command/service/*`
+- Enable `maven-publish` for the `api` subproject.
+- Publish to a local Maven at minimum:
+  ```kotlin
+  publishing {
+      publications {
+          create<MavenPublication>("api") {
+              from(components["java"])
+              groupId = "net.medievalrp"
+              artifactId = "spyglass-api"
+              version = "1.0.0"
+          }
+      }
+      repositories {
+          maven {
+              name = "local"
+              url = uri(layout.buildDirectory.dir("repo"))
+          }
+      }
+  }
+  ```
+- `./gradlew :api:publishApiPublicationToLocalRepository` produces the artifact. Document the GitHub Packages path for future external use.
 
-...gets `@ApiStatus.Internal`. The plugin class `SpyglassPlugin` wires them via constructor — it imports them but external plugins shouldn't.
+### 13e — Version bump + release
 
-Add the JetBrains annotations dependency:
-```kotlin
-compileOnly("org.jetbrains:annotations:26.0.2")
-```
+- `gradle.properties`: `version=1.0.0`.
+- `./gradlew clean build` produces `Spyglass-1.0.0.jar`.
+- `git tag -a v1.0.0 -m "Feature-complete release"`.
+- Update `README.md` with end-user install instructions (minimum Paper version, Mongo required, upgrade notes for operators coming from v1).
 
-### 5.7 Documentation
+### Acceptance
 
-- Rewrite `README.md` for production users: "How to install", "Configuration", "Commands", "Migration from v1".
-- Archive this `PLAN.md` to `docs/phase2-plan.md` (or similar) once complete.
-- Delete or consolidate any `phase1-notes.md` / `phase2-plan.md` that are now historical.
+- `./gradlew build` green with coverage gates and static analysis passing.
+- Zero TODOs / FIXMEs in source.
+- `Spyglass-1.0.0.jar` + `spyglass-api-1.0.0.jar` produced.
+- README has an "Upgrading from v1" section pointing at `/sg admin migrate-v1`.
+- Tag `v1.0.0` pushed.
+- Commit: `Phase 3 block 13: v1.0.0 — feature-complete release`.
 
-### Block 5 acceptance
-
-- Migration tool: running against a seeded v1 fixture produces v2 records whose counts + sample contents match.
-- Tool wand: on-click search works in-game. Break/place with wand doesn't pollute logs.
-- `-drain` and `-pg=` work. Tab completion works in-game.
-- `./gradlew test regression` green.
-- Commit: `Phase 2 block 5: migration + tool + finishing`.
-
-## Block 6 — Production hardening
-
-Once the feature set is complete:
-
-### 6.1 Coverage gates
-
-- `./gradlew jacocoTestReport` ≥ 80% line coverage on `plugin`, ≥ 90% on `api`.
-- Fail the build below the gates.
-
-### 6.2 Static analysis
-
-- Add SpotBugs or Error Prone via Gradle plugin. Fail on `ERROR`.
-- Ensure no `@SuppressWarnings` without a justification comment.
-
-### 6.3 Codebase hygiene
-
-- Grep the codebase for `TODO`, `FIXME`, `XXX`, `HACK` — must be zero across `plugin/` and `api/`.
-- No commented-out code. No dead classes (grep each public class name — must have ≥ 1 non-test caller).
-- No `@Deprecated` without a replacement path documented.
-
-### 6.4 Version + release artifact
-
-- Bump version to `1.0.0` in `gradle.properties`.
-- Generate release artifact: `Spyglass-1.0.0.jar`. Include source jar and javadoc jar via Gradle `withSourcesJar()`, `withJavadocJar()`.
-- Publish to a local Maven if needed for WhisperNet etc. to depend on `spyglass-api:1.0.0`.
-
-### 6.5 Deployment test
-
-- Cycle v1 out of `../RP_Server/plugins/` (rename to `.disabled`).
-- Cycle v2 in alone.
-- Restart; verify all v1 user workflows work via RCON (logged-in player flows).
-- Run `./gradlew regression` (which still includes v1 for comparison — v1 logs should be empty since it's disabled, but the test harness handles that).
-- Rollback to v1+v2 coexist; `./gradlew regression` green again.
-
-### Block 6 acceptance
-
-- JaCoCo report on commit; coverage gates green.
-- No TODOs / FIXMEs / commented-out code.
-- `1.0.0` artifact built and manually verified on dev server.
-- Commit: `Phase 2 block 6: production hardening — v1.0.0 ready`.
-
-## Execution order — sequence
-
-Do the blocks in this order. They build on each other.
-
-1. Block 0 (repo reorg + deployToRpServer).
-2. Block 1 (command refactor). Regression harness still uses RCON sequences; once Block 2 lands it gets richer.
-3. Block 2 (regression harness). **Do not skip.** The remaining blocks rely on automated regression.
-4. Block 3 (events) — interleave with regression: each event group gets `regression green` before moving on.
-5. Block 4 (WE/FAWE).
-6. Block 5 (migration + tool + polish).
-7. Block 6 (hardening).
-
-Target cadence: ~1 commit per sub-step (3.1, 3.2, ... 5.6). Each commit runs the full regression suite. Commit messages state regression status explicitly.
+---
 
 ## When you finish
 
-- Commit range links to `main` — either push or tag `v1.0.0`.
-- Summary back to the user: block-by-block status, coverage %, any deferred items.
-- `README.md` reflects the shipped product.
+- Commit range from the Phase 2 HEAD (`c3a1223`) onward.
+- Tag `v1.0.0`.
+- Coverage report summary (% per module).
+- Summary of verification:
+  - Migration tested against MedievalRP dev's actual v1 data
+  - FAWE logging tested with `//set` over a chest
+  - Wand tested in-game
+  - Regression matrix count
+- Hand back for production switchover: rename `v1.jar` → `.disabled` on the real MedievalRP server, deploy v2, run migration, verify queries. Then pull the plug on v1.
 
-## Final note on judgment
+## Notes from Phase 2 for whoever picks this up
 
-The PLAN.md for Phase 1 said: "When in doubt, favor small correct pieces over big ambitious ones." That still holds. If you hit a hard dependency (e.g. FAWE's API changed, mineflayer can't simulate a specific event), **stop, document the blocker in `docs/phase2-blockers.md`, and move on**. Don't over-engineer around an obstacle. The senior dev will direct the next step.
+- The regression harness sleeps 0.8s between an async search command and the `page 1` follow-up. If you add commands that take longer (Migration: slow queries during bulk insert), bump the delay or make the harness poll for completion.
+- The config auto-merge (Phase 2 block 3.1) only merges the `events` section. If you add new top-level keys in future configs, extend the merger.
+- `ServiceSupport` is an interface with `bukkit(plugin)` and `synchronous()` factories. Tests use `synchronous`. Don't regress this.
+- `RollbackEngine.applyBlockReplace` does a strict `matches(expectedCurrent, actual)` check that'll skip any block that's been touched since the log. Document this clearly if the migration's restore path re-triggers it.
+- The `events-lists-decay` regression case doubles as a smoke test for config auto-merge. If it fails after a config change, the auto-merger didn't pick up the new event.
 
-The clean-room constraint is still primary. Never copy from v1; paraphrase from `docs/analysis/` and rewrite.
+## Concluding note
+
+Clean-room discipline is primary. When in doubt, favor small correct pieces over big ambitious ones. If you hit a hard blocker (e.g. Paper's `Entity.saveAsTag()` doesn't round-trip cleanly, FAWE's API changed), document the blocker in `docs/phase3-blockers.md` and move on to the next block — do not over-engineer around it. The senior dev will direct the next step.
