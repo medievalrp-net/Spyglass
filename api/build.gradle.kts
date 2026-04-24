@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -33,4 +34,30 @@ tasks.withType<JacocoReport>().configureEach {
 
 tasks.test {
     finalizedBy(tasks.named("jacocoTestReport"))
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("api") {
+            from(components["java"])
+            groupId = "net.medievalrp"
+            artifactId = "spyglass-api"
+            pom {
+                name.set("Spyglass API")
+                description.set("Public record / query / rollback types for the Spyglass forensics plugin.")
+                url.set("https://github.com/medievalrp-net/Spyglass")
+                licenses {
+                    license {
+                        name.set("MIT")
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri(rootProject.layout.buildDirectory.dir("repo"))
+        }
+    }
 }
