@@ -15,6 +15,7 @@ import net.medievalrp.omniscience2.plugin.util.BlockLocations;
 import net.medievalrp.omniscience2.plugin.util.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.block.Container;
+import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -58,6 +59,9 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
 
         InventoryHolder holder = clicked.getHolder();
         if (!(holder instanceof Container container)) {
+            return Stream.empty();
+        }
+        if (holder instanceof ShulkerBox) {
             return Stream.empty();
         }
 
@@ -111,6 +115,9 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
 
         InventoryHolder topHolder = top.getHolder();
         if (!(topHolder instanceof Container container)) {
+            return List.of();
+        }
+        if (topHolder instanceof ShulkerBox) {
             return List.of();
         }
 
