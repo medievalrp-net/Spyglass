@@ -24,6 +24,9 @@ import net.medievalrp.omniscience2.api.event.ChatRecord;
 import net.medievalrp.omniscience2.api.event.CommandRecord;
 import net.medievalrp.omniscience2.api.event.ContainerDepositRecord;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
+import net.medievalrp.omniscience2.api.event.EntityDeathRecord;
+import net.medievalrp.omniscience2.api.event.EntityHitRecord;
+import net.medievalrp.omniscience2.api.event.EntityMountRecord;
 import net.medievalrp.omniscience2.api.event.EventRecord;
 import net.medievalrp.omniscience2.api.event.ItemDropRecord;
 import net.medievalrp.omniscience2.api.event.ItemPickupRecord;
@@ -62,7 +65,12 @@ public final class MongoRecordStore implements RecordStore {
             Map.entry("ignite", BlockPlaceRecord.class),
             Map.entry("drop", ItemDropRecord.class),
             Map.entry("pickup", ItemPickupRecord.class),
-            Map.entry("teleport", TeleportRecord.class));
+            Map.entry("teleport", TeleportRecord.class),
+            Map.entry("death", EntityDeathRecord.class),
+            Map.entry("hit", EntityHitRecord.class),
+            Map.entry("shot", EntityHitRecord.class),
+            Map.entry("mount", EntityMountRecord.class),
+            Map.entry("dismount", EntityMountRecord.class));
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;

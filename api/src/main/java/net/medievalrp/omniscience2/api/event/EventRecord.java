@@ -15,7 +15,10 @@ public sealed interface EventRecord permits
         ContainerWithdrawRecord,
         ItemDropRecord,
         ItemPickupRecord,
-        TeleportRecord {
+        TeleportRecord,
+        EntityDeathRecord,
+        EntityHitRecord,
+        EntityMountRecord {
 
     UUID id();
 

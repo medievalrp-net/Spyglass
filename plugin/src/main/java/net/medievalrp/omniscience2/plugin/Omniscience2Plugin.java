@@ -36,6 +36,10 @@ import net.medievalrp.omniscience2.plugin.listener.block.BlockPlaceExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.CommandExtractor;
 import net.medievalrp.omniscience2.plugin.listener.container.ContainerTransactionExtractor;
+import net.medievalrp.omniscience2.plugin.listener.entity.EntityDamageExtractor;
+import net.medievalrp.omniscience2.plugin.listener.entity.EntityDeathExtractor;
+import net.medievalrp.omniscience2.plugin.listener.entity.EntityDismountExtractor;
+import net.medievalrp.omniscience2.plugin.listener.entity.EntityMountExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockExplodeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFadeExtractor;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFormExtractor;
@@ -123,6 +127,11 @@ public final class Omniscience2Plugin extends JavaPlugin {
         if (enabledEvents.contains("drop")) registry.register(this, new ItemDropExtractor(support));
         if (enabledEvents.contains("pickup")) registry.register(this, new ItemPickupExtractor(support));
         if (enabledEvents.contains("teleport")) registry.register(this, new TeleportExtractor(support));
+        if (enabledEvents.contains("death")) registry.register(this, new EntityDeathExtractor(support));
+        if (enabledEvents.contains("hit") || enabledEvents.contains("shot"))
+            registry.register(this, new EntityDamageExtractor(support));
+        if (enabledEvents.contains("mount")) registry.register(this, new EntityMountExtractor(support));
+        if (enabledEvents.contains("dismount")) registry.register(this, new EntityDismountExtractor(support));
 
         Omniscience2ApiImpl apiImpl = new Omniscience2ApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());

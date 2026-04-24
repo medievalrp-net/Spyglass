@@ -86,6 +86,21 @@ def v2_record(event, target, source_uuid, source_name, x, y, z, extras=None,
             "z": extras.get("to_z", 100),
         }
         doc["cause"] = extras.get("cause", "COMMAND")
+    if event == "death":
+        doc["entityType"] = extras.get("entity_type", "ZOMBIE")
+        doc["entityId"] = uuid.uuid4()
+        doc["killerType"] = extras.get("killer_type", "player")
+        doc["damageCause"] = extras.get("damage_cause", "ENTITY_ATTACK")
+    if event in ("hit", "shot"):
+        doc["victimType"] = extras.get("victim_type", "ZOMBIE")
+        doc["victimId"] = uuid.uuid4()
+        doc["damage"] = extras.get("damage", 5.0)
+        doc["projectile"] = event == "shot"
+        doc["projectileType"] = extras.get("projectile_type", "arrow") if event == "shot" else None
+    if event in ("mount", "dismount"):
+        doc["mountType"] = extras.get("mount_type", "HORSE")
+        doc["mountId"] = uuid.uuid4()
+        doc["dismount"] = event == "dismount"
     return doc
 
 
@@ -174,6 +189,15 @@ def seed_v2(client, *, skip=False):
                   extras={"amount": 1, "item_material": "IRON_INGOT"}),
         v2_record("teleport", "Alice", ALICE, "Alice", 0, 64, 0,
                   extras={"to_x": 500, "to_y": 70, "to_z": 500, "cause": "COMMAND"}),
+        v2_record("death", "ZOMBIE", ALICE, "Alice", 50, 64, 50,
+                  extras={"entity_type": "ZOMBIE", "killer_type": "player",
+                          "damage_cause": "ENTITY_ATTACK"}),
+        v2_record("hit", "ZOMBIE", ALICE, "Alice", 50, 64, 50,
+                  extras={"victim_type": "ZOMBIE", "damage": 5.0}),
+        v2_record("shot", "SKELETON", ALICE, "Alice", 60, 64, 60,
+                  extras={"victim_type": "SKELETON", "damage": 2.0, "projectile_type": "arrow"}),
+        v2_record("mount", "HORSE", ALICE, "Alice", 70, 64, 70,
+                  extras={"mount_type": "HORSE"}),
     ]
     db["EventRecords"].insert_many(docs)
     return removed, len(docs)
