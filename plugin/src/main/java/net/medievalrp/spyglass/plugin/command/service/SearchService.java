@@ -82,6 +82,8 @@ public final class SearchService {
         if (grouping) {
             return result.aggregations().stream().map(renderer::renderAggregation).toList();
         }
-        return result.records().stream().map(renderer::renderSingle).toList();
+        return result.records().stream()
+                .map(record -> renderer.renderSingle(record, request.flags()))
+                .toList();
     }
 }
