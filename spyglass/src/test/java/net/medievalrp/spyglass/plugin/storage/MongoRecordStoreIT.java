@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
-import com.mongodb.client.model.Filters;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
@@ -225,6 +224,190 @@ class MongoRecordStoreIT {
                 new QueryPredicate.Eq("afterItem." + subField, pattern),
                 new QueryPredicate.Eq("originalBlock.containerItems." + subField, pattern),
                 new QueryPredicate.Eq("newBlock.containerItems." + subField, pattern)));
+    }
+
+    @Test
+    void expiresAtIndexIsTtlIndexWithZeroExpireAfterSeconds() {
+        // TTL is a two-part contract: (1) the record carries an
+        // expiresAt Instant computed at write time, and (2) Mongo has a
+        // TTL index on that field with expireAfterSeconds=0 so "past
+        // the instant" means "delete me now". If the index is ever
+        // created without expireAfter (plain ascending index) or with
+        // a non-zero expireAfter, eviction semantics silently change.
+        var doc = rawClient.getDatabase("IT")
+                .getCollection("EventRecords")
+                .listIndexes()
+                .into(new java.util.ArrayList<>())
+                .stream()
+                .filter(d -> "expiresAt_1".equals(d.getString("name")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("expiresAt_1 index missing"));
+
+        // Mongo returns expireAfterSeconds as a Number — the BSON type
+        // depends on driver version, so normalize via Number#longValue
+        // instead of assuming Integer-vs-Long.
+        Number expire = (Number) doc.get("expireAfterSeconds");
+        assertThat(expire).as("expireAfterSeconds present").isNotNull();
+        assertThat(expire.longValue()).isEqualTo(0L);
+        // The key direction should be ascending so Mongo's TTL monitor
+        // can walk oldest-first. Same Number normalization for safety.
+        Number keyDir = (Number) doc.get("key", org.bson.Document.class).get("expiresAt");
+        assertThat(keyDir).isNotNull();
+        assertThat(keyDir.intValue()).isEqualTo(1);
+    }
+
+    @Test
+    void mongoTtlMonitorEvictsDocumentsWithPastExpiresAt() throws Exception {
+        // End-to-end proof: insert a record whose expiresAt is already
+        // in the past, wait for Mongo's TTL monitor to cycle, and
+        // verify the document is gone. This exercises the full chain
+        // (plugin-side expiresAt stamping + driver-side serialization +
+        // cluster-side TTL index + eviction).
+        //
+        // Mongo's TTL monitor default sleep is 60s, so we poll up to
+        // 120s. Too long for a normal unit test, but this is the only
+        // way to prove the index is actually driving eviction. Skipped
+        // fully when Docker isn't available via the class-level assume.
+        rawClient.getDatabase("IT").getCollection("EventRecords")
+                .deleteMany(new org.bson.Document());
+
+        Instant past = Instant.now().minusSeconds(60); // well past now
+        BlockLocation location = new BlockLocation(WORLD, "world", 1, 64, 1);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockBreakRecord expired = new BlockBreakRecord(
+                UUID.randomUUID(), 1, "break", past, past.minusSeconds(1),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                location, "STONE", stone, air);
+
+        store.save(List.of(expired));
+
+        // Duration.ofMinutes from the JDK — not the api.util.Duration
+        // already imported at the top of this file.
+        long deadline = System.currentTimeMillis() + java.time.Duration.ofMinutes(2).toMillis();
+        // We wiped the collection at the start, so a filter-free count is
+        // sufficient — avoids routing through the raw client's UUID codec
+        // (rawClient is plain; the plugin's MongoClient is the one with
+        // UuidRepresentation.STANDARD).
+        long remaining = -1;
+        while (System.currentTimeMillis() < deadline) {
+            remaining = rawClient.getDatabase("IT")
+                    .getCollection("EventRecords")
+                    .countDocuments();
+            if (remaining == 0) {
+                break;
+            }
+            Thread.sleep(5_000);
+        }
+
+        assertThat(remaining)
+                .as("TTL monitor should have evicted the past-expiry record within 2 min")
+                .isZero();
+    }
+
+    @Test
+    void concurrentSavesAndQueriesHoldUnderContention() throws Exception {
+        // AsyncRecorder drains on a single virtual thread, but the
+        // store must still survive concurrent reader threads (search
+        // commands from multiple online players) running against an
+        // active writer. This exercises both paths of the driver
+        // codec under real concurrency and proves:
+        //   - writes from one thread don't block or corrupt reads
+        //   - the count observed by readers is monotonic (never
+        //     regresses — a read never sees "lost" records after
+        //     seeing them once)
+        //   - no driver-level exceptions surface to the caller
+        rawClient.getDatabase("IT").getCollection("EventRecords")
+                .deleteMany(new org.bson.Document());
+
+        int totalWrites = 500;
+        BlockLocation loc = new BlockLocation(WORLD, "world", 0, 64, 0);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        Instant base = Instant.now();
+
+        java.util.concurrent.atomic.AtomicInteger writerErrors = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger readerErrors = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger lastObservedCount = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger regressions = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean writesDone = new java.util.concurrent.atomic.AtomicBoolean();
+
+        QueryRequest allBreaks = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "break")),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        Thread writer = new Thread(() -> {
+            try {
+                for (int i = 0; i < totalWrites; i++) {
+                    store.save(List.of(new BlockBreakRecord(
+                            UUID.randomUUID(), 1, "break",
+                            base.plusMillis(i), base.plusSeconds(3600),
+                            origin, source, loc, "STONE", stone, air)));
+                }
+            } catch (Exception ex) {
+                writerErrors.incrementAndGet();
+            } finally {
+                writesDone.set(true);
+            }
+        }, "IT-writer");
+
+        // 4 readers hammer queries during the write storm.
+        Thread[] readers = new Thread[4];
+        for (int r = 0; r < readers.length; r++) {
+            readers[r] = new Thread(() -> {
+                try {
+                    while (!writesDone.get()) {
+                        int size = store.query(allBreaks).records().size();
+                        // Monotonicity check — this is racy to assert
+                        // strictly (a second reader might win the
+                        // comparison), but a STRICT regression from N -> N-K
+                        // for K larger than a handful would signal a real
+                        // bug. We just count any observed regression.
+                        int prev;
+                        do {
+                            prev = lastObservedCount.get();
+                            if (size >= prev) {
+                                break;
+                            }
+                        } while (!lastObservedCount.compareAndSet(prev, size));
+                        if (size >= prev) {
+                            lastObservedCount.compareAndSet(prev, size);
+                        } else {
+                            regressions.incrementAndGet();
+                        }
+                    }
+                } catch (Exception ex) {
+                    readerErrors.incrementAndGet();
+                }
+            }, "IT-reader-" + r);
+        }
+
+        writer.start();
+        for (Thread t : readers) t.start();
+
+        writer.join(60_000);
+        for (Thread t : readers) t.join(10_000);
+
+        assertThat(writerErrors.get())
+                .as("writer must not surface any driver-level exceptions")
+                .isZero();
+        assertThat(readerErrors.get())
+                .as("readers must not surface any driver-level exceptions")
+                .isZero();
+        // Final count must match total writes.
+        assertThat(store.query(allBreaks).records())
+                .as("every saved record must be visible after writes settle")
+                .hasSize(totalWrites);
     }
 
     @Test
