@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.block;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ItemDropRecord;
 import net.medievalrp.omniscience2.api.event.RecordContext;
@@ -34,6 +35,11 @@ public final class ContainerDropExtractor implements EventExtractor<BlockDropIte
     @Override
     public Class<BlockDropItemEvent> eventType() {
         return BlockDropItemEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("drop");
     }
 
     @Override

@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -27,6 +28,11 @@ public final class BlockIgniteExtractor implements EventExtractor<BlockIgniteEve
     @Override
     public Class<BlockIgniteEvent> eventType() {
         return BlockIgniteEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("ignite");
     }
 
     @Override

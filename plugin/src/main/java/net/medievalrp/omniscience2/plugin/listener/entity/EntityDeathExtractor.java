@@ -1,6 +1,7 @@
 package net.medievalrp.omniscience2.plugin.listener.entity;
 
 import java.util.Base64;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.EntityDeathRecord;
 import net.medievalrp.omniscience2.api.event.Origin;
@@ -26,6 +27,11 @@ public final class EntityDeathExtractor implements EventExtractor<EntityDeathEve
     @Override
     public Class<EntityDeathEvent> eventType() {
         return EntityDeathEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("death");
     }
 
     @Override

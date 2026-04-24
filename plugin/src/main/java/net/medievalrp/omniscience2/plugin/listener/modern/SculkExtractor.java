@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -24,6 +25,11 @@ public final class SculkExtractor implements EventExtractor<SculkBloomEvent, Eve
     @Override
     public Class<SculkBloomEvent> eventType() {
         return SculkBloomEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("sculk");
     }
 
     @Override

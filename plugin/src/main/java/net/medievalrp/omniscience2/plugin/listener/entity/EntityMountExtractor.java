@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.entity;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.EntityMountRecord;
 import net.medievalrp.omniscience2.api.event.Origin;
@@ -24,6 +25,11 @@ public final class EntityMountExtractor implements EventExtractor<EntityMountEve
     @Override
     public Class<EntityMountEvent> eventType() {
         return EntityMountEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("mount");
     }
 
     @Override

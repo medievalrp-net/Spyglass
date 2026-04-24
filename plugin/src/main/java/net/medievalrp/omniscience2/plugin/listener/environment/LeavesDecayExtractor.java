@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockBreakRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -22,6 +23,11 @@ public final class LeavesDecayExtractor implements EventExtractor<LeavesDecayEve
     @Override
     public Class<LeavesDecayEvent> eventType() {
         return LeavesDecayEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("decay");
     }
 
     @Override

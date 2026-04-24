@@ -1,6 +1,7 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockBreakRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -26,6 +27,11 @@ public final class EntityExplodeExtractor implements EventExtractor<EntityExplod
     @Override
     public Class<EntityExplodeEvent> eventType() {
         return EntityExplodeEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("break");
     }
 
     @Override

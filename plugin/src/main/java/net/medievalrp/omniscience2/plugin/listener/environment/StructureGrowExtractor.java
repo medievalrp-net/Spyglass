@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.environment;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -23,6 +24,11 @@ public final class StructureGrowExtractor implements EventExtractor<StructureGro
     @Override
     public Class<StructureGrowEvent> eventType() {
         return StructureGrowEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("grow");
     }
 
     @Override

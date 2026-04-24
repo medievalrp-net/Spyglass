@@ -1,6 +1,7 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ContainerDepositRecord;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
@@ -32,6 +33,11 @@ public final class ShulkerTransactionExtractor implements EventExtractor<Invento
     @Override
     public Class<InventoryClickEvent> eventType() {
         return InventoryClickEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("shulker-deposit", "shulker-withdraw");
     }
 
     @Override

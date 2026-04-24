@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.item;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ItemDropRecord;
 import net.medievalrp.omniscience2.api.event.RecordContext;
@@ -23,6 +24,11 @@ public final class ItemDropExtractor implements EventExtractor<PlayerDropItemEve
     @Override
     public Class<PlayerDropItemEvent> eventType() {
         return PlayerDropItemEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("drop");
     }
 
     @Override

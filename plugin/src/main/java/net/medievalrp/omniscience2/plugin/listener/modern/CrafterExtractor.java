@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
 import net.medievalrp.omniscience2.api.event.EventRecord;
@@ -24,6 +25,11 @@ public final class CrafterExtractor implements EventExtractor<CrafterCraftEvent,
     @Override
     public Class<CrafterCraftEvent> eventType() {
         return CrafterCraftEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("crafter");
     }
 
     @Override

@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.chat;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.CommandRecord;
 import net.medievalrp.omniscience2.api.event.RecordContext;
@@ -20,6 +21,11 @@ public final class CommandExtractor implements EventExtractor<PlayerCommandPrepr
     @Override
     public Class<PlayerCommandPreprocessEvent> eventType() {
         return PlayerCommandPreprocessEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("command");
     }
 
     @Override

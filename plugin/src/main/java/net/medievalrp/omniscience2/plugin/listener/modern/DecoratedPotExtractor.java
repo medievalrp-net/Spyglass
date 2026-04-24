@@ -1,5 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.ContainerDepositRecord;
 import net.medievalrp.omniscience2.api.event.ContainerWithdrawRecord;
@@ -32,6 +33,11 @@ public final class DecoratedPotExtractor implements EventExtractor<PlayerInterac
     @Override
     public Class<PlayerInteractEvent> eventType() {
         return PlayerInteractEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("pot-insert", "pot-remove");
     }
 
     @Override

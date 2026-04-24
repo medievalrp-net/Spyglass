@@ -1,6 +1,7 @@
 package net.medievalrp.omniscience2.plugin.listener.block;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -25,6 +26,11 @@ public final class BlockMultiPlaceExtractor implements EventExtractor<BlockMulti
     @Override
     public Class<BlockMultiPlaceEvent> eventType() {
         return BlockMultiPlaceEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("place");
     }
 
     @Override
