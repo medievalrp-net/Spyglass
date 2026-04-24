@@ -13,8 +13,11 @@ import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
 import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
+import net.medievalrp.spyglass.plugin.command.param.EnchantParam;
 import net.medievalrp.spyglass.plugin.command.param.EntityParam;
 import net.medievalrp.spyglass.plugin.command.param.EventParam;
+import net.medievalrp.spyglass.plugin.command.param.ItemLoreParam;
+import net.medievalrp.spyglass.plugin.command.param.ItemNameParam;
 import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
@@ -40,6 +43,7 @@ import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakListener;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatListener;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandListener;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerDragListener;
+import net.medievalrp.spyglass.plugin.listener.container.ContainerInteractListener;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionListener;
 import net.medievalrp.spyglass.plugin.listener.entity.ArmorStandManipulateListener;
 import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageListener;
@@ -58,20 +62,17 @@ import net.medievalrp.spyglass.plugin.listener.item.ItemDropListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BrushListener;
+import net.medievalrp.spyglass.plugin.listener.modern.BundleTransactionListener;
 import net.medievalrp.spyglass.plugin.listener.modern.CrafterListener;
 import net.medievalrp.spyglass.plugin.listener.modern.DecoratedPotListener;
 import net.medievalrp.spyglass.plugin.listener.modern.DelayedInteractionTracker;
 import net.medievalrp.spyglass.plugin.listener.modern.SculkListener;
 import net.medievalrp.spyglass.plugin.listener.modern.ShulkerTransactionListener;
 import net.medievalrp.spyglass.plugin.listener.modern.VaultListener;
+import net.medievalrp.spyglass.plugin.listener.player.BlockUseListener;
 import net.medievalrp.spyglass.plugin.listener.player.JoinListener;
 import net.medievalrp.spyglass.plugin.listener.player.QuitListener;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportListener;
-import net.medievalrp.spyglass.plugin.migration.MigrationCommand;
-import net.medievalrp.spyglass.plugin.migration.MigrationService;
-import net.medievalrp.spyglass.plugin.migration.V1ItemDecoder;
-import net.medievalrp.spyglass.plugin.migration.V1ToV2Translator;
-import net.medievalrp.spyglass.plugin.migration.WorldNameLookup;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
@@ -134,6 +135,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockMultiPlaceListener(recorder, support),
                 new ContainerTransactionListener(recorder, support),
                 new ContainerDragListener(recorder, support),
+                new ContainerInteractListener(recorder, support),
+                new BlockUseListener(recorder, support),
                 new ContainerDropListener(recorder, support),
                 new ChatListener(recorder, support),
                 new CommandListener(recorder, support),
@@ -156,6 +159,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
                 new ShulkerTransactionListener(recorder, support),
+                new BundleTransactionListener(recorder, support, this),
                 new CrafterListener(recorder, support),
                 new SculkListener(recorder, support),
                 new BrushListener(recorder, support, delayedTracker),
@@ -174,6 +178,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new BlockParam());
         apiImpl.registerQueryParamHandler(new EntityParam());
         apiImpl.registerQueryParamHandler(new WorldParam());
+        apiImpl.registerQueryParamHandler(new ItemNameParam());
+        apiImpl.registerQueryParamHandler(new ItemLoreParam());
+        apiImpl.registerQueryParamHandler(new EnchantParam());
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
@@ -198,11 +205,6 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new WandInteractListener(toolService, searchService, config), this);
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
-        V1ToV2Translator translator = new V1ToV2Translator(
-                V1ItemDecoder.bukkit(), WorldNameLookup.bukkit(), getLogger());
-        MigrationService migrationService = new MigrationService(recordStore, config, translator, getLogger());
-        MigrationCommand migrationCommand = new MigrationCommand(migrationService, getLogger());
-
         SpyglassCommands commands = new SpyglassCommands(
                 this,
                 helpService,
@@ -212,8 +214,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 undoService,
                 pageService,
                 toolService,
-                suggestions,
-                migrationCommand);
+                suggestions);
         commands.register();
 
         if (isWorldEditInstalled()) {

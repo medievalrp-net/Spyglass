@@ -37,14 +37,21 @@ public final class ChatListener implements RecordingListener {
     public void onAsyncChat(AsyncChatEvent event) {
         Player sender = event.getPlayer();
         String message = PlainTextComponentSerializer.plainText().serialize(event.message());
+        // Include the speaker in recipients so "who heard this" is always
+        // answerable on hover, even for a chat sent to an empty server.
         List<UUID> recipients = event.viewers().stream()
                 .filter(Player.class::isInstance)
                 .map(Player.class::cast)
                 .map(Player::getUniqueId)
-                .filter(id -> !id.equals(sender.getUniqueId()))
                 .toList();
+        if (recipients.isEmpty()) {
+            recipients = List.of(sender.getUniqueId());
+        }
         BlockLocation location = BlockLocations.fromLocation(sender.getLocation());
         RecordContext ctx = support.playerContext(sender, location);
+        // Target is the message itself so aggregates group by unique content
+        // (three "hi"s collapse to one row, "hello" gets its own). Recipients
+        // are surfaced on hover.
         recorder.record(ChatRecord.of(ctx, message, message, recipients));
     }
 }

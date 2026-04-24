@@ -1,8 +1,7 @@
 package net.medievalrp.spyglass.plugin.command.service;
 
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.ApiStatus;
 
@@ -19,7 +18,7 @@ public final class EventsService {
         String joined = api.enabledEvents().stream().sorted()
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("(none)");
-        sender.sendMessage(Component.text("Enabled events: ", NamedTextColor.GRAY)
-                .append(Component.text(joined, NamedTextColor.WHITE)));
+        sender.sendMessage(Feedback.success("Enabled Events: "));
+        sender.sendMessage(Feedback.bonus(joined));
     }
 }

@@ -11,7 +11,9 @@ import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.CommandRecord;
+import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
+import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
@@ -48,24 +50,29 @@ public final class ResultRenderer {
     }
 
     private Component line(EventRecord record, long count, boolean grouped) {
+        // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
+        // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
-                .append(Component.text("= ", NamedTextColor.WHITE));
+                .append(Component.text("= ", NamedTextColor.GRAY));
+        if (grouped) {
+            builder.append(Component.text("(" + shortDate(record.occurred()) + ") ",
+                    NamedTextColor.GRAY));
+        }
         String tag = originTag(record.origin());
         if (!tag.isEmpty()) {
             builder.append(Component.text(tag + " ", NamedTextColor.AQUA));
         }
         builder.append(Component.text(record.sourceName(), NamedTextColor.GREEN))
                 .append(Component.text(" " + verb(record) + " ", NamedTextColor.WHITE));
-        if (grouped && count > 1) {
-            builder.append(Component.text(count + " ", NamedTextColor.WHITE));
-        } else {
-            int qty = quantityOf(record);
-            if (qty > 0) {
-                builder.append(Component.text(qty + " ", NamedTextColor.WHITE));
-            }
+        int qty = quantityOf(record);
+        if (qty > 0) {
+            builder.append(Component.text(qty + " ", NamedTextColor.GREEN));
         }
-        builder.append(Component.text(targetOf(record), NamedTextColor.AQUA))
-                .append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.GRAY))
+        builder.append(Component.text(targetOf(record), NamedTextColor.AQUA));
+        if (grouped) {
+            builder.append(Component.text(" x" + count, NamedTextColor.GREEN));
+        }
+        builder.append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.WHITE))
                 .hoverEvent(HoverEvent.showText(hover(record, count)));
         if (grouped) {
             builder.clickEvent(ClickEvent.runCommand("/sg search "
@@ -74,6 +81,11 @@ public final class ResultRenderer {
                     + " -ng"));
         }
         return builder.build();
+    }
+
+    private static String shortDate(Instant occurred) {
+        return occurred.atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("d/M/yy"));
     }
 
     public static Component pageHeader(int page, int totalPages, int totalResults) {
@@ -99,11 +111,8 @@ public final class ResultRenderer {
         lines.add(kv("When", fullTimestamp(record.occurred())));
         lines.add(kv("Origin", originText(record.origin())));
         lines.add(kv("Location", locationText(record.location())));
-        if (record instanceof ChatRecord chat) {
-            lines.add(kv("Message", chat.message()));
-            if (!chat.recipients().isEmpty()) {
-                lines.add(kv("Recipients", String.valueOf(chat.recipients().size())));
-            }
+        if (record instanceof ChatRecord chat && !chat.recipients().isEmpty()) {
+            lines.add(kv("Recipients", recipientNames(chat.recipients())));
         }
         if (record instanceof CommandRecord command) {
             lines.add(kv("Line", command.commandLine()));
@@ -132,7 +141,9 @@ public final class ResultRenderer {
             case BlockPlaceRecord placeRec -> placeRec.target();
             case ContainerDepositRecord deposit -> deposit.target();
             case ContainerWithdrawRecord withdraw -> withdraw.target();
-            case ChatRecord chat -> chat.message();
+            case ContainerInteractRecord interact -> interact.target();
+            case BlockUseRecord use -> use.target();
+            case ChatRecord chat -> chat.target();
             case CommandRecord command -> "/" + command.target();
             case JoinRecord join -> join.target();
             case QuitRecord quit -> quit.target();
@@ -187,6 +198,26 @@ public final class ResultRenderer {
         }
         String detail = origin.detail();
         return detail == null || detail.isEmpty() ? origin.kind() : origin.kind() + ":" + detail;
+    }
+
+    /**
+     * Resolve recipient UUIDs to names via Bukkit's offline-player cache. If a
+     * name isn't known (player never joined on this server) we fall back to a
+     * short UUID so the hover never says blank.
+     */
+    private static String recipientNames(java.util.List<java.util.UUID> recipients) {
+        if (recipients.size() > 8) {
+            return recipients.size() + " players";
+        }
+        StringBuilder out = new StringBuilder();
+        for (java.util.UUID id : recipients) {
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            String name = org.bukkit.Bukkit.getOfflinePlayer(id).getName();
+            out.append(name != null ? name : id.toString().substring(0, 8));
+        }
+        return out.toString();
     }
 
     private static String timeAgo(Instant occurred) {

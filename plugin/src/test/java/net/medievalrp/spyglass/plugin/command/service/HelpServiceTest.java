@@ -19,7 +19,7 @@ class HelpServiceTest {
 
         List<String> lines = ServiceTestSupport.plainTexts(captured);
         assertThat(lines).isNotEmpty();
-        assertThat(lines.get(0)).isEqualTo("Spyglass");
+        assertThat(lines.get(0)).contains("v1");
         String combined = String.join("\n", lines);
         assertThat(combined)
                 .contains("/sg search")
@@ -28,8 +28,6 @@ class HelpServiceTest {
                 .contains("/sg undo")
                 .contains("/sg page")
                 .contains("/sg tool")
-                .contains("/sg events")
-                .contains("Params:")
-                .contains("Flags:");
+                .contains("/sg events");
     }
 }

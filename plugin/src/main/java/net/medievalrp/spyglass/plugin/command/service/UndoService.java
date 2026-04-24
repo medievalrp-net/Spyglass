@@ -27,12 +27,12 @@ public final class UndoService {
 
     public void execute(CommandSender sender) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(Feedback.error("Only players can undo."));
+            sender.sendMessage(Feedback.error("You must be a player to use this command"));
             return;
         }
         Optional<UndoStack.UndoOperation> popped = undoStack.pop(player.getUniqueId());
         if (popped.isEmpty()) {
-            player.sendMessage(Feedback.warn("Nothing to undo."));
+            player.sendMessage(Feedback.error("You have no valid actions to undo"));
             return;
         }
         List<RollbackEffect> effects = popped.get().inverseEffects();

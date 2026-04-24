@@ -3,20 +3,24 @@ package net.medievalrp.spyglass.plugin.listener.entity;
 import java.util.Base64;
 import java.util.Set;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
+import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
@@ -32,7 +36,7 @@ public final class EntityDeathListener implements RecordingListener {
 
     @Override
     public Set<String> events() {
-        return Set.of("death");
+        return Set.of("death", "drop");
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -67,6 +71,24 @@ public final class EntityDeathListener implements RecordingListener {
         RecordContext ctx = support.context(origin, source, location);
         recorder.record(EntityDeathRecord.of(ctx, entityType, entityType, victim.getUniqueId(),
                 killerType, damageCause, nbt));
+
+        // Per-item drop records so loot tables are searchable/rollbackable like
+        // v1. Source is the dead entity (CREEPER, ARMADILLO, ...); origin is
+        // whoever triggered the death (player, or environment/mob). Skip for
+        // players -- their drops are attributed to PlayerDropItemEvent instead
+        // when they toss items, and death-drops of player inventory are noisy.
+        if (victim instanceof Player) {
+            return;
+        }
+        Source dropSource = support.entitySource(victim.getUniqueId(), entityType);
+        for (ItemStack drop : event.getDrops()) {
+            StoredItem stored = ItemSerialization.storedItem(0, drop);
+            if (stored == null) {
+                continue;
+            }
+            RecordContext dropCtx = support.context(origin, dropSource, location);
+            recorder.record(ItemDropRecord.of(dropCtx, drop.getType().name(), drop.getAmount(), stored));
+        }
     }
 
     private static String serializeEntity(LivingEntity entity) {

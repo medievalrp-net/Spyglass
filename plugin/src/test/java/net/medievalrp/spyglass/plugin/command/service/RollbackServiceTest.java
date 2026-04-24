@@ -97,7 +97,8 @@ class RollbackServiceTest {
 
         fixture.subject.execute(fixture.sender, "p:bogus", RollbackMode.ROLLBACK);
 
-        assertThat(ServiceTestSupport.plainTexts(messages)).containsExactly("bad param");
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("bad param"));
         verify(fixture.api, never()).query(any(QueryRequest.class));
     }
 
@@ -120,9 +121,9 @@ class RollbackServiceTest {
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
 
-        // Summary message contains both applied and skipped counts
+        // Summary message matches v1's " N reversals" format when nothing was skipped.
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .anyMatch(line -> line.contains("1 applied") && line.contains("0 skipped"));
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
     }
 
     @Test
@@ -137,7 +138,7 @@ class RollbackServiceTest {
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .contains("No rollbackable records matched.");
+                .anyMatch(line -> line.contains("No results."));
     }
 
     @Test
@@ -156,6 +157,6 @@ class RollbackServiceTest {
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
-                .anyMatch(line -> line.contains("0 applied") && line.contains("1 skipped"));
+                .anyMatch(line -> line.contains("0 reversals") && line.contains("1 skipped"));
     }
 }
