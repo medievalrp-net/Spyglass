@@ -133,5 +133,37 @@
     "v2_follow_up": "sg page 1",
     "expected_count": 1,
     "compare": "exact"
+  },
+  {
+    "id": "death-count",
+    "description": "Block 3.5 EntityDeathRecord",
+    "v2": "sg search a:death t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "hit-count",
+    "description": "Block 3.5 EntityHitRecord (melee)",
+    "v2": "sg search a:hit t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "shot-count",
+    "description": "Block 3.5 EntityHitRecord (projectile)",
+    "v2": "sg search a:shot t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "mount-count",
+    "description": "Block 3.5 EntityMountRecord",
+    "v2": "sg search a:mount t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
   }
 ]
