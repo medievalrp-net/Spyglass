@@ -23,7 +23,7 @@ public final class HelpService {
     };
 
     public void send(CommandSender sender) {
-        sender.sendMessage(Component.text(" -======= v1 =======-", NamedTextColor.AQUA));
+        sender.sendMessage(Component.text(" -======= Spyglass =======-", NamedTextColor.AQUA));
         sender.sendMessage(Component.text("For Powerful Searching", NamedTextColor.DARK_GRAY)
                 .decoration(TextDecoration.ITALIC, true));
         for (Entry entry : ENTRIES) {
