@@ -1,8 +1,10 @@
 package net.medievalrp.spyglass.plugin.command;
 
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.param.QueryParamHandler;
 import org.bukkit.command.CommandSender;
 import org.incendo.cloud.parser.ParserDescriptor;
 import org.incendo.cloud.parser.standard.StringParser;
@@ -11,7 +13,9 @@ import org.incendo.cloud.suggestion.Suggestion;
 
 public final class SpyglassSuggestions {
 
-    @SuppressWarnings("unused")
+    private static final List<String> FLAGS = List.of(
+            "-ng", "-g", "-nc", "-ex", "-ord=asc", "-ord=desc");
+
     private final SpyglassApi api;
 
     public SpyglassSuggestions(SpyglassApi api) {
@@ -23,11 +27,52 @@ public final class SpyglassSuggestions {
     }
 
     public BlockingSuggestionProvider<CommandSender> paramsProvider() {
-        // Per-parameter suggestion wiring is Block 5 work. Keep the hook in place.
-        return (ctx, input) -> emptySuggestions();
+        return (ctx, input) -> {
+            String remaining = input.remainingInput();
+            String lastToken = lastToken(remaining);
+            return suggestFor(ctx.sender(), lastToken).stream()
+                    .map(Suggestion::suggestion)
+                    .toList();
+        };
     }
 
-    private static List<Suggestion> emptySuggestions() {
-        return Collections.emptyList();
+    private List<String> suggestFor(CommandSender sender, String token) {
+        if (token.startsWith("-")) {
+            String lower = token.toLowerCase();
+            return FLAGS.stream().filter(flag -> flag.startsWith(lower)).toList();
+        }
+        int colon = token.indexOf(':');
+        if (colon > 0) {
+            String alias = token.substring(0, colon).toLowerCase();
+            String partialValue = token.substring(colon + 1);
+            Optional<QueryParamHandler> handler = api.queryParam(alias);
+            if (handler.isEmpty()) {
+                return List.of();
+            }
+            List<String> suggestions = handler.get().suggestions(sender, partialValue);
+            List<String> prefixed = new ArrayList<>(suggestions.size());
+            for (String suggestion : suggestions) {
+                prefixed.add(alias + ":" + suggestion);
+            }
+            return prefixed;
+        }
+        // No alias yet — suggest every alias with ':' suffix plus the flag starters.
+        List<String> out = new ArrayList<>();
+        for (QueryParamHandler handler : api.queryParams()) {
+            for (String alias : handler.aliases()) {
+                out.add(alias + ":");
+            }
+        }
+        out.addAll(FLAGS);
+        out.removeIf(item -> !item.startsWith(token));
+        return out;
+    }
+
+    private static String lastToken(String remaining) {
+        if (remaining == null || remaining.isEmpty()) {
+            return "";
+        }
+        int space = remaining.lastIndexOf(' ');
+        return space < 0 ? remaining : remaining.substring(space + 1);
     }
 }
