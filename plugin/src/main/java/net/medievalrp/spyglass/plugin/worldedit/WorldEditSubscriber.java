@@ -73,7 +73,20 @@ public final class WorldEditSubscriber {
         if (world == null) {
             return;
         }
+        if (isFawePresent()) {
+            try {
+                if (FaweHook.tryInstall(recorder, support, event, bukkitPlayer, world)) {
+                    return;
+                }
+            } catch (Throwable thrown) {
+                logger.warning("Spyglass: FAWE hook failed: " + thrown);
+            }
+        }
         event.setExtent(new LoggingExtent(event.getExtent(), bukkitPlayer, world));
+    }
+
+    private boolean isFawePresent() {
+        return Bukkit.getPluginManager().getPlugin("FastAsyncWorldEdit") != null;
     }
 
     private final class LoggingExtent extends AbstractDelegateExtent {
