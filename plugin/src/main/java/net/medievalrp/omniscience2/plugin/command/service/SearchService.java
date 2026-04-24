@@ -44,6 +44,10 @@ public final class SearchService {
             sender.sendMessage(ServiceSupport.errorMessage(ex.getMessage()));
             return;
         }
+        executeRequest(sender, request);
+    }
+
+    public void executeRequest(CommandSender sender, QueryRequest request) {
         sender.sendMessage(ServiceSupport.infoMessage("Searching..."));
         api.query(request).whenComplete((result, error) -> {
             if (error != null) {
