@@ -26,6 +26,7 @@ import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
+import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.block.data.BlockData;
@@ -127,23 +128,19 @@ final class FaweBatchLogger implements IBatchProcessor {
 
     private BlockSnapshot snapshot(BlockState weState, CompoundTag tile) {
         if (weState == null) {
-            return BlockSnapshot_AIR;
+            return BlockSnapshots.air();
         }
         try {
             BlockData data = BukkitAdapter.adapt(weState);
             Material material = data.getMaterial();
-            String blockData = data.getAsString();
+            String blockDataStr = data.getAsString();
             List<StoredItem> items = tile == null ? List.of() : parseContainerItems(tile);
-            return new BlockSnapshot(material, blockData,
+            return new BlockSnapshot(material, blockDataStr,
                     items, List.of(), List.of(), List.of(), null);
         } catch (RuntimeException ex) {
-            return BlockSnapshot_AIR;
+            return BlockSnapshots.air();
         }
     }
-
-    private static final BlockSnapshot BlockSnapshot_AIR = new BlockSnapshot(
-            Material.AIR, "minecraft:air",
-            List.of(), List.of(), List.of(), List.of(), null);
 
     private List<StoredItem> parseContainerItems(CompoundTag tile) {
         List<? extends Tag<?, ?>> list;
