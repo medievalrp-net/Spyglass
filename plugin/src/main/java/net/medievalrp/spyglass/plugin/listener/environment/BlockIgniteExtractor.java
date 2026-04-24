@@ -33,11 +33,7 @@ public final class BlockIgniteExtractor implements EventExtractor<BlockIgniteEve
     public Stream<BlockPlaceRecord> extract(BlockIgniteEvent event) {
         BlockState stateBefore = event.getBlock().getState();
         BlockSnapshot before = BlockSnapshots.capture(stateBefore);
-        BlockSnapshot after = new BlockSnapshot(
-                Material.FIRE,
-                Material.FIRE.createBlockData().getAsString(),
-                java.util.List.of(), java.util.List.of(), java.util.List.of(),
-                java.util.List.of(), null);
+        BlockSnapshot after = BlockSnapshots.of(Material.FIRE, Material.FIRE.createBlockData().getAsString());
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
         Instant occurred = support.now();
 
