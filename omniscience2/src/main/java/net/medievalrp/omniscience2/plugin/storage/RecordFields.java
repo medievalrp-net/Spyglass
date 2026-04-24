@@ -13,6 +13,13 @@ final class RecordFields {
     static final String LOCATION_Y = "location.y";
     static final String LOCATION_Z = "location.z";
 
+    // Heavy snapshot fields, dropped by the summary projection.
+    static final String ORIGINAL_BLOCK = "originalBlock";
+    static final String NEW_BLOCK = "newBlock";
+    static final String BEFORE_ITEM = "beforeItem";
+    static final String AFTER_ITEM = "afterItem";
+    static final String ITEM = "item";
+
     private RecordFields() {
     }
 }
