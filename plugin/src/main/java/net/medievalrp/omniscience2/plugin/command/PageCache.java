@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+import net.medievalrp.omniscience2.plugin.command.render.ResultRenderer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.entity.Player;
@@ -48,13 +48,7 @@ public final class PageCache implements Listener {
         int end = Math.min(start + PAGE_SIZE, lines.size());
 
         Audience audience = sender;
-        audience.sendMessage(Component.text()
-                .append(Component.text("«", NamedTextColor.WHITE))
-                .append(Component.text("Omniscience", NamedTextColor.AQUA))
-                .append(Component.text("»", NamedTextColor.GREEN))
-                .append(Component.text(" ((Page " + pageClamped + "/" + total + " — " + lines.size() + " results))",
-                        NamedTextColor.GRAY))
-                .build());
+        audience.sendMessage(ResultRenderer.pageHeader(pageClamped, total, lines.size()));
         for (int index = start; index < end; index++) {
             audience.sendMessage(lines.get(index));
         }

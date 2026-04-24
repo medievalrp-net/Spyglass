@@ -76,7 +76,7 @@ public final class ResultRenderer {
         return builder.build();
     }
 
-    public Component pageHeader(int page, int totalPages, int totalResults) {
+    public static Component pageHeader(int page, int totalPages, int totalResults) {
         return Component.text()
                 .append(Component.text("«", NamedTextColor.WHITE))
                 .append(Component.text("Omniscience", NamedTextColor.AQUA))

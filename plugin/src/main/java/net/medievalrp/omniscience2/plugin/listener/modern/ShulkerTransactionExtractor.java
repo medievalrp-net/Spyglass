@@ -10,8 +10,9 @@ import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
+import net.medievalrp.omniscience2.plugin.util.InventoryActions;
+import net.medievalrp.omniscience2.plugin.util.InventoryActions.Direction;
 import net.medievalrp.omniscience2.plugin.util.ItemSerialization;
-import org.bukkit.Material;
 import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryAction;
@@ -48,14 +49,14 @@ public final class ShulkerTransactionExtractor implements EventExtractor<Invento
         }
 
         InventoryAction action = event.getAction();
-        Direction direction = directionOf(action);
+        Direction direction = InventoryActions.directionOf(action);
         if (direction == null) {
             return Stream.empty();
         }
         int slot = event.getSlot();
         ItemStack slotItem = clicked.getItem(slot);
         ItemStack cursor = event.getCursor();
-        int amount = amountOf(action, slotItem, cursor);
+        int amount = InventoryActions.amountOf(action, slotItem, cursor);
         if (amount <= 0) {
             return Stream.empty();
         }
@@ -82,33 +83,4 @@ public final class ShulkerTransactionExtractor implements EventExtractor<Invento
         return Stream.of(record);
     }
 
-    private static Direction directionOf(InventoryAction action) {
-        return switch (action) {
-            case PLACE_ALL, PLACE_ONE, PLACE_SOME -> Direction.DEPOSIT;
-            case PICKUP_ALL, PICKUP_HALF, PICKUP_ONE, PICKUP_SOME -> Direction.WITHDRAW;
-            default -> null;
-        };
-    }
-
-    private static int amountOf(InventoryAction action, ItemStack slotItem, ItemStack cursor) {
-        return switch (action) {
-            case PLACE_ALL -> cursor == null || cursor.getType() == Material.AIR ? 0 : cursor.getAmount();
-            case PLACE_ONE -> 1;
-            case PLACE_SOME -> {
-                if (cursor == null || cursor.getType() == Material.AIR) {
-                    yield 0;
-                }
-                int max = cursor.getType().getMaxStackSize();
-                int existing = slotItem == null ? 0 : slotItem.getAmount();
-                yield Math.max(0, Math.min(cursor.getAmount(), max - existing));
-            }
-            case PICKUP_ALL -> slotItem == null ? 0 : slotItem.getAmount();
-            case PICKUP_HALF -> slotItem == null ? 0 : (slotItem.getAmount() + 1) / 2;
-            case PICKUP_ONE -> 1;
-            case PICKUP_SOME -> slotItem == null ? 0 : slotItem.getAmount();
-            default -> 0;
-        };
-    }
-
-    private enum Direction { DEPOSIT, WITHDRAW }
 }

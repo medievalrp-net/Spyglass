@@ -1,13 +1,13 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
 import java.time.Instant;
-import java.util.List;
 import net.medievalrp.omniscience2.api.event.BlockBreakRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
+import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
@@ -53,18 +53,15 @@ public final class BrushExtractor implements Listener {
             return;
         }
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
-        BlockSnapshot originalSnapshot = new BlockSnapshot(
-                start, block.getBlockData().getAsString(),
-                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot originalSnapshot = BlockSnapshots.of(start, block.getBlockData().getAsString());
         tracker.scheduleAfter(DELAY_TICKS, event.getPlayer(), block.getLocation(), ctx -> {
             if (ctx.currentMaterial() == start) {
                 return;
             }
             Instant occurred = support.now();
-            BlockSnapshot postSnapshot = new BlockSnapshot(
+            BlockSnapshot postSnapshot = BlockSnapshots.of(
                     ctx.currentMaterial(),
-                    ctx.location().getBlock().getBlockData().getAsString(),
-                    List.of(), List.of(), List.of(), List.of(), null);
+                    ctx.location().getBlock().getBlockData().getAsString());
             recorder.record(new BlockBreakRecord(
                     support.newId(), 1, "brush", occurred,
                     support.expiresAt(occurred),

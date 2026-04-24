@@ -30,6 +30,7 @@ import net.medievalrp.omniscience2.api.event.Source;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.event.TeleportRecord;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
+import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import org.bson.Document;
 import org.jetbrains.annotations.ApiStatus;
 

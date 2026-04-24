@@ -1,13 +1,13 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
 import java.time.Instant;
-import java.util.List;
 import net.medievalrp.omniscience2.api.event.BlockBreakRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
+import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
@@ -61,12 +61,8 @@ public final class VaultExtractor implements Listener {
                 return;
             }
             Instant occurred = support.now();
-            BlockSnapshot pre = new BlockSnapshot(
-                    Material.VAULT, blockData,
-                    List.of(), List.of(), List.of(), List.of(), null);
-            BlockSnapshot post = new BlockSnapshot(
-                    Material.VAULT, nowData,
-                    List.of(), List.of(), List.of(), List.of(), null);
+            BlockSnapshot pre = BlockSnapshots.of(Material.VAULT, blockData);
+            BlockSnapshot post = BlockSnapshots.of(Material.VAULT, nowData);
             recorder.record(new BlockBreakRecord(
                     support.newId(), 1, "vault", occurred,
                     support.expiresAt(occurred),

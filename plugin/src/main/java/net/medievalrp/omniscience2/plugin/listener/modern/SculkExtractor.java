@@ -1,7 +1,6 @@
 package net.medievalrp.omniscience2.plugin.listener.modern;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.stream.Stream;
 import net.medievalrp.omniscience2.api.event.BlockPlaceRecord;
 import net.medievalrp.omniscience2.api.event.BlockSnapshot;
@@ -10,6 +9,7 @@ import net.medievalrp.omniscience2.api.extension.EventExtractor;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
+import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import org.bukkit.block.Block;
 import org.bukkit.event.block.SculkBloomEvent;
 
@@ -31,9 +31,7 @@ public final class SculkExtractor implements EventExtractor<SculkBloomEvent, Eve
         Block block = event.getBlock();
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
         Instant occurred = support.now();
-        BlockSnapshot snap = new BlockSnapshot(
-                block.getType(), block.getBlockData().getAsString(),
-                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot snap = BlockSnapshots.of(block.getType(), block.getBlockData().getAsString());
         return Stream.of(new BlockPlaceRecord(
                 support.newId(), 1, "sculk", occurred,
                 support.expiresAt(occurred),
