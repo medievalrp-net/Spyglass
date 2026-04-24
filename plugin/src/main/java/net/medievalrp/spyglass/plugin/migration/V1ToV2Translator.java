@@ -212,7 +212,7 @@ public final class V1ToV2Translator {
         return new EntityDeathRecord(
                 UUID.randomUUID(), SCHEMA_VERSION, "death", occurred(doc), expires(doc),
                 origin(doc, "death", false), source(doc), requireLocation(doc),
-                readTarget(doc, null), entityType, entityId, killerType, damageCause);
+                readTarget(doc, null), entityType, entityId, killerType, damageCause, null);
     }
 
     private EntityHitRecord entityHit(Document doc, boolean projectile) {

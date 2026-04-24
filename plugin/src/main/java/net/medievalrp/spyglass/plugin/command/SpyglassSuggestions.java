@@ -14,7 +14,7 @@ import org.incendo.cloud.suggestion.Suggestion;
 public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(
-            "-ng", "-g", "-nc", "-ex", "-ord=asc", "-ord=desc");
+            "-ng", "-g", "-nc", "-ex", "-we", "-ord=asc", "-ord=desc");
 
     private final SpyglassApi api;
 

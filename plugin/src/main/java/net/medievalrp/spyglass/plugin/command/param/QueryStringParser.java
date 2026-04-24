@@ -18,6 +18,8 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
+import net.medievalrp.spyglass.plugin.worldedit.WorldEditSelection;
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
@@ -65,6 +67,23 @@ public final class QueryStringParser {
                         }
                         case "nc", "nochat" -> flags.add(Flag.NO_CHAT);
                         case "ex", "extended" -> flags.add(Flag.EXTENDED);
+                        case "we", "worldedit" -> {
+                            if (!(sender instanceof Player player)) {
+                                throw new ParamParseException("Flag -we requires a player with a WorldEdit selection.");
+                            }
+                            if (!sender.hasPermission("spyglass.worldedit")) {
+                                throw new ParamParseException("Missing permission spyglass.worldedit.");
+                            }
+                            if (!isWorldEditLoaded()) {
+                                throw new ParamParseException("WorldEdit is not installed.");
+                            }
+                            WorldEditSelection.Box box = WorldEditSelection.currentBox(player);
+                            if (box == null) {
+                                throw new ParamParseException("No active WorldEdit selection.");
+                            }
+                            predicates.add(cuboid(box));
+                            defaultRadiusSuppressed = true;
+                        }
                         case "ord", "order" -> {
                             if (flagValue == null) {
                                 throw new ParamParseException("Flag -ord requires a value (asc/desc).");
@@ -132,6 +151,21 @@ public final class QueryStringParser {
             return BlockLocations.fromLocation(player.getLocation());
         }
         return null;
+    }
+
+    private static boolean isWorldEditLoaded() {
+        return Bukkit.getPluginManager().getPlugin("WorldEdit") != null
+                || Bukkit.getPluginManager().getPlugin("FastAsyncWorldEdit") != null;
+    }
+
+    private static QueryPredicate cuboid(WorldEditSelection.Box box) {
+        BlockLocation min = box.min();
+        BlockLocation max = box.max();
+        return new QueryPredicate.And(List.of(
+                new QueryPredicate.Eq("location.worldId", box.worldId()),
+                new QueryPredicate.Range("location.x", min.x(), max.x()),
+                new QueryPredicate.Range("location.y", min.y(), max.y()),
+                new QueryPredicate.Range("location.z", min.z(), max.z())));
     }
 
     private static String canonicalAlias(QueryParamHandler handler) {

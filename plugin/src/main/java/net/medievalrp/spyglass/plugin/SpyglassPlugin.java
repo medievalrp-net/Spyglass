@@ -35,6 +35,7 @@ import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceExtractor;
 import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceExtractor;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandExtractor;
+import net.medievalrp.spyglass.plugin.listener.container.ContainerDragExtractor;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionExtractor;
 import net.medievalrp.spyglass.plugin.listener.entity.ArmorStandManipulateExtractor;
 import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageExtractor;
@@ -126,8 +127,10 @@ public final class SpyglassPlugin extends JavaPlugin {
             registry.register(this, new BlockPlaceExtractor(support));
             registry.register(this, new BlockMultiPlaceExtractor(support));
         }
-        if (enabledEvents.contains("deposit") || enabledEvents.contains("withdraw"))
+        if (enabledEvents.contains("deposit") || enabledEvents.contains("withdraw")) {
             registry.register(this, new ContainerTransactionExtractor(support));
+            registry.register(this, new ContainerDragExtractor(support));
+        }
         if (enabledEvents.contains("say")) registry.register(this, new ChatExtractor(support));
         if (enabledEvents.contains("command")) registry.register(this, new CommandExtractor(support));
         if (enabledEvents.contains("join")) registry.register(this, new JoinExtractor(support));

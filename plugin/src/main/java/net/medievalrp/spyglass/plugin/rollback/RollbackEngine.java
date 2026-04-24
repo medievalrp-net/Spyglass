@@ -1,8 +1,10 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -13,6 +15,7 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Banner;
@@ -25,6 +28,7 @@ import org.bukkit.block.banner.Pattern;
 import org.bukkit.block.banner.PatternType;
 import org.bukkit.block.sign.Side;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -50,9 +54,56 @@ public final class RollbackEngine {
         return switch (effect) {
             case RollbackEffect.BlockReplace replace -> applyBlockReplace(replace);
             case RollbackEffect.ContainerSlotWrite slotWrite -> applyContainerSlotWrite(slotWrite);
-            case RollbackEffect.EntitySpawn ignored -> new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity rollback is Phase 2."));
-            case RollbackEffect.EntityRemove ignored -> new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity rollback is Phase 2."));
+            case RollbackEffect.EntitySpawn spawn -> applyEntitySpawn(spawn);
+            case RollbackEffect.EntityRemove remove -> applyEntityRemove(remove);
         };
+    }
+
+    private RollbackResult applyEntitySpawn(RollbackEffect.EntitySpawn effect) {
+        if (effect.serializedEntity() == null || effect.serializedEntity().isBlank()) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                    "Entity NBT not captured (record is pre-Block-11)."));
+        }
+        Optional<World> world = BlockLocations.resolveWorld(effect.location());
+        if (world.isEmpty()) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
+        }
+        Location location = new Location(world.get(),
+                effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
+        try {
+            byte[] bytes = Base64.getDecoder().decode(effect.serializedEntity());
+            Entity entity = Bukkit.getUnsafe().deserializeEntity(bytes, world.get(), true, false);
+            if (entity == null) {
+                return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                        "Entity deserialization returned null."));
+            }
+            entity.teleport(location);
+            RollbackEffect inverse = new RollbackEffect.EntityRemove(
+                    effect.location(), effect.entityType(), entity.getUniqueId().toString());
+            return new RollbackResult.Applied(effect, inverse);
+        } catch (Throwable thrown) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.Error(
+                    "Entity spawn failed: " + thrown.getMessage()));
+        }
+    }
+
+    private RollbackResult applyEntityRemove(RollbackEffect.EntityRemove effect) {
+        if (effect.entityId() == null || effect.entityId().isBlank()) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("No entity id."));
+        }
+        UUID entityId;
+        try {
+            entityId = UUID.fromString(effect.entityId());
+        } catch (IllegalArgumentException ex) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Invalid entity id."));
+        }
+        Entity entity = Bukkit.getEntity(entityId);
+        if (entity == null) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity not found."));
+        }
+        entity.remove();
+        RollbackEffect inverse = new RollbackEffect.EntitySpawn(effect.location(), effect.entityType(), null);
+        return new RollbackResult.Applied(effect, inverse);
     }
 
     private RollbackResult applyBlockReplace(RollbackEffect.BlockReplace effect) {
