@@ -276,8 +276,18 @@ public final class SpyglassPlugin extends JavaPlugin {
     }
 
     private boolean isWorldEditInstalled() {
-        return getServer().getPluginManager().getPlugin("WorldEdit") != null
-                || getServer().getPluginManager().getPlugin("FastAsyncWorldEdit") != null;
+        return isLive("WorldEdit") || isLive("FastAsyncWorldEdit");
+    }
+
+    /**
+     * Plugin is present AND currently enabled. A softdepend that's
+     * been disabled by another plugin during startup (or disabled via
+     * plugman before we hit onEnable) shouldn't trigger wire-up — the
+     * lifecycle listener will pick it up later if it enables again.
+     */
+    private boolean isLive(String pluginName) {
+        var plugin = getServer().getPluginManager().getPlugin(pluginName);
+        return plugin != null && plugin.isEnabled();
     }
 
     @Override

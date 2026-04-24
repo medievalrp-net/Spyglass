@@ -17,7 +17,7 @@ public final class HelpService {
             new Entry("rollback", "<Lookup Params>", "Rollback a set of changes based on the parameters provided."),
             new Entry("restore", "<Lookup Params>", "Restore a set of changes based on the parameters provided."),
             new Entry("undo", "", "Undo your most recent rollback or restore."),
-            new Entry("page", "<Page #>", "Moves you to the specified page of results, if available."),
+            new Entry("page", "<Page #>", "Moves you to the specified page of results (cached 15 min)."),
             new Entry("tool", "", "Toggle the inspection wand."),
             new Entry("events", "", "List every event type currently being recorded."),
     };
