@@ -34,6 +34,7 @@ public final class EventCatalog {
         m.put("deposit", ContainerDepositRecord.class);
         m.put("withdraw", ContainerWithdrawRecord.class);
         m.put("open", ContainerInteractRecord.class);
+        m.put("close", ContainerInteractRecord.class);
         m.put("shulker-open", ContainerInteractRecord.class);
         m.put("shulker-close", ContainerInteractRecord.class);
         m.put("use", BlockUseRecord.class);
