@@ -69,6 +69,7 @@ import net.medievalrp.omniscience2.plugin.listener.environment.BlockIgniteListen
 import net.medievalrp.omniscience2.plugin.listener.environment.EntityExplodeListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.LeavesDecayListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.StructureGrowListener;
+import net.medievalrp.omniscience2.plugin.listener.item.CreativeCloneListener;
 import net.medievalrp.omniscience2.plugin.listener.item.ItemDropListener;
 import net.medievalrp.omniscience2.plugin.listener.item.ItemPickupListener;
 import net.medievalrp.omniscience2.plugin.listener.modern.BookshelfListener;
@@ -163,6 +164,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
                 new ItemPickupListener(recorder, support),
+                new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support),
                 new EntityDamageListener(recorder, support),

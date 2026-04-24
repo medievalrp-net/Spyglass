@@ -44,6 +44,7 @@ public final class EventCatalog {
         m.put("ignite", BlockPlaceRecord.class);
         m.put("drop", ItemDropRecord.class);
         m.put("pickup", ItemPickupRecord.class);
+        m.put("clone", ItemPickupRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
         m.put("hit", EntityHitRecord.class);
