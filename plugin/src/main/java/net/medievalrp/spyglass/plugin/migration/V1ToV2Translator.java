@@ -31,7 +31,9 @@ import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.Document;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class V1ToV2Translator {
 
     private static final int SCHEMA_VERSION = 1;

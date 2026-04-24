@@ -10,7 +10,9 @@ import org.bukkit.event.EventException;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.EventExecutor;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class ExtractorRegistry {
 
     private final List<EventExtractor<?, ?>> extractors = new ArrayList<>();

@@ -27,7 +27,9 @@ import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class ResultRenderer {
 
     private final SpyglassConfig config;

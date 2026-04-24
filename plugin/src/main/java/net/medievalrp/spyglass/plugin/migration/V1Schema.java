@@ -1,7 +1,9 @@
 package net.medievalrp.spyglass.plugin.migration;
 
 import java.util.Set;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class V1Schema {
 
     public static final String DEFAULT_DATABASE = "v1";

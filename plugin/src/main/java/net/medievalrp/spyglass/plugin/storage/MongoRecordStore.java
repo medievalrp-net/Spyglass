@@ -47,7 +47,9 @@ import org.bson.codecs.jsr310.Jsr310CodecProvider;
 import org.bson.codecs.pojo.PojoCodecProvider;
 import org.bson.codecs.record.RecordCodecProvider;
 import org.bson.conversions.Bson;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class MongoRecordStore implements RecordStore {
 
     private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = Map.ofEntries(

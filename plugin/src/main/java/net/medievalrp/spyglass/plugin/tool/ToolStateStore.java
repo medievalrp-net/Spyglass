@@ -12,7 +12,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 import org.bson.Document;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class ToolStateStore {
 
     public static final String COLLECTION = "Tools";

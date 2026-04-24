@@ -17,7 +17,9 @@ import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class SpyglassApiImpl implements SpyglassApi {
 
     private final Recorder recorder;
