@@ -29,6 +29,16 @@ public record EntityDeathRecord(
         String damageCause,
         @Nullable @ApiStatus.Experimental String entityNbt) implements EventRecord, Rollbackable {
 
+    public static EntityDeathRecord of(RecordContext ctx, String target,
+                                       String entityType, UUID entityId,
+                                       String killerType, String damageCause,
+                                       @Nullable String entityNbt) {
+        return new EntityDeathRecord(
+                ctx.id(), ctx.schemaVersion(), "death", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, entityType, entityId, killerType, damageCause, entityNbt);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
         return new RollbackEffect.EntitySpawn(location, entityType, entityNbt);

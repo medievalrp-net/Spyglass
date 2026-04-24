@@ -1,10 +1,10 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
-import java.time.Instant;
 import java.util.Base64;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -31,7 +31,6 @@ public final class EntityDeathExtractor implements EventExtractor<EntityDeathEve
     @Override
     public Stream<EntityDeathRecord> extract(EntityDeathEvent event) {
         LivingEntity victim = event.getEntity();
-        Instant occurred = support.now();
         BlockLocation location = BlockLocations.fromLocation(victim.getLocation());
         String entityType = victim.getType().getKey().getKey();
 
@@ -58,21 +57,9 @@ public final class EntityDeathExtractor implements EventExtractor<EntityDeathEve
 
         String nbt = serializeEntity(victim);
 
-        return Stream.of(new EntityDeathRecord(
-                support.newId(),
-                1,
-                "death",
-                occurred,
-                support.expiresAt(occurred),
-                origin,
-                source,
-                location,
-                entityType,
-                entityType,
-                victim.getUniqueId(),
-                killerType,
-                damageCause,
-                nbt));
+        RecordContext ctx = support.context(origin, source, location);
+        return Stream.of(EntityDeathRecord.of(ctx, entityType, entityType, victim.getUniqueId(),
+                killerType, damageCause, nbt));
     }
 
     private static String serializeEntity(LivingEntity entity) {

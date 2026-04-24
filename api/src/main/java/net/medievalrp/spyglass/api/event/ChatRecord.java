@@ -23,4 +23,11 @@ public record ChatRecord(
     public ChatRecord {
         recipients = List.copyOf(recipients);
     }
+
+    public static ChatRecord of(RecordContext ctx, String target, String message, List<UUID> recipients) {
+        return new ChatRecord(
+                ctx.id(), ctx.schemaVersion(), "say", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, message, recipients);
+    }
 }
