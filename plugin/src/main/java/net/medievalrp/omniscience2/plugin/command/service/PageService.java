@@ -1,5 +1,7 @@
 package net.medievalrp.omniscience2.plugin.command.service;
 
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
+
 import net.medievalrp.omniscience2.plugin.command.PageCache;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.ApiStatus;
@@ -15,7 +17,7 @@ public final class PageService {
 
     public void show(CommandSender sender, int page) {
         if (!cache.show(sender, page)) {
-            sender.sendMessage(ServiceSupport.warnMessage("No active search results."));
+            sender.sendMessage(Feedback.warn("No active search results."));
         }
     }
 }

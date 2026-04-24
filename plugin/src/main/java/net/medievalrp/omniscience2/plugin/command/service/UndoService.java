@@ -1,5 +1,7 @@
 package net.medievalrp.omniscience2.plugin.command.service;
 
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
+
 import java.util.List;
 import java.util.Optional;
 import net.medievalrp.omniscience2.api.rollback.RollbackEffect;
@@ -25,12 +27,12 @@ public final class UndoService {
 
     public void execute(CommandSender sender) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(ServiceSupport.errorMessage("Only players can undo."));
+            sender.sendMessage(Feedback.error("Only players can undo."));
             return;
         }
         Optional<UndoStack.UndoOperation> popped = undoStack.pop(player.getUniqueId());
         if (popped.isEmpty()) {
-            player.sendMessage(ServiceSupport.warnMessage("Nothing to undo."));
+            player.sendMessage(Feedback.warn("Nothing to undo."));
             return;
         }
         List<RollbackEffect> effects = popped.get().inverseEffects();

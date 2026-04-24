@@ -1,9 +1,11 @@
 package net.medievalrp.omniscience2.plugin.command.service;
 
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
+
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import net.medievalrp.omniscience2.plugin.tool.ToolStateStore;
+import net.medievalrp.omniscience2.plugin.command.service.tool.ToolStateStore;
 import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -31,7 +33,7 @@ public final class ToolService {
 
     public void toggle(CommandSender sender) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(ServiceSupport.errorMessage("The inspection wand is player-only."));
+            sender.sendMessage(Feedback.error("The inspection wand is player-only."));
             return;
         }
         UUID id = player.getUniqueId();
@@ -39,13 +41,13 @@ public final class ToolService {
         if (wasActive) {
             store.disable(id);
             handout.take(player, wandMaterial);
-            sender.sendMessage(ServiceSupport.infoMessage("Inspection wand disabled."));
+            sender.sendMessage(Feedback.info("Inspection wand disabled."));
             return;
         }
         active.add(id);
         store.enable(id);
         handout.give(player, wandMaterial);
-        sender.sendMessage(ServiceSupport.infoMessage(
+        sender.sendMessage(Feedback.info(
                 "Inspection wand active \u2014 right-click a block to inspect; wand-held break/place triggers a lookup."));
     }
 

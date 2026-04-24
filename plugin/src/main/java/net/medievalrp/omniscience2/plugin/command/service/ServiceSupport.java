@@ -1,11 +1,17 @@
 package net.medievalrp.omniscience2.plugin.command.service;
 
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.ApiStatus;
 
+/**
+ * Main-thread scheduler indirection. Services that complete async work need
+ * to bounce back to the Bukkit main thread before touching Bukkit state;
+ * tests swap in {@link #synchronous()} to skip the scheduler entirely.
+ *
+ * <p>Sender feedback helpers (error/info/warn) moved to
+ * {@link net.medievalrp.omniscience2.plugin.command.render.Feedback}.
+ */
 @ApiStatus.Internal
 public interface ServiceSupport {
 
@@ -23,17 +29,5 @@ public interface ServiceSupport {
 
     static ServiceSupport synchronous() {
         return Runnable::run;
-    }
-
-    static Component errorMessage(String message) {
-        return Component.text(message, NamedTextColor.RED);
-    }
-
-    static Component infoMessage(String message) {
-        return Component.text(message, NamedTextColor.DARK_GRAY);
-    }
-
-    static Component warnMessage(String message) {
-        return Component.text(message, NamedTextColor.YELLOW);
     }
 }

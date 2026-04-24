@@ -1,4 +1,4 @@
-package net.medievalrp.omniscience2.plugin.tool;
+package net.medievalrp.omniscience2.plugin.command.service.tool;
 
 import java.time.Instant;
 import java.util.ArrayList;

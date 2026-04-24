@@ -1,4 +1,4 @@
-package net.medievalrp.omniscience2.plugin.tool;
+package net.medievalrp.omniscience2.plugin.command.service.tool;
 
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;

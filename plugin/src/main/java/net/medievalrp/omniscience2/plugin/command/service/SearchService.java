@@ -1,5 +1,7 @@
 package net.medievalrp.omniscience2.plugin.command.service;
 
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
+
 import java.util.List;
 import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
@@ -43,19 +45,19 @@ public final class SearchService {
         try {
             request = parser.parse(sender, raw, 0);
         } catch (ParamParseException ex) {
-            sender.sendMessage(ServiceSupport.errorMessage(ex.getMessage()));
+            sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
         }
         executeRequest(sender, request);
     }
 
     public void executeRequest(CommandSender sender, QueryRequest request) {
-        sender.sendMessage(ServiceSupport.infoMessage("Searching..."));
+        sender.sendMessage(Feedback.info("Searching..."));
         api.query(request).whenComplete((result, error) -> {
             if (error != null) {
                 logger.warning("Omniscience2 search failed: " + error);
                 support.onMainThread(() -> sender.sendMessage(
-                        ServiceSupport.errorMessage("Query failed: " + error.getMessage())));
+                        Feedback.error("Query failed: " + error.getMessage())));
                 return;
             }
             support.onMainThread(() -> handleResults(sender, request, result));
@@ -66,7 +68,7 @@ public final class SearchService {
         List<Component> lines = renderLines(request, result);
         if (lines.isEmpty()) {
             pageCache.clear(sender);
-            sender.sendMessage(ServiceSupport.warnMessage("No matching records."));
+            sender.sendMessage(Feedback.warn("No matching records."));
             return;
         }
         pageCache.store(sender, lines);

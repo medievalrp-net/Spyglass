@@ -1,5 +1,7 @@
 package net.medievalrp.omniscience2.plugin.migration;
 
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
@@ -22,11 +24,11 @@ public final class MigrationCommand {
 
     public void execute(CommandSender sender, String rawArgs) {
         if (!sender.hasPermission("omniscience2.admin")) {
-            sender.sendMessage(ServiceSupport.errorMessage("Missing permission omniscience2.admin."));
+            sender.sendMessage(Feedback.error("Missing permission omniscience2.admin."));
             return;
         }
         if (!running.compareAndSet(false, true)) {
-            sender.sendMessage(ServiceSupport.warnMessage("Migration already running."));
+            sender.sendMessage(Feedback.warn("Migration already running."));
             return;
         }
 
@@ -35,7 +37,7 @@ public final class MigrationCommand {
             options = parseOptions(rawArgs);
         } catch (IllegalArgumentException ex) {
             running.set(false);
-            sender.sendMessage(ServiceSupport.errorMessage(ex.getMessage()));
+            sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
         }
 
@@ -68,7 +70,7 @@ public final class MigrationCommand {
             sender.sendMessage(Component.text(summary, NamedTextColor.GREEN));
         } catch (Exception ex) {
             logger.severe("migration aborted: " + ex.getMessage());
-            sender.sendMessage(ServiceSupport.errorMessage("Migration aborted: " + ex.getMessage()));
+            sender.sendMessage(Feedback.error("Migration aborted: " + ex.getMessage()));
         } finally {
             running.set(false);
         }
