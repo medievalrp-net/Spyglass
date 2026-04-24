@@ -24,6 +24,9 @@ import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityHitRecord;
+import net.medievalrp.spyglass.api.event.EntityMountRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
@@ -62,7 +65,12 @@ public final class MongoRecordStore implements RecordStore {
             Map.entry("ignite", BlockPlaceRecord.class),
             Map.entry("drop", ItemDropRecord.class),
             Map.entry("pickup", ItemPickupRecord.class),
-            Map.entry("teleport", TeleportRecord.class));
+            Map.entry("teleport", TeleportRecord.class),
+            Map.entry("death", EntityDeathRecord.class),
+            Map.entry("hit", EntityHitRecord.class),
+            Map.entry("shot", EntityHitRecord.class),
+            Map.entry("mount", EntityMountRecord.class),
+            Map.entry("dismount", EntityMountRecord.class));
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;

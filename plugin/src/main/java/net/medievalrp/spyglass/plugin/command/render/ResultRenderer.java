@@ -14,6 +14,9 @@ import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityHitRecord;
+import net.medievalrp.spyglass.api.event.EntityMountRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
@@ -129,6 +132,9 @@ public final class ResultRenderer {
             case ItemDropRecord drop -> drop.amount() + "x " + drop.target();
             case ItemPickupRecord pickup -> pickup.amount() + "x " + pickup.target();
             case TeleportRecord tp -> tp.target() + " via " + tp.cause();
+            case EntityDeathRecord death -> death.target() + " (" + death.damageCause() + ")";
+            case EntityHitRecord hit -> hit.target() + " for " + String.format("%.1f", hit.damage());
+            case EntityMountRecord mount -> (mount.dismount() ? "dismounted " : "mounted ") + mount.target();
         };
     }
 
