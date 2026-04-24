@@ -6,7 +6,20 @@ Successor to the MPL-licensed [Omniscience](../Omniscience). Built clean-room fr
 
 ## Status
 
-Pre-alpha. See [`docs/analysis/10-modernization-hotspots.md`](docs/analysis/10-modernization-hotspots.md) for the planned execution path.
+`v0.9.0` — feature-parity release candidate. Ships 22 event types, full block + container rollback, vanilla WorldEdit capture, and an automated regression harness against both v1 and v2. See [`docs/phase2-notes.md`](docs/phase2-notes.md) for what shipped and what's deferred to Phase 3 (notably: FAWE fast-placement, v1→v2 migration tool, entity NBT rollback).
+
+## Build
+
+```
+./gradlew build                  # api + plugin jars, tests, coverage
+./gradlew :plugin:shadowJar      # just the shaded plugin jar
+./gradlew deployToRpServer       # jar + copy to ../RP_Server/plugins/
+./gradlew regression             # live regression against ../RP_Server
+```
+
+## Running the regression harness
+
+Requires Python 3.9+, `pip install --user mcrcon pymongo`, Mongo at `localhost:27017`, and `../RP_Server` with Paper + both `Omniscience.jar` (v1) and `Omniscience2.jar` (v2) in `plugins/`. See [`regression/README.md`](regression/README.md).
 
 ## Modules
 
