@@ -32,11 +32,12 @@ import org.junit.jupiter.api.Test;
  * hammer {@code record()} from many OS threads simultaneously to prove:
  * <ul>
  *   <li>the {@link java.util.concurrent.LinkedBlockingDeque} offer path
- *       is lock-free and lossless below capacity;</li>
- *   <li>the {@code dropped} counter is atomic under contention (no lost
- *       increments);</li>
+ *       is lock-free and lossless under heavy fan-in;</li>
+ *   <li>the no-drop invariant holds even when the store is slow — backlog
+ *       grows in the queue rather than turning into lost events;</li>
  *   <li>a hard shutdown during active drain completes bounded-time and
- *       reports consistent counts.</li>
+ *       reports consistent counts ({@code drained + dropped + remaining
+ *       <= offered}).</li>
  * </ul>
  */
 class AsyncRecorderConcurrencyTest {
@@ -53,10 +54,11 @@ class AsyncRecorderConcurrencyTest {
 
     @Test
     void manyProducersReachStoreWithoutLoss() throws Exception {
-        // 16 OS threads × 1 000 records each = 16 000 events. Queue cap
-        // 20 000 — comfortably above total — so drop count must be zero
-        // and every record must land in the store. This pins the
-        // no-loss guarantee under realistic fan-in.
+        // 16 OS threads × 1 000 records each = 16 000 events. Warn
+        // threshold 20 000 — deliberately higher than the total so the
+        // warn path stays silent. With the unbounded queue, every record
+        // must land in the store and drop count must be zero. This pins
+        // the no-loss guarantee under realistic fan-in.
         int producers = 16;
         int perProducer = 1_000;
         CapturingStore store = new CapturingStore();
@@ -92,23 +94,30 @@ class AsyncRecorderConcurrencyTest {
         } finally {
             AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("5s"));
             assertThat(report.dropped())
-                    .as("no record should be dropped when queue cap > total offered")
+                    .as("no-drop invariant: fan-in from many producers must never drop")
                     .isZero();
         }
     }
 
     @Test
-    void droppedCounterIsAtomicUnderContention() throws Exception {
-        // Force drops by choosing a tiny queue (25) and a slow store.
-        // With 8 producers and 2 000 records each, most offers will fail.
-        // The invariant: drained + dropped + remaining == offered, and
-        // no increment should be lost to a data race on the counter.
+    void noDropsUnderHeavyContentionEvenWithSlowStore() throws Exception {
+        // v2 no-drop guarantee: even when the store is artificially slow
+        // and 8 producers hammer {@code record()} with 2 000 events each,
+        // nothing must be lost. Backlog grows in the unbounded queue
+        // (warn threshold fires, but no drop); shutdown has a generous
+        // flush window so everything lands in the store.
+        //
+        // Invariants:
+        //   1. dropped == 0 (Mongo is healthy, no catastrophic flush-timeout)
+        //   2. drained + remaining == offered (every record is accounted for)
+        //   3. counter atomicity under contention — no lost increments
         int producers = 8;
         int perProducer = 2_000;
-        int queueCap = 25;
-        // Slow the drain so the queue stays hot.
+        long warnThreshold = 25;
+        // Slow the drain so the queue stays hot. With an unbounded queue
+        // this builds backlog instead of drops.
         SlowStore store = new SlowStore(2L);
-        AsyncRecorder recorder = new AsyncRecorder(queueCap, store, Logger.getLogger("test"));
+        AsyncRecorder recorder = new AsyncRecorder(warnThreshold, store, Logger.getLogger("test"));
 
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger offered = new AtomicInteger();
@@ -131,17 +140,21 @@ class AsyncRecorderConcurrencyTest {
             pool.shutdown();
             assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
         } finally {
-            // Give the drain 10s to make progress, then shut down. The
-            // report tells us the invariant.
-            AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("10s"));
+            // Generous flush window — slow store needs time to drain the
+            // whole backlog at 2ms per save (~16k saves in worst case,
+            // but batching brings that way down).
+            AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("30s"));
             int totalOffered = offered.get();
             long accounted = report.drained() + report.dropped() + report.remaining();
             assertThat(accounted)
                     .as("drained + dropped + remaining must equal offered; mismatch => lost counter increment")
                     .isEqualTo(totalOffered);
             assertThat(report.dropped())
-                    .as("some drops expected when offered >> queue capacity")
-                    .isGreaterThan(0L);
+                    .as("no-drop invariant: slow store must produce zero drops, not lost events")
+                    .isZero();
+            assertThat(report.drained())
+                    .as("every offered record must have been persisted by shutdown end")
+                    .isEqualTo(totalOffered);
         }
     }
 
@@ -182,10 +195,15 @@ class AsyncRecorderConcurrencyTest {
                 .as("shutdown must complete within the configured timeout + slack")
                 .isLessThan(7_000L);
         long accounted = report.drained() + report.dropped() + report.remaining();
+        // The report snapshot is taken before shutdown returns; the producer
+        // may call record() again after that snapshot, so `accounted` is a
+        // lower bound, bounded above by the final offered count.
         assertThat(accounted)
-                .as("every offered record must be accounted for in the shutdown report")
-                .isLessThanOrEqualTo(offered.get())
-                .isGreaterThanOrEqualTo(accounted - 0); // trivially true; enforces report isn't absurdly low
+                .as("report counters cannot exceed the number of records offered to the recorder")
+                .isLessThanOrEqualTo(offered.get());
+        assertThat(report.dropped())
+                .as("no-drop invariant: mid-ingest shutdown under a healthy store must not drop")
+                .isZero();
         // Sanity — producer actually made progress before the yank.
         assertThat(offered.get()).isGreaterThan(0);
     }
