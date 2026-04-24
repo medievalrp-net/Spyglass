@@ -323,33 +323,11 @@ After each phase runs `./gradlew test regression` green, commit, and land. No bl
 
 ### 5.2 Make `Source` a sealed interface
 
-- **What:** [`Source`](../../../../api/src/main/java/net/medievalrp/spyglass/api/event/Source.java) is a flat record with 8 fields, most null per kind. Storage is slightly wasteful, and the type screams for sealed hierarchy.
-- **How:**
-  ```java
-  public sealed interface Source permits
-      Source.PlayerSource, Source.EntitySource, Source.PluginSource,
-      Source.ConsoleSource, Source.CommandBlockSource, Source.EnvironmentSource {
-      String displayName();
-      record PlayerSource(UUID id, String name) implements Source { ... }
-      record EntitySource(UUID id, String type) implements Source { ... }
-      // ...
-  }
-  ```
-  Update `RecordContext` and every record's `source` field. Update `PlayerParam` to search `source.playerSource.id` (or keep `source.playerId` by using POJO codec field mapping).
-- **Priority:** P3
-- **Effort:** L (touches every record type, every listener, every test)
-- **Acceptance:** Mongo docs no longer carry null fields per kind; type signatures prevent constructing invalid sources (e.g., `PlayerSource` with a plugin name).
+- **Status: DEFERRED.** See [`decisions.md` §5.2](../decisions.md) for the reasoning. Short version: wide blast radius, small operational payoff, better spent on correctness wins. Reconsideration criteria are noted in the decision.
 
 ### 5.3 Decide on external plugin custom event registration
 
-- **What:** v1 let downstream plugins register arbitrary event names via `OEntry.create().source(p).custom(name, wrapper)`. v2's sealed `EventRecord` closes this door.
-- **How:** two options:
-  - (a) **Keep the seal.** Document that third-party custom events are out of scope. If Reserv, Cauldron, etc. want audit logging, they get their own collection.
-  - (b) **Add an escape hatch.** New `api/event/CustomEventRecord(..., String customEventName, Map<String, Object> payload)` that's part of the sealed list. Downstream plugins construct these directly.
-  - Recommendation: (a) unless a concrete sister-plugin need materializes. Preserving the seal keeps the type system strong.
-- **Priority:** P4
-- **Effort:** depends on option
-- **Acceptance:** decision recorded in [`gap.md`](../gap.md) or [`docs/analysis/08-api-surface.md`](../../../analysis/08-api-surface.md).
+- **Status: CLOSED (seal preserved).** See [`decisions.md` §5.3](../decisions.md). No concrete sister-plugin demand, the seal is load-bearing for the polymorphic codec, custom fields can't be meaningfully queried without a schema. Plugins that want their own audit logging get their own Mongo collection.
 
 ### 5.4 Harden `isWorldEditInstalled` check
 
@@ -447,8 +425,8 @@ Each version bump is a `./gradlew build` green, `./gradlew regression` green, ta
 | 4.7 | P4 | M | CraftBook sign-use (deferred) |
 | 4.8 | P4 | M | Mid-runtime WE re-wire |
 | 5.1 | P2 | L | Mongo query fan-out fix |
-| 5.2 | P3 | L | `Source` → sealed interface |
-| 5.3 | P4 | varies | Custom event extension decision |
+| 5.2 | — | — | `Source` → sealed interface (DEFERRED, see decisions.md) |
+| 5.3 | — | — | Custom event extension (CLOSED, seal preserved, see decisions.md) |
 | 5.4 | P4 | S | WE enabled-check hardening |
 | 5.5 | P4 | S | Document PageCache TTL |
 | 6.0 | P3 | S each | Ramp coverage thresholds back up to 0.90/0.80 |
