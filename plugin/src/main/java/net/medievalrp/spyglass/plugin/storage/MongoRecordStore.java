@@ -1,21 +1,16 @@
 package net.medievalrp.spyglass.plugin.storage;
 
 import com.mongodb.MongoClientSettings;
-import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Sorts;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
@@ -33,16 +28,29 @@ import org.bson.codecs.record.RecordCodecProvider;
 import org.bson.conversions.Bson;
 import org.jetbrains.annotations.ApiStatus;
 
+/**
+ * Single-collection Mongo-backed store for {@link EventRecord}.
+ *
+ * <p>Save and query both flow through one polymorphic collection
+ * ({@code MongoCollection<EventRecord>}) whose codec is
+ * {@link EventRecordCodec}: on insert the codec stamps a {@code _class}
+ * discriminator, on find it reads that discriminator and dispatches to
+ * the matching record codec. Pre-discriminator documents fall back to
+ * the event-name field via {@link net.medievalrp.spyglass.api.event.EventCatalog}.
+ *
+ * <p>Earlier versions ran one Mongo query per record type when no
+ * event filter was present — up to 13 round trips for a plain
+ * {@code /sg search t:1h -g}. The discriminator replaces that with
+ * a single query the driver sorts and limits server-side.
+ */
 @ApiStatus.Internal
 public final class MongoRecordStore implements RecordStore {
-
-    private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = EventCatalog.recordTypes();
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;
     private final MongoDatabase database;
     private final MongoCollection<BsonDocument> rawCollection;
-    private final String collectionName;
+    private final MongoCollection<EventRecord> polymorphicCollection;
     private final CodecRegistry codecRegistry;
 
     public MongoRecordStore(SpyglassConfig.Database config, IndexManager indexManager) {
@@ -51,6 +59,7 @@ public final class MongoRecordStore implements RecordStore {
                 CodecRegistries.fromProviders(
                         new Jsr310CodecProvider(),
                         new RecordCodecProvider(),
+                        EventRecordCodec.provider(),
                         RollbackEffectCodec.provider(),
                         PojoCodecProvider.builder().automatic(true).build()));
         MongoClientSettings settings = MongoClientSettings.builder()
@@ -60,8 +69,9 @@ public final class MongoRecordStore implements RecordStore {
                 .build();
         this.client = MongoClients.create(settings);
         this.database = client.getDatabase(config.name()).withCodecRegistry(codecRegistry);
-        this.collectionName = config.collection();
+        String collectionName = config.collection();
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
+        this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
         indexManager.ensureRecordIndexes(rawCollection);
     }
 
@@ -82,9 +92,7 @@ public final class MongoRecordStore implements RecordStore {
         if (records.isEmpty()) {
             return;
         }
-        Map<Class<? extends EventRecord>, List<EventRecord>> grouped = records.stream()
-                .collect(Collectors.groupingBy(EventRecord::getClass));
-        grouped.forEach((type, batch) -> collection(type).insertMany(cast(type, batch)));
+        polymorphicCollection.insertMany(records);
     }
 
     @Override
@@ -94,31 +102,16 @@ public final class MongoRecordStore implements RecordStore {
                 ? Sorts.ascending(RecordFields.OCCURRED)
                 : Sorts.descending(RecordFields.OCCURRED);
 
-        List<EventRecord> records = new ArrayList<>();
-        for (Class<? extends EventRecord> type : candidateTypes(request.predicates())) {
-            Set<String> typeEvents = eventNamesForType(type);
-            Bson typeFilter = typeEvents.isEmpty()
-                    ? baseFilter
-                    : Filters.and(baseFilter, Filters.in(RecordFields.EVENT, typeEvents));
-            FindIterable<? extends EventRecord> iterable = collection(type)
-                    .find(typeFilter)
-                    .sort(sort)
-                    .limit(request.limit());
-            iterable.into(records);
-        }
+        List<EventRecord> records = polymorphicCollection
+                .find(baseFilter)
+                .sort(sort)
+                .limit(request.limit())
+                .into(new ArrayList<>());
 
-        Comparator<EventRecord> comparator = Comparator.comparing(EventRecord::occurred);
-        if (request.sort() == Sort.NEWEST_FIRST) {
-            comparator = comparator.reversed();
-        }
-        records.sort(comparator);
-        if (records.size() > request.limit()) {
-            records = new ArrayList<>(records.subList(0, request.limit()));
-        }
-
-        List<QueryResult.RecordAggregation> aggregations = request.grouping() && !request.flags().contains(Flag.NO_GROUP)
-                ? aggregate(records)
-                : List.of();
+        List<QueryResult.RecordAggregation> aggregations =
+                request.grouping() && !request.flags().contains(Flag.NO_GROUP)
+                        ? aggregate(records)
+                        : List.of();
         return new QueryResult(records, aggregations);
     }
 
@@ -139,57 +132,15 @@ public final class MongoRecordStore implements RecordStore {
         Map<String, Long> counts = new HashMap<>();
         Map<String, EventRecord> sample = new HashMap<>();
         for (EventRecord record : records) {
-            String key = record.event() + "|" + record.sourceName() + "|" + record.target() + "|" + record.occurred().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            String key = record.event() + "|" + record.sourceName() + "|" + record.target() + "|"
+                    + record.occurred().atZone(java.time.ZoneOffset.UTC).toLocalDate();
             counts.merge(key, 1L, Long::sum);
             sample.putIfAbsent(key, record);
         }
         return counts.entrySet().stream()
                 .map(entry -> new QueryResult.RecordAggregation(sample.get(entry.getKey()), entry.getValue()))
-                .sorted(Comparator.comparing((QueryResult.RecordAggregation aggregation) -> aggregation.sample().occurred()).reversed())
+                .sorted(Comparator.comparing((QueryResult.RecordAggregation aggregation)
+                        -> aggregation.sample().occurred()).reversed())
                 .toList();
-    }
-
-    private Set<Class<? extends EventRecord>> candidateTypes(List<QueryPredicate> predicates) {
-        for (QueryPredicate predicate : predicates) {
-            if (predicate instanceof QueryPredicate.Eq eq
-                    && RecordFields.EVENT.equals(eq.field())
-                    && eq.value() instanceof String event) {
-                Class<? extends EventRecord> type = EVENT_TYPES.get(event.toLowerCase());
-                if (type != null) {
-                    return Set.of(type);
-                }
-            }
-            if (predicate instanceof QueryPredicate.In in
-                    && RecordFields.EVENT.equals(in.field())) {
-                return in.values().stream()
-                        .filter(String.class::isInstance)
-                        .map(String.class::cast)
-                        .map(String::toLowerCase)
-                        .map(EVENT_TYPES::get)
-                        .filter(java.util.Objects::nonNull)
-                        .collect(Collectors.toSet());
-            }
-        }
-        return Set.copyOf(EVENT_TYPES.values());
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T extends EventRecord> MongoCollection<T> collection(Class<?> type) {
-        return database.getCollection(collectionName, (Class<T>) type);
-    }
-
-    private static Set<String> eventNamesForType(Class<? extends EventRecord> type) {
-        Set<String> names = new java.util.HashSet<>();
-        for (Map.Entry<String, Class<? extends EventRecord>> entry : EVENT_TYPES.entrySet()) {
-            if (entry.getValue().equals(type)) {
-                names.add(entry.getKey());
-            }
-        }
-        return Set.copyOf(names);
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T extends EventRecord> List<T> cast(Class<T> type, List<EventRecord> batch) {
-        return batch.stream().map(type::cast).toList();
     }
 }
