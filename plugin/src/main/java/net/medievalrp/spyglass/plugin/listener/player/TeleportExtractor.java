@@ -1,7 +1,7 @@
 package net.medievalrp.spyglass.plugin.listener.player;
 
-import java.time.Instant;
 import java.util.stream.Stream;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -33,19 +33,7 @@ public final class TeleportExtractor implements EventExtractor<PlayerTeleportEve
         }
         BlockLocation from = BlockLocations.fromLocation(event.getFrom());
         BlockLocation to = BlockLocations.fromLocation(event.getTo());
-        Instant occurred = support.now();
-        return Stream.of(new TeleportRecord(
-                support.newId(),
-                1,
-                "teleport",
-                occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(),
-                support.playerSource(event.getPlayer()),
-                from,
-                event.getPlayer().getName(),
-                from,
-                to,
-                cause.name()));
+        RecordContext ctx = support.playerContext(event.getPlayer(), from);
+        return Stream.of(TeleportRecord.of(ctx, event.getPlayer().getName(), from, to, cause.name()));
     }
 }

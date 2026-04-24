@@ -17,4 +17,11 @@ public record CommandRecord(
         BlockLocation location,
         String target,
         String commandLine) implements EventRecord {
+
+    public static CommandRecord of(RecordContext ctx, String target, String commandLine) {
+        return new CommandRecord(
+                ctx.id(), ctx.schemaVersion(), "command", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(),
+                target, commandLine);
+    }
 }
