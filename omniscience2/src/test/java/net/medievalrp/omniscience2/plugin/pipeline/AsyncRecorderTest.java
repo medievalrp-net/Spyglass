@@ -85,6 +85,36 @@ class AsyncRecorderTest {
         assertThat(store.totalSaved()).isEqualTo(10);
     }
 
+    @Test
+    void drainRecoversAfterTransientStoreFailures() throws Exception {
+        // Regression for the silent-death bug: a Mongo hiccup used to kill the
+        // virtual drain thread permanently. Verify the drain now retries the
+        // same batch and keeps running after a RuntimeException from the store.
+        FailingThenSucceedingStore store = new FailingThenSucceedingStore(2);
+        AsyncRecorder recorder = new AsyncRecorder(100, store, Logger.getLogger("test"));
+        try {
+            recorder.record(sampleRecord());
+            long deadline = System.currentTimeMillis() + 5_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < 1) {
+                Thread.sleep(50L);
+            }
+            assertThat(store.totalSaved())
+                    .as("drain loop must recover after transient failures")
+                    .isEqualTo(1);
+            assertThat(store.attempts()).isGreaterThanOrEqualTo(3);
+
+            // Drain thread must still be alive: new records should flow too.
+            recorder.record(sampleRecord());
+            deadline = System.currentTimeMillis() + 3_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < 2) {
+                Thread.sleep(50L);
+            }
+            assertThat(store.totalSaved()).isEqualTo(2);
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
     private static final class CapturingStore implements RecordStore {
         private final CopyOnWriteArrayList<EventRecord> all = new CopyOnWriteArrayList<>();
 
@@ -95,6 +125,42 @@ class AsyncRecorderTest {
         @Override
         public void save(List<EventRecord> records) {
             all.addAll(records);
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class FailingThenSucceedingStore implements RecordStore {
+        private final AtomicInteger failuresLeft;
+        private final AtomicInteger attempts = new AtomicInteger();
+        private final CopyOnWriteArrayList<EventRecord> persisted = new CopyOnWriteArrayList<>();
+
+        FailingThenSucceedingStore(int initialFailures) {
+            this.failuresLeft = new AtomicInteger(initialFailures);
+        }
+
+        int totalSaved() {
+            return persisted.size();
+        }
+
+        int attempts() {
+            return attempts.get();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            attempts.incrementAndGet();
+            if (failuresLeft.getAndDecrement() > 0) {
+                throw new RuntimeException("simulated store failure");
+            }
+            persisted.addAll(records);
         }
 
         @Override
