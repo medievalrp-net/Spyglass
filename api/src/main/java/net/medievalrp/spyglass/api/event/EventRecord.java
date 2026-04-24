@@ -20,7 +20,8 @@ public sealed interface EventRecord permits
         TeleportRecord,
         EntityDeathRecord,
         EntityHitRecord,
-        EntityMountRecord {
+        EntityMountRecord,
+        EntityNameRecord {
 
     UUID id();
 
