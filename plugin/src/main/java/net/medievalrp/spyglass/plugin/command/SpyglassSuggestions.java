@@ -16,7 +16,9 @@ import org.jetbrains.annotations.ApiStatus;
 public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(
-            "-ng", "-g", "-nc", "-ex", "-we", "-ord=asc", "-ord=desc");
+            "-ng", "-g", "-nc", "-ex", "-we",
+            "-ord=asc", "-ord=desc",
+            "-nod=r", "-nod=t");
 
     private final SpyglassApi api;
 
