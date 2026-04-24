@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -33,4 +34,30 @@ tasks.withType<JacocoReport>().configureEach {
 
 tasks.test {
     finalizedBy(tasks.named("jacocoTestReport"))
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("api") {
+            from(components["java"])
+            groupId = "net.medievalrp"
+            artifactId = "omniscience2-api"
+            pom {
+                name.set("Omniscience2 API")
+                description.set("Public record / query / rollback types for the Omniscience2 forensics plugin.")
+                url.set("https://github.com/medievalrp-net/Omniscience2")
+                licenses {
+                    license {
+                        name.set("MIT")
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri(rootProject.layout.buildDirectory.dir("repo"))
+        }
+    }
 }

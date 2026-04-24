@@ -34,6 +34,24 @@ subprojects {
             html.required.set(true)
         }
     }
+    tasks.withType<JacocoCoverageVerification>().configureEach {
+        violationRules {
+            rule {
+                element = "BUNDLE"
+                limit {
+                    counter = "LINE"
+                    minimum = when (project.name) {
+                        "api" -> 0.15.toBigDecimal()
+                        "plugin" -> 0.20.toBigDecimal()
+                        else -> 0.00.toBigDecimal()
+                    }
+                }
+            }
+        }
+    }
+    tasks.matching { it.name == "check" }.configureEach {
+        dependsOn("jacocoTestCoverageVerification")
+    }
 }
 
 tasks.register<Exec>("regression") {
