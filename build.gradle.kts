@@ -48,8 +48,8 @@ subprojects {
                     // targets per the v1.0.0 plan are 0.90 api / 0.80
                     // plugin; see docs/report/gap/plan/plan.md §6.0.
                     minimum = when (project.name) {
-                        "api" -> 0.15.toBigDecimal()
-                        "plugin" -> 0.15.toBigDecimal()
+                        "omniscience2-api" -> 0.15.toBigDecimal()
+                        "omniscience2" -> 0.15.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
@@ -72,9 +72,9 @@ tasks.register<Exec>("regression") {
 tasks.register("deployToRpServer") {
     group = "deployment"
     description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Omniscience2.jar."
-    dependsOn(":plugin:shadowJar")
+    dependsOn(":omniscience2:shadowJar")
     doLast {
-        val pluginProject = project(":plugin")
+        val pluginProject = project(":omniscience2")
         val candidate = pluginProject.layout.buildDirectory
             .file("libs/Omniscience2-${pluginProject.version}.jar")
             .get().asFile
