@@ -18,3 +18,5 @@ permissions:
     default: op
   spyglass.worldedit:
     default: op
+  spyglass.tele:
+    default: op
