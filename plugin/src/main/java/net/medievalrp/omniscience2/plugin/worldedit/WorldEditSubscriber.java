@@ -18,7 +18,7 @@ import net.medievalrp.omniscience2.api.event.BlockSnapshot;
 import net.medievalrp.omniscience2.api.event.Origin;
 import net.medievalrp.omniscience2.api.event.Source;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
-import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
+import net.medievalrp.omniscience2.plugin.listener.RecordingSupport;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
 import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
@@ -40,10 +40,10 @@ import org.jetbrains.annotations.ApiStatus;
 public final class WorldEditSubscriber {
 
     private final Recorder recorder;
-    private final ExtractorSupport support;
+    private final RecordingSupport support;
     private final Logger logger;
 
-    public WorldEditSubscriber(Recorder recorder, ExtractorSupport support, Logger logger) {
+    public WorldEditSubscriber(Recorder recorder, RecordingSupport support, Logger logger) {
         this.recorder = recorder;
         this.support = support;
         this.logger = logger;

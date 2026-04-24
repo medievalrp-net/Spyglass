@@ -24,7 +24,7 @@ import net.medievalrp.omniscience2.api.event.Origin;
 import net.medievalrp.omniscience2.api.event.Source;
 import net.medievalrp.omniscience2.api.event.StoredItem;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
-import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
+import net.medievalrp.omniscience2.plugin.listener.RecordingSupport;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import net.medievalrp.omniscience2.plugin.util.ItemSerialization;
@@ -38,13 +38,13 @@ import org.jetbrains.annotations.ApiStatus;
 final class FaweBatchLogger implements IBatchProcessor {
 
     private final Recorder recorder;
-    private final ExtractorSupport support;
+    private final RecordingSupport support;
     private final UUID playerId;
     private final String playerName;
     private final UUID worldId;
     private final String worldName;
 
-    FaweBatchLogger(Recorder recorder, ExtractorSupport support,
+    FaweBatchLogger(Recorder recorder, RecordingSupport support,
                     UUID playerId, String playerName,
                     UUID worldId, String worldName) {
         this.recorder = recorder;
