@@ -36,6 +36,10 @@ import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceExtractor;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandExtractor;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionExtractor;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageExtractor;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDeathExtractor;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDismountExtractor;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityMountExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockExplodeExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockFadeExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockFormExtractor;
@@ -123,6 +127,11 @@ public final class SpyglassPlugin extends JavaPlugin {
         if (enabledEvents.contains("drop")) registry.register(this, new ItemDropExtractor(support));
         if (enabledEvents.contains("pickup")) registry.register(this, new ItemPickupExtractor(support));
         if (enabledEvents.contains("teleport")) registry.register(this, new TeleportExtractor(support));
+        if (enabledEvents.contains("death")) registry.register(this, new EntityDeathExtractor(support));
+        if (enabledEvents.contains("hit") || enabledEvents.contains("shot"))
+            registry.register(this, new EntityDamageExtractor(support));
+        if (enabledEvents.contains("mount")) registry.register(this, new EntityMountExtractor(support));
+        if (enabledEvents.contains("dismount")) registry.register(this, new EntityDismountExtractor(support));
 
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());
