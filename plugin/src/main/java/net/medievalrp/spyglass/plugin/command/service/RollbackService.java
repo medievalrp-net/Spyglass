@@ -61,7 +61,7 @@ public final class RollbackService {
             sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
         }
-        sender.sendMessage(Feedback.info(capitalize(mode.label()) + " running..."));
+        sender.sendMessage(Feedback.querying());
         api.query(request).whenComplete((result, error) -> {
             if (error != null) {
                 logger.warning("Spyglass " + mode.label() + " failed: " + error);
@@ -76,11 +76,19 @@ public final class RollbackService {
     private void apply(CommandSender sender, QueryResult result, RollbackMode mode) {
         List<RollbackEffect> effects = collectEffects(result, mode);
         if (effects.isEmpty()) {
-            sender.sendMessage(Feedback.warn("No rollbackable records matched."));
+            sender.sendMessage(Feedback.error("No results."));
             return;
         }
         List<RollbackResult> results = engine.applyAll(effects, sender);
         Summary summary = summarize(results);
+        // Skip reasons go out first (gray, one per skipped effect), then the
+        // green " N reversals" / " N reversals. M skipped" summary - matching
+        // v1's chat output exactly.
+        for (RollbackResult result_ : results) {
+            if (result_ instanceof RollbackResult.Skipped skipped) {
+                sender.sendMessage(Feedback.bonus("Skip Reason: " + skipped.reason().message()));
+            }
+        }
         sender.sendMessage(summaryLine(summary));
         if (sender instanceof Player player && !summary.inverses.isEmpty()) {
             undoStack.push(player.getUniqueId(), mode.name(), summary.inverses);
@@ -122,18 +130,10 @@ public final class RollbackService {
     }
 
     public static Component summaryLine(Summary summary) {
-        return Component.text()
-                .append(Component.text(summary.applied() + " applied", NamedTextColor.GREEN))
-                .append(Component.text(", ", NamedTextColor.GRAY))
-                .append(Component.text(summary.skipped() + " skipped", NamedTextColor.YELLOW))
-                .build();
-    }
-
-    private static String capitalize(String value) {
-        if (value.isEmpty()) {
-            return value;
-        }
-        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
+        String text = summary.skipped() > 0
+                ? " " + summary.applied() + " reversals. " + summary.skipped() + " skipped"
+                : " " + summary.applied() + " reversals";
+        return Feedback.success(text);
     }
 
     public record Summary(int applied, int skipped, List<RollbackEffect> inverses) {

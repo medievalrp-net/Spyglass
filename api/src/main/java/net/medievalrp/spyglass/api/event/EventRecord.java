@@ -13,6 +13,8 @@ public sealed interface EventRecord permits
         QuitRecord,
         ContainerDepositRecord,
         ContainerWithdrawRecord,
+        ContainerInteractRecord,
+        BlockUseRecord,
         ItemDropRecord,
         ItemPickupRecord,
         TeleportRecord,

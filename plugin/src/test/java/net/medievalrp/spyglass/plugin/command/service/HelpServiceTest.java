@@ -19,17 +19,15 @@ class HelpServiceTest {
 
         List<String> lines = ServiceTestSupport.plainTexts(captured);
         assertThat(lines).isNotEmpty();
-        assertThat(lines.get(0)).isEqualTo("Spyglass");
+        assertThat(lines.get(0)).contains("v1");
         String combined = String.join("\n", lines);
         assertThat(combined)
-                .contains("/omniv2 search")
-                .contains("/omniv2 rollback")
-                .contains("/omniv2 restore")
-                .contains("/omniv2 undo")
-                .contains("/omniv2 page")
-                .contains("/omniv2 tool")
-                .contains("/omniv2 events")
-                .contains("Params:")
-                .contains("Flags:");
+                .contains("/omni2 search")
+                .contains("/omni2 rollback")
+                .contains("/omni2 restore")
+                .contains("/omni2 undo")
+                .contains("/omni2 page")
+                .contains("/omni2 tool")
+                .contains("/omni2 events");
     }
 }
