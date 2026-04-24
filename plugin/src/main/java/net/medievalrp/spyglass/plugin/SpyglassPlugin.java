@@ -51,6 +51,14 @@ import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayExtractor;
 import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowExtractor;
 import net.medievalrp.spyglass.plugin.listener.item.ItemDropExtractor;
 import net.medievalrp.spyglass.plugin.listener.item.ItemPickupExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.BookshelfExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.BrushExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.CrafterExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.DecoratedPotExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.DelayedInteractionTracker;
+import net.medievalrp.spyglass.plugin.listener.modern.SculkExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.ShulkerTransactionExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.VaultExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.JoinExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.QuitExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportExtractor;
@@ -144,6 +152,21 @@ public final class SpyglassPlugin extends JavaPlugin {
         if (enabledEvents.contains("dismount")) registry.register(this, new EntityDismountExtractor(support));
         if (enabledEvents.contains("entity-deposit") || enabledEvents.contains("entity-withdraw"))
             registry.register(this, new ArmorStandManipulateExtractor(support));
+        if (enabledEvents.contains("bookshelf-insert") || enabledEvents.contains("bookshelf-remove"))
+            registry.register(this, new BookshelfExtractor(support));
+        if (enabledEvents.contains("pot-insert") || enabledEvents.contains("pot-remove"))
+            registry.register(this, new DecoratedPotExtractor(support));
+        if (enabledEvents.contains("shulker-deposit") || enabledEvents.contains("shulker-withdraw"))
+            registry.register(this, new ShulkerTransactionExtractor(support));
+        if (enabledEvents.contains("crafter")) registry.register(this, new CrafterExtractor(support));
+        if (enabledEvents.contains("sculk")) registry.register(this, new SculkExtractor(support));
+        DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
+        if (enabledEvents.contains("brush")) {
+            getServer().getPluginManager().registerEvents(new BrushExtractor(recorder, support, delayedTracker), this);
+        }
+        if (enabledEvents.contains("vault")) {
+            getServer().getPluginManager().registerEvents(new VaultExtractor(recorder, support, delayedTracker), this);
+        }
 
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
         apiImpl.registerQueryParamHandler(new PlayerParam());
