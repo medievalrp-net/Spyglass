@@ -25,7 +25,9 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.Event;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.ApiStatus;
 
@@ -44,9 +46,9 @@ public final class WandInteractListener implements Listener {
         this.lookbackWindow = Duration.parse("7d");
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+        if (event.getHand() != EquipmentSlot.HAND) {
             return;
         }
         Player player = event.getPlayer();
@@ -60,11 +62,31 @@ public final class WandInteractListener implements Listener {
         if (block == null) {
             return;
         }
-        event.setCancelled(true);
-        queryAt(player, block.getLocation());
+        if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
+            denyAndSync(event, player, block);
+            queryAt(player, block.getLocation());
+            return;
+        }
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
+            Block target = block.getRelative(event.getBlockFace());
+            denyAndSync(event, player, block, target);
+            queryAt(player, target.getLocation());
+        }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    private void denyAndSync(PlayerInteractEvent event, Player player, Block... blocks) {
+        event.setCancelled(true);
+        event.setUseInteractedBlock(Event.Result.DENY);
+        event.setUseItemInHand(Event.Result.DENY);
+        // Paper's prediction places the wand client-side before the server cancels;
+        // re-send the true block state so the client's ghost block disappears.
+        for (Block block : blocks) {
+            player.sendBlockChange(block.getLocation(), block.getBlockData());
+        }
+        player.updateInventory();
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
         if (!tool.isActive(player.getUniqueId())) {
@@ -74,10 +96,12 @@ public final class WandInteractListener implements Listener {
             return;
         }
         event.setCancelled(true);
-        queryAt(player, event.getBlock().getLocation());
+        Block block = event.getBlock();
+        player.sendBlockChange(block.getLocation(), block.getBlockData());
+        queryAt(player, block.getLocation());
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onPlace(BlockPlaceEvent event) {
         Player player = event.getPlayer();
         if (!tool.isActive(player.getUniqueId())) {
@@ -87,7 +111,12 @@ public final class WandInteractListener implements Listener {
             return;
         }
         event.setCancelled(true);
-        queryAt(player, event.getBlock().getLocation());
+        Block placed = event.getBlock();
+        Block against = event.getBlockAgainst();
+        player.sendBlockChange(placed.getLocation(), placed.getBlockData());
+        player.sendBlockChange(against.getLocation(), against.getBlockData());
+        player.updateInventory();
+        queryAt(player, placed.getLocation());
     }
 
     private boolean isHoldingWand(ItemStack stack) {

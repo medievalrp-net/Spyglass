@@ -33,6 +33,8 @@ import net.medievalrp.omniscience2.plugin.listener.ExtractorSupport;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockBreakExtractor;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockMultiPlaceExtractor;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockPlaceExtractor;
+import net.medievalrp.omniscience2.plugin.listener.block.ContainerDropExtractor;
+import net.medievalrp.omniscience2.plugin.listener.block.MultiBlockBreakExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.ChatExtractor;
 import net.medievalrp.omniscience2.plugin.listener.chat.CommandExtractor;
 import net.medievalrp.omniscience2.plugin.listener.container.ContainerDragExtractor;
@@ -120,8 +122,12 @@ public final class Omniscience2Plugin extends JavaPlugin {
         ExtractorRegistry registry = new ExtractorRegistry(recorder);
         if (enabledEvents.contains("break")) {
             registry.register(this, new BlockBreakExtractor(support));
+            registry.register(this, new MultiBlockBreakExtractor(support));
             registry.register(this, new BlockExplodeExtractor(support));
             registry.register(this, new EntityExplodeExtractor(support));
+        }
+        if (enabledEvents.contains("drop")) {
+            registry.register(this, new ContainerDropExtractor(support));
         }
         if (enabledEvents.contains("place")) {
             registry.register(this, new BlockPlaceExtractor(support));
