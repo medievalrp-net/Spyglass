@@ -58,6 +58,7 @@ import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageListener;
 import net.medievalrp.spyglass.plugin.listener.entity.EntityDeathListener;
 import net.medievalrp.spyglass.plugin.listener.entity.EntityDismountListener;
 import net.medievalrp.spyglass.plugin.listener.entity.EntityMountListener;
+import net.medievalrp.spyglass.plugin.listener.entity.ItemFrameInteractListener;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockBurnListener;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockExplodeListener;
 import net.medievalrp.spyglass.plugin.listener.environment.BlockFadeListener;
@@ -167,6 +168,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new EntityMountListener(recorder, support),
                 new EntityDismountListener(recorder, support),
                 new ArmorStandManipulateListener(recorder, support),
+                new ItemFrameInteractListener(recorder, support),
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
                 new ShulkerTransactionListener(recorder, support),
