@@ -189,7 +189,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
-        ResultRenderer renderer = new ResultRenderer(config);
+        ResultRenderer renderer = new ResultRenderer(apiImpl, config);
         PageCache pageCache = new PageCache();
         getServer().getPluginManager().registerEvents(pageCache, this);
 
