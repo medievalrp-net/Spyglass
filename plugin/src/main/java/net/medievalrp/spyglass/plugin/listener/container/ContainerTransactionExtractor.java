@@ -73,6 +73,10 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
             return handleSwap(container, player, slot, slotItem, cursor, occurred).stream();
         }
 
+        if (action == InventoryAction.HOTBAR_SWAP || action == InventoryAction.HOTBAR_MOVE_AND_READD) {
+            return handleHotbarSwap(event, container, player, slot, slotItem, occurred).stream();
+        }
+
         Direction direction = directionOf(action);
         if (direction == null) {
             return Stream.empty();
@@ -147,6 +151,42 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
                 support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(player),
                 location, moved.getType().name(), containerType, -1, amount, null, before));
+    }
+
+    private List<EventRecord> handleHotbarSwap(InventoryClickEvent event, Container container, Player player,
+                                                int slot, ItemStack slotItem, Instant occurred) {
+        int hotbarButton = event.getHotbarButton();
+        if (hotbarButton < 0) {
+            return List.of();
+        }
+        ItemStack hotbarItem = player.getInventory().getItem(hotbarButton);
+        boolean slotHadItem = slotItem != null && slotItem.getType() != Material.AIR;
+        boolean hotbarHadItem = hotbarItem != null && hotbarItem.getType() != Material.AIR;
+        if (!slotHadItem && !hotbarHadItem) {
+            return List.of();
+        }
+        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
+        String containerType = container.getBlock().getType().name();
+        List<EventRecord> records = new ArrayList<>();
+        if (slotHadItem) {
+            StoredItem stored = ItemSerialization.storedItem(slot, slotItem);
+            records.add(new ContainerWithdrawRecord(
+                    support.newId(), 1, "withdraw", occurred,
+                    support.expiresAt(occurred),
+                    support.playerOrigin(), support.playerSource(player),
+                    location, slotItem.getType().name(), containerType, slot,
+                    slotItem.getAmount(), stored, null));
+        }
+        if (hotbarHadItem) {
+            StoredItem stored = ItemSerialization.storedItem(slot, hotbarItem);
+            records.add(new ContainerDepositRecord(
+                    support.newId(), 1, "deposit", occurred,
+                    support.expiresAt(occurred),
+                    support.playerOrigin(), support.playerSource(player),
+                    location, hotbarItem.getType().name(), containerType, slot,
+                    hotbarItem.getAmount(), null, stored));
+        }
+        return records;
     }
 
     private List<EventRecord> handleSwap(Container container, Player player, int slot,
