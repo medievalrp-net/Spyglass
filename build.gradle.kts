@@ -40,15 +40,16 @@ subprojects {
                 element = "BUNDLE"
                 limit {
                     counter = "LINE"
-                    // Current coverage floor. Ramp step 1/4 — raised
-                    // from 0.05 to 0.10 after Phase 2 landed (added
-                    // ResultRendererTest + touched enough tested code
-                    // that both modules clear 0.10). Targets per the
-                    // v1.0.0 plan are 0.90 api / 0.80 plugin; see
-                    // docs/report/gap/plan/plan.md §6.0 for the ramp.
+                    // Current coverage floor. Raised incrementally as
+                    // tests accumulate — 0.05 at Phase 0, 0.10 after
+                    // Phase 2, 0.15 after Phase 3. Phase 3 hits
+                    // api=17.4% / plugin=16.4% in practice; 0.15 is a
+                    // regression-prevention floor, not a target. True
+                    // targets per the v1.0.0 plan are 0.90 api / 0.80
+                    // plugin; see docs/report/gap/plan/plan.md §6.0.
                     minimum = when (project.name) {
-                        "api" -> 0.10.toBigDecimal()
-                        "plugin" -> 0.10.toBigDecimal()
+                        "api" -> 0.15.toBigDecimal()
+                        "plugin" -> 0.15.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
