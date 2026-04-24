@@ -92,6 +92,7 @@ import net.medievalrp.omniscience2.plugin.storage.IndexManager;
 import net.medievalrp.omniscience2.plugin.storage.MongoRecordStore;
 import net.medievalrp.omniscience2.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.omniscience2.plugin.command.service.tool.WandInteractListener;
+import net.medievalrp.omniscience2.plugin.worldedit.WorldEditLifecycleListener;
 import net.medievalrp.omniscience2.plugin.worldedit.WorldEditSubscriber;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
@@ -104,6 +105,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
     private Executor queryExecutor;
     private Omniscience2Config config;
     private WorldEditSubscriber worldEditSubscriber;
+    private WorldEditLifecycleListener worldEditLifecycle;
 
     @Override
     public void onEnable() {
@@ -251,6 +253,14 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 worldEditSubscriber = null;
             }
         }
+        // Always register the lifecycle listener so WE hot-load (e.g.
+        // /plugman load) can wire up recording mid-session without a
+        // server restart. If WE is already running, the existing
+        // subscriber is handed in and the listener only acts on a
+        // future disable.
+        worldEditLifecycle = new WorldEditLifecycleListener(
+                recorder, support, getLogger(), worldEditSubscriber);
+        getServer().getPluginManager().registerEvents(worldEditLifecycle, this);
 
         getLogger().info("Omniscience2 enabled; events=" + enabledEvents);
     }
@@ -262,9 +272,15 @@ public final class Omniscience2Plugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (worldEditSubscriber != null) {
+        // Prefer the lifecycle-tracked subscriber — if WE was hot-
+        // loaded/unloaded during the session, the initial field may be
+        // stale.
+        WorldEditSubscriber active = worldEditLifecycle != null
+                ? worldEditLifecycle.currentSubscriber()
+                : worldEditSubscriber;
+        if (active != null) {
             try {
-                worldEditSubscriber.unregister();
+                active.unregister();
             } catch (Throwable ignored) {
             }
         }
