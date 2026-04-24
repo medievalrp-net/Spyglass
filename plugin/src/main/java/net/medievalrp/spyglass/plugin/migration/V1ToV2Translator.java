@@ -26,6 +26,7 @@ import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
@@ -94,152 +95,117 @@ public final class V1ToV2Translator {
         }
     }
 
+    private RecordContext contextFor(Document doc, String event, boolean requireLocation) {
+        BlockLocation location = requireLocation ? requireLocation(doc) : location(doc, false);
+        return new RecordContext(
+                UUID.randomUUID(), SCHEMA_VERSION,
+                occurred(doc), expires(doc),
+                origin(doc, event, false), source(doc), location);
+    }
+
     private BlockBreakRecord blockBreak(Document doc, String event) {
-        Instant occurred = occurred(doc);
-        Instant expires = expires(doc);
-        Origin origin = origin(doc, event, false);
-        Source source = source(doc);
-        BlockLocation location = requireLocation(doc);
+        RecordContext ctx = contextFor(doc, event, true);
         BlockSnapshot original = readSnapshot(doc.get(V1Schema.F_ORIGINAL_BLOCK, Document.class));
         BlockSnapshot next = readSnapshot(doc.get(V1Schema.F_NEW_BLOCK, Document.class));
-        String target = readTarget(doc, original);
-        return new BlockBreakRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, event, occurred, expires,
-                origin, source, location, target, original, next);
+        return BlockBreakRecord.of(ctx, event, readTarget(doc, original), original, next);
     }
 
     private BlockPlaceRecord blockPlace(Document doc, String event) {
-        Instant occurred = occurred(doc);
-        Instant expires = expires(doc);
-        Origin origin = origin(doc, event, true);
-        Source source = source(doc);
-        BlockLocation location = requireLocation(doc);
+        RecordContext ctx = contextFor(doc, event, true);
         BlockSnapshot original = readSnapshot(doc.get(V1Schema.F_ORIGINAL_BLOCK, Document.class));
         BlockSnapshot next = readSnapshot(doc.get(V1Schema.F_NEW_BLOCK, Document.class));
-        String target = readTarget(doc, next);
-        return new BlockPlaceRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, event, occurred, expires,
-                origin, source, location, target, original, next);
+        return BlockPlaceRecord.of(ctx, event, readTarget(doc, next), original, next);
     }
 
     private ChatRecord chat(Document doc) {
-        String message = optionalString(doc.getString(V1Schema.F_MESSAGE));
-        List<UUID> recipients = parseRecipients(doc.getString(V1Schema.F_RECIPIENT));
-        return new ChatRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "say", occurred(doc), expires(doc),
-                origin(doc, "say", false), source(doc), location(doc, false),
-                readTarget(doc, null), message, recipients);
+        return ChatRecord.of(contextFor(doc, "say", false),
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_MESSAGE)),
+                parseRecipients(doc.getString(V1Schema.F_RECIPIENT)));
     }
 
     private CommandRecord command(Document doc) {
-        String commandLine = optionalString(doc.getString(V1Schema.F_MESSAGE));
-        return new CommandRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "command", occurred(doc), expires(doc),
-                origin(doc, "command", false), source(doc), location(doc, false),
-                readTarget(doc, null), commandLine);
+        return CommandRecord.of(contextFor(doc, "command", false),
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_MESSAGE)));
     }
 
     private JoinRecord join(Document doc) {
-        String address = optionalString(doc.getString(V1Schema.F_IP_ADDRESS));
-        return new JoinRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "join", occurred(doc), expires(doc),
-                origin(doc, "join", false), source(doc), location(doc, false),
-                readTarget(doc, null), address);
+        return JoinRecord.of(contextFor(doc, "join", false),
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_IP_ADDRESS)));
     }
 
     private QuitRecord quit(Document doc) {
-        return new QuitRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "quit", occurred(doc), expires(doc),
-                origin(doc, "quit", false), source(doc), location(doc, false),
-                readTarget(doc, null));
+        return QuitRecord.of(contextFor(doc, "quit", false), readTarget(doc, null));
     }
 
     private ContainerDepositRecord containerDeposit(Document doc) {
         SlotPair pair = readSlotPair(doc);
-        return new ContainerDepositRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "deposit", occurred(doc), expires(doc),
-                origin(doc, "deposit", false), source(doc), requireLocation(doc),
+        return ContainerDepositRecord.of(contextFor(doc, "deposit", true), "deposit",
                 readTarget(doc, null), containerType(doc),
                 pair.slot(), pair.amount(), pair.before(), pair.after());
     }
 
     private ContainerWithdrawRecord containerWithdraw(Document doc) {
         SlotPair pair = readSlotPair(doc);
-        return new ContainerWithdrawRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "withdraw", occurred(doc), expires(doc),
-                origin(doc, "withdraw", false), source(doc), requireLocation(doc),
+        return ContainerWithdrawRecord.of(contextFor(doc, "withdraw", true), "withdraw",
                 readTarget(doc, null), containerType(doc),
                 pair.slot(), pair.amount(), pair.before(), pair.after());
     }
 
     private ItemDropRecord itemDrop(Document doc) {
-        StoredItem item = readItem(doc, 0);
-        int amount = itemAmount(doc);
-        return new ItemDropRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "drop", occurred(doc), expires(doc),
-                origin(doc, "drop", false), source(doc), requireLocation(doc),
-                readTarget(doc, null), amount, item);
+        return ItemDropRecord.of(contextFor(doc, "drop", true),
+                readTarget(doc, null), itemAmount(doc), readItem(doc, 0));
     }
 
     private ItemPickupRecord itemPickup(Document doc) {
-        StoredItem item = readItem(doc, 0);
-        int amount = itemAmount(doc);
-        return new ItemPickupRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "pickup", occurred(doc), expires(doc),
-                origin(doc, "pickup", false), source(doc), requireLocation(doc),
-                readTarget(doc, null), amount, item);
+        return ItemPickupRecord.of(contextFor(doc, "pickup", true),
+                readTarget(doc, null), itemAmount(doc), readItem(doc, 0));
     }
 
     private TeleportRecord teleport(Document doc) {
-        BlockLocation here = requireLocation(doc);
+        RecordContext ctx = contextFor(doc, "teleport", true);
         BlockLocation from = readLocationSubdoc(doc.get(V1Schema.F_FROM, Document.class));
         BlockLocation to = readLocationSubdoc(doc.get(V1Schema.F_TO, Document.class));
         if (from == null) {
-            from = here;
+            from = ctx.location();
         }
         if (to == null) {
-            to = here;
+            to = ctx.location();
         }
-        String cause = optionalString(doc.getString(V1Schema.F_CAUSE_TYPE));
-        return new TeleportRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "teleport", occurred(doc), expires(doc),
-                origin(doc, "teleport", false), source(doc), here,
-                readTarget(doc, null), from, to, cause);
+        return TeleportRecord.of(ctx, readTarget(doc, null), from, to,
+                optionalString(doc.getString(V1Schema.F_CAUSE_TYPE)));
     }
 
     private EntityDeathRecord entityDeath(Document doc) {
-        String entityType = optionalString(doc.getString(V1Schema.F_ENTITY_TYPE));
-        UUID entityId = parseUuid(doc.getString(V1Schema.F_ENTITY_ID));
-        String killerType = optionalString(doc.getString(V1Schema.F_CAUSE_TYPE));
-        String damageCause = optionalString(doc.getString(V1Schema.F_DAMAGE_CAUSE));
-        return new EntityDeathRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, "death", occurred(doc), expires(doc),
-                origin(doc, "death", false), source(doc), requireLocation(doc),
-                readTarget(doc, null), entityType, entityId, killerType, damageCause, null);
+        return EntityDeathRecord.of(contextFor(doc, "death", true),
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_ENTITY_TYPE)),
+                parseUuid(doc.getString(V1Schema.F_ENTITY_ID)),
+                optionalString(doc.getString(V1Schema.F_CAUSE_TYPE)),
+                optionalString(doc.getString(V1Schema.F_DAMAGE_CAUSE)),
+                null);
     }
 
     private EntityHitRecord entityHit(Document doc, boolean projectile) {
-        String victimType = optionalString(doc.getString(V1Schema.F_VICTIM_TYPE));
-        UUID victimId = parseUuid(doc.getString(V1Schema.F_VICTIM_ID));
-        double damage = readDouble(doc.get(V1Schema.F_DAMAGE));
+        String event = projectile ? "shot" : "hit";
         String projectileType = optionalString(doc.getString(V1Schema.F_PROJECTILE));
-        return new EntityHitRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, projectile ? "shot" : "hit",
-                occurred(doc), expires(doc),
-                origin(doc, projectile ? "shot" : "hit", false), source(doc),
-                requireLocation(doc), readTarget(doc, null),
-                victimType, victimId, damage, projectile, projectileType);
+        return EntityHitRecord.of(contextFor(doc, event, true), event,
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_VICTIM_TYPE)),
+                parseUuid(doc.getString(V1Schema.F_VICTIM_ID)),
+                readDouble(doc.get(V1Schema.F_DAMAGE)),
+                projectile, projectileType);
     }
 
     private EntityMountRecord entityMount(Document doc, boolean dismount) {
-        String mountType = optionalString(doc.getString(V1Schema.F_MOUNT_TYPE));
-        UUID mountId = parseUuid(doc.getString(V1Schema.F_MOUNT_ID));
-        return new EntityMountRecord(
-                UUID.randomUUID(), SCHEMA_VERSION, dismount ? "dismount" : "mount",
-                occurred(doc), expires(doc),
-                origin(doc, dismount ? "dismount" : "mount", false), source(doc),
-                requireLocation(doc), readTarget(doc, null),
-                mountType, mountId, dismount);
+        String event = dismount ? "dismount" : "mount";
+        return EntityMountRecord.of(contextFor(doc, event, true), event,
+                readTarget(doc, null),
+                optionalString(doc.getString(V1Schema.F_MOUNT_TYPE)),
+                parseUuid(doc.getString(V1Schema.F_MOUNT_ID)),
+                dismount);
     }
 
     private BlockSnapshot readSnapshot(Document snapshotDoc) {
