@@ -54,6 +54,11 @@ import net.medievalrp.spyglass.plugin.listener.item.ItemPickupExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.JoinExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.QuitExtractor;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportExtractor;
+import net.medievalrp.spyglass.plugin.migration.MigrationCommand;
+import net.medievalrp.spyglass.plugin.migration.MigrationService;
+import net.medievalrp.spyglass.plugin.migration.V1ItemDecoder;
+import net.medievalrp.spyglass.plugin.migration.V1ToV2Translator;
+import net.medievalrp.spyglass.plugin.migration.WorldNameLookup;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.pipeline.ExtractorRegistry;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
@@ -167,6 +172,11 @@ public final class SpyglassPlugin extends JavaPlugin {
         ToolService toolService = new ToolService();
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
+        V1ToV2Translator translator = new V1ToV2Translator(
+                V1ItemDecoder.bukkit(), WorldNameLookup.bukkit(), getLogger());
+        MigrationService migrationService = new MigrationService(recordStore, config, translator, getLogger());
+        MigrationCommand migrationCommand = new MigrationCommand(migrationService, getLogger());
+
         SpyglassCommands commands = new SpyglassCommands(
                 this,
                 helpService,
@@ -176,7 +186,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 undoService,
                 pageService,
                 toolService,
-                suggestions);
+                suggestions,
+                migrationCommand);
         commands.register();
 
         if (isWorldEditInstalled()) {
