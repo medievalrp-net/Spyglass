@@ -10,7 +10,9 @@ import org.incendo.cloud.parser.ParserDescriptor;
 import org.incendo.cloud.parser.standard.StringParser;
 import org.incendo.cloud.suggestion.BlockingSuggestionProvider;
 import org.incendo.cloud.suggestion.Suggestion;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(

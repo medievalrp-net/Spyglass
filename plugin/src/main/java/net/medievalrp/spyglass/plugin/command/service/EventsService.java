@@ -4,7 +4,9 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import org.bukkit.command.CommandSender;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class EventsService {
 
     private final SpyglassApi api;

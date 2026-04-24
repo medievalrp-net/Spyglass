@@ -3,7 +3,9 @@ package net.medievalrp.spyglass.plugin.migration;
 import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public interface WorldNameLookup {
 
     String nameFor(UUID worldId);
