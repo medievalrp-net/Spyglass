@@ -60,6 +60,7 @@ import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
+import net.medievalrp.spyglass.plugin.worldedit.WorldEditSubscriber;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -70,6 +71,7 @@ public final class SpyglassPlugin extends JavaPlugin {
     private MongoRecordStore recordStore;
     private Executor queryExecutor;
     private SpyglassConfig config;
+    private WorldEditSubscriber worldEditSubscriber;
 
     @Override
     public void onEnable() {
@@ -177,11 +179,32 @@ public final class SpyglassPlugin extends JavaPlugin {
                 suggestions);
         commands.register();
 
+        if (isWorldEditInstalled()) {
+            try {
+                worldEditSubscriber = new WorldEditSubscriber(recorder, support, getLogger());
+                worldEditSubscriber.register();
+            } catch (Throwable thrown) {
+                getLogger().warning("Spyglass: WorldEdit integration failed to initialize: " + thrown);
+                worldEditSubscriber = null;
+            }
+        }
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
+    }
+
+    private boolean isWorldEditInstalled() {
+        return getServer().getPluginManager().getPlugin("WorldEdit") != null
+                || getServer().getPluginManager().getPlugin("FastAsyncWorldEdit") != null;
     }
 
     @Override
     public void onDisable() {
+        if (worldEditSubscriber != null) {
+            try {
+                worldEditSubscriber.unregister();
+            } catch (Throwable ignored) {
+            }
+        }
         if (recorder != null) {
             try {
                 AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("5s"));

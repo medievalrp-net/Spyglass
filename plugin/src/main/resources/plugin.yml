@@ -4,6 +4,9 @@ main: net.medievalrp.spyglass.plugin.SpyglassPlugin
 api-version: "1.21"
 authors:
   - MedievalRP
+softdepend:
+  - WorldEdit
+  - FastAsyncWorldEdit
 permissions:
   spyglass.use:
     default: op
