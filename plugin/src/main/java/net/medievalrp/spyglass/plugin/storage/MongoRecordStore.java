@@ -8,31 +8,15 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Sorts;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
-import net.medievalrp.spyglass.api.event.BlockBreakRecord;
-import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
-import net.medievalrp.spyglass.api.event.ChatRecord;
-import net.medievalrp.spyglass.api.event.CommandRecord;
-import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
-import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
-import net.medievalrp.spyglass.api.event.EntityDeathRecord;
-import net.medievalrp.spyglass.api.event.EntityHitRecord;
-import net.medievalrp.spyglass.api.event.EntityMountRecord;
+import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
-import net.medievalrp.spyglass.api.event.ItemDropRecord;
-import net.medievalrp.spyglass.api.event.ItemPickupRecord;
-import net.medievalrp.spyglass.api.event.JoinRecord;
-import net.medievalrp.spyglass.api.event.QuitRecord;
-import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
@@ -52,41 +36,7 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class MongoRecordStore implements RecordStore {
 
-    private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = Map.ofEntries(
-            Map.entry("break", BlockBreakRecord.class),
-            Map.entry("place", BlockPlaceRecord.class),
-            Map.entry("say", ChatRecord.class),
-            Map.entry("command", CommandRecord.class),
-            Map.entry("join", JoinRecord.class),
-            Map.entry("quit", QuitRecord.class),
-            Map.entry("deposit", ContainerDepositRecord.class),
-            Map.entry("withdraw", ContainerWithdrawRecord.class),
-            Map.entry("decay", BlockBreakRecord.class),
-            Map.entry("form", BlockPlaceRecord.class),
-            Map.entry("grow", BlockPlaceRecord.class),
-            Map.entry("ignite", BlockPlaceRecord.class),
-            Map.entry("drop", ItemDropRecord.class),
-            Map.entry("pickup", ItemPickupRecord.class),
-            Map.entry("teleport", TeleportRecord.class),
-            Map.entry("death", EntityDeathRecord.class),
-            Map.entry("hit", EntityHitRecord.class),
-            Map.entry("shot", EntityHitRecord.class),
-            Map.entry("mount", EntityMountRecord.class),
-            Map.entry("dismount", EntityMountRecord.class),
-            Map.entry("entity-deposit", ContainerDepositRecord.class),
-            Map.entry("entity-withdraw", ContainerWithdrawRecord.class),
-            Map.entry("bookshelf-insert", ContainerDepositRecord.class),
-            Map.entry("bookshelf-remove", ContainerWithdrawRecord.class),
-            Map.entry("pot-insert", ContainerDepositRecord.class),
-            Map.entry("pot-remove", ContainerWithdrawRecord.class),
-            Map.entry("shulker-deposit", ContainerDepositRecord.class),
-            Map.entry("shulker-withdraw", ContainerWithdrawRecord.class),
-            Map.entry("bundle-insert", ContainerDepositRecord.class),
-            Map.entry("bundle-extract", ContainerWithdrawRecord.class),
-            Map.entry("brush", BlockBreakRecord.class),
-            Map.entry("sculk", BlockPlaceRecord.class),
-            Map.entry("crafter", ContainerWithdrawRecord.class),
-            Map.entry("vault", BlockBreakRecord.class));
+    private static final Map<String, Class<? extends EventRecord>> EVENT_TYPES = EventCatalog.recordTypes();
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;

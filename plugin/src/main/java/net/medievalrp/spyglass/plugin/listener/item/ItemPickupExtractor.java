@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.item;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
@@ -27,6 +28,11 @@ public final class ItemPickupExtractor implements EventExtractor<EntityPickupIte
     @Override
     public Class<EntityPickupItemEvent> eventType() {
         return EntityPickupItemEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("pickup");
     }
 
     @Override
