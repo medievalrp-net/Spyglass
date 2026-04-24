@@ -94,6 +94,29 @@ public final class QueryStringParser {
                                 default -> throw new ParamParseException("Unknown order: " + flagValue);
                             };
                         }
+                        case "nod", "nodefault" -> {
+                            // `-nod=r,t` suppresses the per-param defaults
+                            // for the given aliases. v1 used this so
+                            // operators could skip the default radius
+                            // OR default time without disabling the
+                            // config-level `defaults.enabled` switch.
+                            if (flagValue == null || flagValue.isBlank()) {
+                                throw new ParamParseException(
+                                        "Flag -nod requires a value (comma-separated param aliases).");
+                            }
+                            for (String aliasRaw : flagValue.split(",")) {
+                                String paramAlias = aliasRaw.trim();
+                                if (paramAlias.isEmpty()) {
+                                    continue;
+                                }
+                                switch (paramAlias) {
+                                    case "r", "radius" -> defaultRadiusSuppressed = true;
+                                    case "t", "since", "time" -> sawTime = true;
+                                    default -> throw new ParamParseException(
+                                            "Flag -nod: unknown default-bearing alias: " + paramAlias);
+                                }
+                            }
+                        }
                         default -> throw new ParamParseException("Unknown flag: -" + name);
                     }
                     continue;
