@@ -38,6 +38,7 @@ public final class EventCatalog {
         m.put("shulker-open", ContainerInteractRecord.class);
         m.put("shulker-close", ContainerInteractRecord.class);
         m.put("use", BlockUseRecord.class);
+        m.put("useSign", BlockUseRecord.class);
         m.put("decay", BlockBreakRecord.class);
         m.put("form", BlockPlaceRecord.class);
         m.put("grow", BlockPlaceRecord.class);

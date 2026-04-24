@@ -7,6 +7,7 @@ authors:
 softdepend:
   - WorldEdit
   - FastAsyncWorldEdit
+  - CraftBook
 permissions:
   omniscience2.use:
     default: op
