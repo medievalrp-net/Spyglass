@@ -75,6 +75,7 @@ import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BrushListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BundleTransactionListener;
+import net.medievalrp.spyglass.plugin.listener.modern.CraftBookSignListener;
 import net.medievalrp.spyglass.plugin.listener.modern.CrafterListener;
 import net.medievalrp.spyglass.plugin.listener.modern.DecoratedPotListener;
 import net.medievalrp.spyglass.plugin.listener.modern.DelayedInteractionTracker;
@@ -187,6 +188,15 @@ public final class SpyglassPlugin extends JavaPlugin {
             if (listener.events().stream().anyMatch(enabledEvents::contains)) {
                 getServer().getPluginManager().registerEvents(listener, this);
             }
+        }
+        // CraftBook sign-use is only registered when CraftBook is live
+        // on the server — a vanilla deployment doesn't need PlayerInteract
+        // fired against every sign-right-click for a feature no one's
+        // using.
+        if (CraftBookSignListener.isCraftBookEnabled() && enabledEvents.contains("useSign")) {
+            getServer().getPluginManager().registerEvents(
+                    new CraftBookSignListener(recorder, support), this);
+            getLogger().info("Spyglass: CraftBook detected, useSign logging enabled.");
         }
 
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
