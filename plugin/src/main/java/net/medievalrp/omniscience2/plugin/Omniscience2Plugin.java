@@ -13,14 +13,18 @@ import net.medievalrp.omniscience2.plugin.command.OmniCommands;
 import net.medievalrp.omniscience2.plugin.command.OmniSuggestions;
 import net.medievalrp.omniscience2.plugin.command.PageCache;
 import net.medievalrp.omniscience2.plugin.command.param.BlockParam;
+import net.medievalrp.omniscience2.plugin.command.param.CauseParam;
 import net.medievalrp.omniscience2.plugin.command.param.EnchantParam;
 import net.medievalrp.omniscience2.plugin.command.param.EntityParam;
 import net.medievalrp.omniscience2.plugin.command.param.EventParam;
 import net.medievalrp.omniscience2.plugin.command.param.ItemLoreParam;
+import net.medievalrp.omniscience2.plugin.command.param.ItemMaterialParam;
 import net.medievalrp.omniscience2.plugin.command.param.ItemNameParam;
+import net.medievalrp.omniscience2.plugin.command.param.MessageParam;
 import net.medievalrp.omniscience2.plugin.command.param.PlayerParam;
 import net.medievalrp.omniscience2.plugin.command.param.QueryStringParser;
 import net.medievalrp.omniscience2.plugin.command.param.RadiusParam;
+import net.medievalrp.omniscience2.plugin.command.param.TargetParam;
 import net.medievalrp.omniscience2.plugin.command.param.TimeParam;
 import net.medievalrp.omniscience2.plugin.command.param.WorldParam;
 import net.medievalrp.omniscience2.plugin.command.render.ResultRenderer;
@@ -186,6 +190,10 @@ public final class Omniscience2Plugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new ItemNameParam());
         apiImpl.registerQueryParamHandler(new ItemLoreParam());
         apiImpl.registerQueryParamHandler(new EnchantParam());
+        apiImpl.registerQueryParamHandler(new MessageParam());
+        apiImpl.registerQueryParamHandler(new CauseParam());
+        apiImpl.registerQueryParamHandler(new ItemMaterialParam());
+        apiImpl.registerQueryParamHandler(new TargetParam());
 
         Bukkit.getServicesManager().register(Omniscience2Api.class, apiImpl, this, ServicePriority.Normal);
 
