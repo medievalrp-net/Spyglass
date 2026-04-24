@@ -52,7 +52,7 @@ public final class SearchService {
     }
 
     public void executeRequest(CommandSender sender, QueryRequest request) {
-        sender.sendMessage(Feedback.info("Searching..."));
+        sender.sendMessage(Feedback.querying());
         api.query(request).whenComplete((result, error) -> {
             if (error != null) {
                 logger.warning("Spyglass search failed: " + error);
@@ -68,7 +68,7 @@ public final class SearchService {
         List<Component> lines = renderLines(request, result);
         if (lines.isEmpty()) {
             pageCache.clear(sender);
-            sender.sendMessage(Feedback.warn("No matching records."));
+            sender.sendMessage(Feedback.error("No results."));
             return;
         }
         pageCache.store(sender, lines);

@@ -11,6 +11,7 @@ import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
+import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
@@ -120,11 +121,16 @@ public final class WandInteractListener implements Listener {
     }
 
     private boolean isHoldingWand(ItemStack stack) {
-        return stack != null && stack.getType() == tool.wandMaterial() && stack.getType() != Material.AIR;
+        if (stack == null || stack.getType() != tool.wandMaterial() || stack.getType() == Material.AIR) {
+            return false;
+        }
+        return net.medievalrp.spyglass.plugin.command.service.ToolService.WandHandout.isWandItem(stack);
     }
 
     private void queryAt(Player player, Location location) {
         BlockLocation anchor = BlockLocations.fromLocation(location);
+        String target = location.getBlock().getType().name();
+        player.sendMessage(Feedback.inspectHeader(target, anchor));
         List<QueryPredicate> predicates = new ArrayList<>();
         predicates.add(RadiusParam.groupAround(anchor, 0));
         predicates.add(new QueryPredicate.Range(
