@@ -58,7 +58,37 @@ public final class BlockSnapshots {
     }
 
     public static BlockSnapshot air() {
-        return new BlockSnapshot(Material.AIR, Material.AIR.createBlockData().getAsString(), List.of(), List.of(), List.of(), List.of(), null);
+        return new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+    }
+
+    /**
+     * Plain material + blockData snapshot for callers that don't have a
+     * {@link BlockState} handy (FAWE chunk diff, brush/vault delayed checks,
+     * v1 migration translation). Inventory / sign / banner / jukebox lists
+     * are empty — callers pass a {@link BlockState} to {@link #capture} when
+     * they want that data.
+     */
+    public static BlockSnapshot of(Material material, String blockData) {
+        return new BlockSnapshot(material, blockData,
+                List.of(), List.of(), List.of(), List.of(), null);
+    }
+
+    /**
+     * Resolves a stored material string (e.g. from a v1 MaterialType field or
+     * a FAWE blockData string) to a Bukkit {@link Material}. Falls back to
+     * {@link Material#AIR} on null/blank/unknown input.
+     */
+    public static Material matchMaterial(String name) {
+        if (name == null || name.isBlank()) {
+            return Material.AIR;
+        }
+        Material direct = Material.matchMaterial(name, false);
+        if (direct != null) {
+            return direct;
+        }
+        Material legacy = Material.matchMaterial(name, true);
+        return legacy != null ? legacy : Material.AIR;
     }
 
     private static List<StoredItem> captureInventory(Inventory inventory) {
