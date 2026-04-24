@@ -16,4 +16,10 @@ public record ItemDropRecord(
         String target,
         int amount,
         StoredItem item) implements EventRecord {
+
+    public static ItemDropRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
+        return new ItemDropRecord(
+                ctx.id(), ctx.schemaVersion(), "drop", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
+    }
 }

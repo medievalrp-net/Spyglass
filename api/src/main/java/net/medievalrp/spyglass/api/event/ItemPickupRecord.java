@@ -16,4 +16,10 @@ public record ItemPickupRecord(
         String target,
         int amount,
         StoredItem item) implements EventRecord {
+
+    public static ItemPickupRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
+        return new ItemPickupRecord(
+                ctx.id(), ctx.schemaVersion(), "pickup", ctx.occurred(), ctx.expiresAt(),
+                ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
+    }
 }

@@ -1,9 +1,9 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
 import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -30,7 +30,6 @@ public final class EntityDismountExtractor implements EventExtractor<EntityDismo
     public Stream<EntityMountRecord> extract(EntityDismountEvent event) {
         Entity rider = event.getEntity();
         Entity mount = event.getDismounted();
-        Instant occurred = support.now();
         BlockLocation location = BlockLocations.fromLocation(mount.getLocation());
         String mountType = mount.getType().getKey().getKey();
 
@@ -44,18 +43,7 @@ public final class EntityDismountExtractor implements EventExtractor<EntityDismo
             source = support.entitySource(rider.getUniqueId(), rider.getType().getKey().getKey());
         }
 
-        return Stream.of(new EntityMountRecord(
-                support.newId(),
-                1,
-                "dismount",
-                occurred,
-                support.expiresAt(occurred),
-                origin,
-                source,
-                location,
-                mountType,
-                mountType,
-                mount.getUniqueId(),
-                true));
+        RecordContext ctx = support.context(origin, source, location);
+        return Stream.of(EntityMountRecord.of(ctx, "dismount", mountType, mountType, mount.getUniqueId(), true));
     }
 }
