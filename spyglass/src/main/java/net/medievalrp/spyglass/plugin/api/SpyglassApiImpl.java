@@ -46,6 +46,21 @@ public final class SpyglassApiImpl implements SpyglassApi {
         return CompletableFuture.supplyAsync(() -> recordStore.query(request), queryExecutor);
     }
 
+    /**
+     * Internal display-fast-path: skips the heavy snapshot fields
+     * (originalBlock, newBlock, item payloads). The search renderer never
+     * looks at those, and leaving them unhydrated drops the per-record
+     * allocation cost by an order of magnitude on block-event pages.
+     *
+     * <p>Not on the public {@link SpyglassApi} interface — extensions
+     * that query the API get full records. The plugin's own search
+     * service uses this directly.
+     */
+    @ApiStatus.Internal
+    public CompletionStage<QueryResult> querySummary(QueryRequest request) {
+        return CompletableFuture.supplyAsync(() -> recordStore.querySummary(request), queryExecutor);
+    }
+
     @Override
     public void registerQueryParamHandler(QueryParamHandler handler) {
         handler.aliases().forEach(alias -> params.put(alias.toLowerCase(), handler));
