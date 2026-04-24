@@ -85,9 +85,19 @@ def find_mongo_client():
         sys.exit(2)
 
 
-def ensure_seed():
+def ensure_seed(*, preserve_existing=False):
+    """Seed regression fixtures.
+
+    Defaults to a destructive drop of Spyglass.EventRecords and
+    v1.DataEntry so exact-count cases aren't skewed by records
+    from prior dev sessions or live gameplay. Pass preserve_existing=True
+    to fall back to the legacy tag-scoped delete.
+    """
     seed_script = REPO_ROOT / "regression" / "seed.py"
-    result = subprocess.run([sys.executable, str(seed_script)], capture_output=True, text=True)
+    argv = [sys.executable, str(seed_script)]
+    if not preserve_existing:
+        argv.append("--drop")
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         print("Seeding failed:", result.stderr, file=sys.stderr)
         sys.exit(2)
@@ -255,6 +265,8 @@ def print_summary(payload: dict):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-seed", action="store_true", help="Don't re-seed the Mongo databases.")
+    parser.add_argument("--preserve-existing", action="store_true",
+                        help="Keep untagged records during seeding (default drops the whole collection).")
     parser.add_argument("--cases", default=str(REPO_ROOT / "regression" / "cases.json"))
     args = parser.parse_args()
 
@@ -263,7 +275,7 @@ def main():
 
     cases = load_cases(Path(args.cases))
     if not args.skip_seed:
-        ensure_seed()
+        ensure_seed(preserve_existing=args.preserve_existing)
 
     wait_for_rcon(mcrcon_cls)
     results: list[CaseResult] = []
