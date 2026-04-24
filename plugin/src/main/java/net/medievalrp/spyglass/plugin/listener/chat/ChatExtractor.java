@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.listener.chat;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
@@ -24,6 +25,11 @@ public final class ChatExtractor implements EventExtractor<AsyncChatEvent, ChatR
     @Override
     public Class<AsyncChatEvent> eventType() {
         return AsyncChatEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("say");
     }
 
     @Override

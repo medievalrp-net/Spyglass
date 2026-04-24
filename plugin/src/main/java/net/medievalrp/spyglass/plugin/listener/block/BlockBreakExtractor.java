@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.block;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
@@ -22,6 +23,11 @@ public final class BlockBreakExtractor implements EventExtractor<BlockBreakEvent
     @Override
     public Class<BlockBreakEvent> eventType() {
         return BlockBreakEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("break");
     }
 
     @Override

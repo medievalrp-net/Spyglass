@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.block;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
@@ -22,6 +23,11 @@ public final class BlockPlaceExtractor implements EventExtractor<BlockPlaceEvent
     @Override
     public Class<BlockPlaceEvent> eventType() {
         return BlockPlaceEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("place");
     }
 
     @Override
