@@ -13,14 +13,18 @@ import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
 import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
+import net.medievalrp.spyglass.plugin.command.param.CauseParam;
 import net.medievalrp.spyglass.plugin.command.param.EnchantParam;
 import net.medievalrp.spyglass.plugin.command.param.EntityParam;
 import net.medievalrp.spyglass.plugin.command.param.EventParam;
 import net.medievalrp.spyglass.plugin.command.param.ItemLoreParam;
+import net.medievalrp.spyglass.plugin.command.param.ItemMaterialParam;
 import net.medievalrp.spyglass.plugin.command.param.ItemNameParam;
+import net.medievalrp.spyglass.plugin.command.param.MessageParam;
 import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
+import net.medievalrp.spyglass.plugin.command.param.TargetParam;
 import net.medievalrp.spyglass.plugin.command.param.TimeParam;
 import net.medievalrp.spyglass.plugin.command.param.WorldParam;
 import net.medievalrp.spyglass.plugin.command.render.ResultRenderer;
@@ -186,6 +190,10 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new ItemNameParam());
         apiImpl.registerQueryParamHandler(new ItemLoreParam());
         apiImpl.registerQueryParamHandler(new EnchantParam());
+        apiImpl.registerQueryParamHandler(new MessageParam());
+        apiImpl.registerQueryParamHandler(new CauseParam());
+        apiImpl.registerQueryParamHandler(new ItemMaterialParam());
+        apiImpl.registerQueryParamHandler(new TargetParam());
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
