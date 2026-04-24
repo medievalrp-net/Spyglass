@@ -16,3 +16,5 @@ permissions:
     default: op
   omniscience2.tool:
     default: op
+  omniscience2.worldedit:
+    default: op
