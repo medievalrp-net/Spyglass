@@ -18,7 +18,7 @@ import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
@@ -40,10 +40,10 @@ import org.jetbrains.annotations.ApiStatus;
 public final class WorldEditSubscriber {
 
     private final Recorder recorder;
-    private final ExtractorSupport support;
+    private final RecordingSupport support;
     private final Logger logger;
 
-    public WorldEditSubscriber(Recorder recorder, ExtractorSupport support, Logger logger) {
+    public WorldEditSubscriber(Recorder recorder, RecordingSupport support, Logger logger) {
         this.recorder = recorder;
         this.support = support;
         this.logger = logger;

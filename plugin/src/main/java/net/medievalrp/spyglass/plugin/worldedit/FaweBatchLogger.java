@@ -24,7 +24,7 @@ import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
@@ -38,13 +38,13 @@ import org.jetbrains.annotations.ApiStatus;
 final class FaweBatchLogger implements IBatchProcessor {
 
     private final Recorder recorder;
-    private final ExtractorSupport support;
+    private final RecordingSupport support;
     private final UUID playerId;
     private final String playerName;
     private final UUID worldId;
     private final String worldName;
 
-    FaweBatchLogger(Recorder recorder, ExtractorSupport support,
+    FaweBatchLogger(Recorder recorder, RecordingSupport support,
                     UUID playerId, String playerName,
                     UUID worldId, String worldName) {
         this.recorder = recorder;
