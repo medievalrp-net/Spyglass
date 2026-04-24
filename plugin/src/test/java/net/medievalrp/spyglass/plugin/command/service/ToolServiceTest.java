@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
-import net.medievalrp.spyglass.plugin.tool.ToolStateStore;
+import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
