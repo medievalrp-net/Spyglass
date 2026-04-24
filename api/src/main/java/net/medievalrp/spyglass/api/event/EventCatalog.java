@@ -49,6 +49,7 @@ public final class EventCatalog {
         m.put("shot", EntityHitRecord.class);
         m.put("mount", EntityMountRecord.class);
         m.put("dismount", EntityMountRecord.class);
+        m.put("named", EntityNameRecord.class);
         m.put("entity-deposit", ContainerDepositRecord.class);
         m.put("entity-withdraw", ContainerWithdrawRecord.class);
         m.put("bookshelf-insert", ContainerDepositRecord.class);
