@@ -140,9 +140,16 @@ def v1_record(event, target, player_uuid, x, y, z):
     }
 
 
-def clear_existing(db, collection, tag):
+def clear_existing(db, collection, tag, *, drop_all=False):
     # Sweep both current-tagged records and any stale fixture data left behind
-    # by earlier manual seeding (fixed test UUIDs).
+    # by earlier manual seeding (fixed test UUIDs). With drop_all, nuke the
+    # entire collection instead - appropriate for regression runs where we
+    # want a bit-exact count match and can't risk any unrelated records
+    # (from prior dev sessions, live gameplay, etc.) skewing the totals.
+    if drop_all:
+        before = db[collection].count_documents({})
+        db[collection].drop()
+        return before
     query = {
         "$or": [
             {"_regressionTag": tag},
@@ -156,11 +163,11 @@ def clear_existing(db, collection, tag):
     return before
 
 
-def seed_v2(client, *, skip=False):
+def seed_v2(client, *, skip=False, drop_all=False):
     if skip:
         return 0, 0
     db = client["Spyglass"]
-    removed = clear_existing(db, "EventRecords", TEST_TAG)
+    removed = clear_existing(db, "EventRecords", TEST_TAG, drop_all=drop_all)
     docs = [
         v2_record("break", "STONE", ALICE, "Alice", 10, 64, 10, original_material="STONE"),
         v2_record("break", "DIRT", ALICE, "Alice", 11, 64, 10, original_material="DIRT"),
@@ -203,11 +210,11 @@ def seed_v2(client, *, skip=False):
     return removed, len(docs)
 
 
-def seed_v1(client, *, skip=False):
+def seed_v1(client, *, skip=False, drop_all=False):
     if skip:
         return 0, 0
     db = client["v1"]
-    removed = clear_existing(db, "DataEntry", TEST_TAG)
+    removed = clear_existing(db, "DataEntry", TEST_TAG, drop_all=drop_all)
     docs = [
         v1_record("break", "STONE", ALICE, 10, 64, 10),
         v1_record("break", "DIRT", ALICE, 11, 64, 10),
@@ -223,13 +230,18 @@ def main():
     parser.add_argument("--mongo", default="mongodb://localhost:27017")
     parser.add_argument("--skip-v1", action="store_true")
     parser.add_argument("--skip-v2", action="store_true")
+    parser.add_argument("--drop", action="store_true",
+                        help="Drop the target collection entirely before seeding. "
+                             "Required when you need bit-exact counts in a dirty DB; "
+                             "run.py passes this by default.")
     args = parser.parse_args()
 
     client = MongoClient(args.mongo, uuidRepresentation="standard")
-    v2_removed, v2_added = seed_v2(client, skip=args.skip_v2)
-    v1_removed, v1_added = seed_v1(client, skip=args.skip_v1)
-    print(f"v2 EventRecords: removed={v2_removed}, added={v2_added}")
-    print(f"v1 DataEntry  : removed={v1_removed}, added={v1_added}")
+    v2_removed, v2_added = seed_v2(client, skip=args.skip_v2, drop_all=args.drop)
+    v1_removed, v1_added = seed_v1(client, skip=args.skip_v1, drop_all=args.drop)
+    mode = "dropped-all" if args.drop else "tag-scoped"
+    print(f"v2 EventRecords ({mode}): removed={v2_removed}, added={v2_added}")
+    print(f"v1 DataEntry   ({mode}): removed={v1_removed}, added={v1_added}")
 
 
 if __name__ == "__main__":
