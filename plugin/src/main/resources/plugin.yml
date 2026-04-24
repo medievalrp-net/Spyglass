@@ -18,3 +18,5 @@ permissions:
     default: op
   omniscience2.worldedit:
     default: op
+  omniscience2.tele:
+    default: op

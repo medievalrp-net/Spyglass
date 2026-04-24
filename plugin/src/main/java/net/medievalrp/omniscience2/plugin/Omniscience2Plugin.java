@@ -30,6 +30,7 @@ import net.medievalrp.omniscience2.plugin.command.service.PageService;
 import net.medievalrp.omniscience2.plugin.command.service.RollbackService;
 import net.medievalrp.omniscience2.plugin.command.service.SearchService;
 import net.medievalrp.omniscience2.plugin.command.service.ServiceSupport;
+import net.medievalrp.omniscience2.plugin.command.service.TeleportService;
 import net.medievalrp.omniscience2.plugin.command.service.ToolService;
 import net.medievalrp.omniscience2.plugin.command.service.UndoService;
 import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
@@ -203,6 +204,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
+        TeleportService teleportService = new TeleportService();
         OmniSuggestions suggestions = new OmniSuggestions(apiImpl);
 
         OmniCommands commands = new OmniCommands(
@@ -214,6 +216,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 undoService,
                 pageService,
                 toolService,
+                teleportService,
                 suggestions);
         commands.register();
 
