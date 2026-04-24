@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.plugin.listener.container;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
@@ -36,6 +37,11 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
     @Override
     public Class<InventoryClickEvent> eventType() {
         return InventoryClickEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("deposit", "withdraw");
     }
 
     @Override

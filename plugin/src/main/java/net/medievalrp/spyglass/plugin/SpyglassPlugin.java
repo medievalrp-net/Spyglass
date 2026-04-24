@@ -1,11 +1,13 @@
 package net.medievalrp.spyglass.plugin;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
 import net.medievalrp.spyglass.plugin.command.OmniCommands;
@@ -120,55 +122,51 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         ExtractorSupport support = new ExtractorSupport(config.storage().retention());
         ExtractorRegistry registry = new ExtractorRegistry(recorder);
-        if (enabledEvents.contains("break")) {
-            registry.register(this, new BlockBreakExtractor(support));
-            registry.register(this, new MultiBlockBreakExtractor(support));
-            registry.register(this, new BlockExplodeExtractor(support));
-            registry.register(this, new EntityExplodeExtractor(support));
+
+        // Extractor-pattern listeners: each declares the events it emits via
+        // events(); we register it if any are enabled.
+        List<EventExtractor<?, ?>> extractors = List.of(
+                new BlockBreakExtractor(support),
+                new MultiBlockBreakExtractor(support),
+                new BlockExplodeExtractor(support),
+                new EntityExplodeExtractor(support),
+                new BlockPlaceExtractor(support),
+                new BlockMultiPlaceExtractor(support),
+                new ContainerTransactionExtractor(support),
+                new ContainerDragExtractor(support),
+                new ContainerDropExtractor(support),
+                new ChatExtractor(support),
+                new CommandExtractor(support),
+                new JoinExtractor(support),
+                new QuitExtractor(support),
+                new LeavesDecayExtractor(support),
+                new BlockFadeExtractor(support),
+                new BlockFormExtractor(support),
+                new BlockGrowExtractor(support),
+                new StructureGrowExtractor(support),
+                new BlockIgniteExtractor(support),
+                new ItemDropExtractor(support),
+                new ItemPickupExtractor(support),
+                new TeleportExtractor(support),
+                new EntityDeathExtractor(support),
+                new EntityDamageExtractor(support),
+                new EntityMountExtractor(support),
+                new EntityDismountExtractor(support),
+                new ArmorStandManipulateExtractor(support),
+                new BookshelfExtractor(support),
+                new DecoratedPotExtractor(support),
+                new ShulkerTransactionExtractor(support),
+                new CrafterExtractor(support),
+                new SculkExtractor(support));
+        for (EventExtractor<?, ?> extractor : extractors) {
+            if (extractor.events().stream().anyMatch(enabledEvents::contains)) {
+                registry.register(this, extractor);
+            }
         }
-        if (enabledEvents.contains("drop")) {
-            registry.register(this, new ContainerDropExtractor(support));
-        }
-        if (enabledEvents.contains("place")) {
-            registry.register(this, new BlockPlaceExtractor(support));
-            registry.register(this, new BlockMultiPlaceExtractor(support));
-        }
-        if (enabledEvents.contains("deposit") || enabledEvents.contains("withdraw")) {
-            registry.register(this, new ContainerTransactionExtractor(support));
-            registry.register(this, new ContainerDragExtractor(support));
-        }
-        if (enabledEvents.contains("say")) registry.register(this, new ChatExtractor(support));
-        if (enabledEvents.contains("command")) registry.register(this, new CommandExtractor(support));
-        if (enabledEvents.contains("join")) registry.register(this, new JoinExtractor(support));
-        if (enabledEvents.contains("quit")) registry.register(this, new QuitExtractor(support));
-        if (enabledEvents.contains("decay")) {
-            registry.register(this, new LeavesDecayExtractor(support));
-            registry.register(this, new BlockFadeExtractor(support));
-        }
-        if (enabledEvents.contains("form")) registry.register(this, new BlockFormExtractor(support));
-        if (enabledEvents.contains("grow")) {
-            registry.register(this, new BlockGrowExtractor(support));
-            registry.register(this, new StructureGrowExtractor(support));
-        }
-        if (enabledEvents.contains("ignite")) registry.register(this, new BlockIgniteExtractor(support));
-        if (enabledEvents.contains("drop")) registry.register(this, new ItemDropExtractor(support));
-        if (enabledEvents.contains("pickup")) registry.register(this, new ItemPickupExtractor(support));
-        if (enabledEvents.contains("teleport")) registry.register(this, new TeleportExtractor(support));
-        if (enabledEvents.contains("death")) registry.register(this, new EntityDeathExtractor(support));
-        if (enabledEvents.contains("hit") || enabledEvents.contains("shot"))
-            registry.register(this, new EntityDamageExtractor(support));
-        if (enabledEvents.contains("mount")) registry.register(this, new EntityMountExtractor(support));
-        if (enabledEvents.contains("dismount")) registry.register(this, new EntityDismountExtractor(support));
-        if (enabledEvents.contains("entity-deposit") || enabledEvents.contains("entity-withdraw"))
-            registry.register(this, new ArmorStandManipulateExtractor(support));
-        if (enabledEvents.contains("bookshelf-insert") || enabledEvents.contains("bookshelf-remove"))
-            registry.register(this, new BookshelfExtractor(support));
-        if (enabledEvents.contains("pot-insert") || enabledEvents.contains("pot-remove"))
-            registry.register(this, new DecoratedPotExtractor(support));
-        if (enabledEvents.contains("shulker-deposit") || enabledEvents.contains("shulker-withdraw"))
-            registry.register(this, new ShulkerTransactionExtractor(support));
-        if (enabledEvents.contains("crafter")) registry.register(this, new CrafterExtractor(support));
-        if (enabledEvents.contains("sculk")) registry.register(this, new SculkExtractor(support));
+
+        // Delayed-verify listeners live outside the EventExtractor interface
+        // because they emit records from scheduled callbacks, not from the
+        // event itself.
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
         if (enabledEvents.contains("brush")) {
             getServer().getPluginManager().registerEvents(new BrushExtractor(recorder, support, delayedTracker), this);

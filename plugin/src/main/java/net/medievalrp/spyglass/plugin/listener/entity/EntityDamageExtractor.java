@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.Origin;
@@ -26,6 +27,11 @@ public final class EntityDamageExtractor implements EventExtractor<EntityDamageB
     @Override
     public Class<EntityDamageByEntityEvent> eventType() {
         return EntityDamageByEntityEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("hit", "shot");
     }
 
     @Override
