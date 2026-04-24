@@ -1,10 +1,10 @@
 package net.medievalrp.spyglass.plugin.listener.modern;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
@@ -30,13 +30,11 @@ public final class SculkExtractor implements EventExtractor<SculkBloomEvent, Eve
     public Stream<EventRecord> extract(SculkBloomEvent event) {
         Block block = event.getBlock();
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
-        Instant occurred = support.now();
         BlockSnapshot snap = BlockSnapshots.of(block.getType(), block.getBlockData().getAsString());
-        return Stream.of(new BlockPlaceRecord(
-                support.newId(), 1, "sculk", occurred,
-                support.expiresAt(occurred),
+        RecordContext ctx = support.context(
                 support.environmentOrigin("sculk-bloom"),
                 support.environmentSource("sculk:charge=" + event.getCharge()),
-                location, block.getType().name(), snap, snap));
+                location);
+        return Stream.of(BlockPlaceRecord.of(ctx, "sculk", block.getType().name(), snap, snap));
     }
 }

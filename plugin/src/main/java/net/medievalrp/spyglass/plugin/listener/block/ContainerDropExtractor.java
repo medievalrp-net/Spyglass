@@ -1,10 +1,8 @@
 package net.medievalrp.spyglass.plugin.listener.block;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
-import net.medievalrp.spyglass.api.event.Origin;
-import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -45,10 +43,7 @@ public final class ContainerDropExtractor implements EventExtractor<BlockDropIte
             return Stream.empty();
         }
         Player player = event.getPlayer();
-        Instant occurred = support.now();
         BlockLocation location = BlockLocations.fromLocation(state.getLocation());
-        Origin origin = support.playerOrigin();
-        Source source = support.playerSource(player);
 
         Stream.Builder<ItemDropRecord> out = Stream.builder();
         int syntheticSlot = 0;
@@ -58,12 +53,8 @@ public final class ContainerDropExtractor implements EventExtractor<BlockDropIte
                 continue;
             }
             StoredItem stored = ItemSerialization.storedItem(syntheticSlot++, stack);
-            out.add(new ItemDropRecord(
-                    support.newId(), 1, "drop", occurred,
-                    support.expiresAt(occurred),
-                    origin, source, location,
-                    stack.getType().name(),
-                    stack.getAmount(), stored));
+            RecordContext ctx = support.playerContext(player, location);
+            out.add(ItemDropRecord.of(ctx, stack.getType().name(), stack.getAmount(), stored));
         }
         return out.build();
     }
