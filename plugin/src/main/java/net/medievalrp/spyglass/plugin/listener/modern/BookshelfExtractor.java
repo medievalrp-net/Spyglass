@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.modern;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
@@ -32,6 +33,11 @@ public final class BookshelfExtractor implements EventExtractor<PlayerInteractEv
     @Override
     public Class<PlayerInteractEvent> eventType() {
         return PlayerInteractEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("bookshelf-insert", "bookshelf-remove");
     }
 
     @Override

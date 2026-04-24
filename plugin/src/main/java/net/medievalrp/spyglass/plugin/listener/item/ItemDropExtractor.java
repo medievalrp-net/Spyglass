@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.item;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.RecordContext;
@@ -23,6 +24,11 @@ public final class ItemDropExtractor implements EventExtractor<PlayerDropItemEve
     @Override
     public Class<PlayerDropItemEvent> eventType() {
         return PlayerDropItemEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("drop");
     }
 
     @Override

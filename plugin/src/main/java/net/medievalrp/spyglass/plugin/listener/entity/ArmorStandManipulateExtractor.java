@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
@@ -26,6 +27,11 @@ public final class ArmorStandManipulateExtractor implements EventExtractor<Playe
     @Override
     public Class<PlayerArmorStandManipulateEvent> eventType() {
         return PlayerArmorStandManipulateEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("entity-deposit", "entity-withdraw");
     }
 
     @Override

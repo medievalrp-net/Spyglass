@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -33,6 +34,11 @@ public final class ContainerDragExtractor implements EventExtractor<InventoryDra
     @Override
     public Class<InventoryDragEvent> eventType() {
         return InventoryDragEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("deposit");
     }
 
     @Override

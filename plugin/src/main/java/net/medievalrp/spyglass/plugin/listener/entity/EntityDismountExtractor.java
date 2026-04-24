@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
+import java.util.Set;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
 import net.medievalrp.spyglass.api.event.Origin;
@@ -24,6 +25,11 @@ public final class EntityDismountExtractor implements EventExtractor<EntityDismo
     @Override
     public Class<EntityDismountEvent> eventType() {
         return EntityDismountEvent.class;
+    }
+
+    @Override
+    public Set<String> events() {
+        return Set.of("dismount");
     }
 
     @Override
