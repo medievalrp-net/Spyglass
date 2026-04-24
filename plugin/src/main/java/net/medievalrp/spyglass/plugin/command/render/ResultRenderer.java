@@ -7,6 +7,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.ChatRecord;
@@ -25,6 +26,7 @@ import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
+import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
@@ -33,9 +35,11 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class ResultRenderer {
 
+    private final SpyglassApi api;
     private final SpyglassConfig config;
 
-    public ResultRenderer(SpyglassConfig config) {
+    public ResultRenderer(SpyglassApi api, SpyglassConfig config) {
+        this.api = api;
         this.config = config;
     }
 
@@ -44,16 +48,20 @@ public final class ResultRenderer {
         long count = aggregation.count();
         // Aggregations span multiple locations; `-ex` location-append is
         // skipped because any one sample.location() would be misleading.
-        return line(sample, count, true, false);
+        return line(sample, count, true, false, java.util.EnumSet.noneOf(
+                net.medievalrp.spyglass.api.query.Flag.class));
     }
 
     public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags) {
-        boolean extended = flags != null
-                && flags.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
-        return line(record, 1, false, extended);
+        java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
+                ? java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class)
+                : flags;
+        boolean extended = safe.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
+        return line(record, 1, false, extended, safe);
     }
 
-    private Component line(EventRecord record, long count, boolean grouped, boolean extended) {
+    private Component line(EventRecord record, long count, boolean grouped, boolean extended,
+                           java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags) {
         // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
         // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
@@ -72,7 +80,21 @@ public final class ResultRenderer {
         if (qty > 0) {
             builder.append(Component.text(qty + " ", NamedTextColor.GREEN));
         }
-        builder.append(Component.text(targetOf(record), NamedTextColor.AQUA));
+        // Let a registered DisplayRenderer customize the target span if it wants.
+        Component defaultTarget = Component.text(targetOf(record), NamedTextColor.AQUA);
+        java.util.Optional<DisplayRenderer> custom = api == null
+                ? java.util.Optional.empty()
+                : api.displayRenderer(record.event());
+        Component target = custom
+                .map(renderer -> {
+                    try {
+                        return renderer.renderTarget(record, defaultTarget, flags);
+                    } catch (RuntimeException ex) {
+                        return defaultTarget;
+                    }
+                })
+                .orElse(defaultTarget);
+        builder.append(target);
         if (grouped) {
             builder.append(Component.text(" x" + count, NamedTextColor.GREEN));
         }
@@ -135,6 +157,15 @@ public final class ResultRenderer {
         }
         if (record instanceof JoinRecord join && !join.address().isBlank()) {
             lines.add(kv("IP", join.address()));
+        }
+        // Append extra hover lines from a registered DisplayRenderer, if any.
+        if (api != null) {
+            api.displayRenderer(record.event()).ifPresent(renderer -> {
+                try {
+                    lines.addAll(renderer.hoverLines(record));
+                } catch (RuntimeException ignored) {
+                }
+            });
         }
 
         Component hover = Component.empty();
