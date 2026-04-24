@@ -52,6 +52,7 @@ import net.medievalrp.omniscience2.plugin.listener.entity.EntityDamageListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDeathListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDismountListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityMountListener;
+import net.medievalrp.omniscience2.plugin.listener.environment.BlockBurnListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockExplodeListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFadeListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFormListener;
@@ -132,8 +133,9 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 new BlockBreakListener(recorder, support),
                 new MultiBlockBreakListener(recorder, support),
                 new DependantBreakListener(recorder, support),
-                new BlockExplodeListener(recorder, support),
+                new BlockExplodeListener(recorder, support, this),
                 new EntityExplodeListener(recorder, support),
+                new BlockBurnListener(recorder, support, this),
                 new BlockPlaceListener(recorder, support),
                 new BlockMultiPlaceListener(recorder, support),
                 new ContainerTransactionListener(recorder, support),
@@ -150,7 +152,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 new BlockFormListener(recorder, support),
                 new BlockGrowListener(recorder, support),
                 new StructureGrowListener(recorder, support),
-                new BlockIgniteListener(recorder, support),
+                new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
                 new ItemPickupListener(recorder, support),
                 new TeleportListener(recorder, support),

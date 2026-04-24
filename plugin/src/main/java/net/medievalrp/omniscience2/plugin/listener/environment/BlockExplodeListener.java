@@ -12,10 +12,12 @@ import net.medievalrp.omniscience2.plugin.listener.RecordingListener;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
 import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
+import net.medievalrp.omniscience2.plugin.util.PlayerSourceMetadata;
 import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.BlockExplodeEvent;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
@@ -23,10 +25,12 @@ public final class BlockExplodeListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    private final JavaPlugin plugin;
 
-    public BlockExplodeListener(Recorder recorder, RecordingSupport support) {
+    public BlockExplodeListener(Recorder recorder, RecordingSupport support, JavaPlugin plugin) {
         this.recorder = recorder;
         this.support = support;
+        this.plugin = plugin;
     }
 
     @Override
@@ -38,8 +42,22 @@ public final class BlockExplodeListener implements RecordingListener {
     public void onBlockExplode(BlockExplodeEvent event) {
         String cause = event.getBlock().getType().name();
         Instant occurred = support.now();
-        Origin origin = support.environmentOrigin("block-explode:" + cause);
-        Source source = support.environmentSource("block-explode:" + cause);
+
+        // Was the exploding block itself tagged by a player? (Player-lit
+        // TNT primed via flint & steel keeps its metadata through the
+        // priming stage into the block-explosion phase.)
+        PlayerSourceMetadata.Attribution attribution =
+                PlayerSourceMetadata.attributionOf(event.getBlock(), plugin);
+
+        Origin origin;
+        Source source;
+        if (attribution.isPresent()) {
+            origin = support.environmentOrigin("block-explode:" + cause);
+            source = Source.player(attribution.id(), attribution.name());
+        } else {
+            origin = support.environmentOrigin("block-explode:" + cause);
+            source = support.environmentSource("block-explode:" + cause);
+        }
         for (Block block : event.blockList()) {
             recorder.record(toRecord(block, occurred, origin, source));
         }
