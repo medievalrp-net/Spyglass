@@ -28,7 +28,7 @@ repositories {
 val faweJar = rootProject.rootDir.resolve("../RP_Server/plugins/FastAsyncWorldEdit.jar")
 
 dependencies {
-    implementation(project(":api"))
+    implementation(project(":spyglass-api"))
 
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
@@ -44,7 +44,7 @@ dependencies {
     implementation("org.incendo:cloud-annotations:$cloudCoreVersion")
     implementation("org.incendo:cloud-minecraft-extras:$cloudMinecraftVersion")
 
-    testImplementation(project(":api"))
+    testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testImplementation("org.assertj:assertj-core:$assertjVersion")
