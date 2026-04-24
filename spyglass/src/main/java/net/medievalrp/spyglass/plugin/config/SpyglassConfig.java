@@ -80,6 +80,23 @@ public record SpyglassConfig(
     public record Database(String uri, String name, String collection) {
     }
 
+    /**
+     * Storage-tier tuning.
+     *
+     * @param retention     how long records live in Mongo before the
+     *                      TTL index drops them.
+     * @param queueCapacity <b>Warn threshold, not a drop ceiling.</b> The
+     *                      ingest queue is unbounded and never rejects at
+     *                      intake — same contract as v1. Crossing this
+     *                      depth logs a warning so operators notice Mongo
+     *                      backlog early. Field name kept as
+     *                      {@code queueCapacity} for config-file
+     *                      back-compat; semantically it's the
+     *                      warn threshold passed to
+     *                      {@link net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder}.
+     * @param flushTimeout  upper bound on how long {@code onDisable} will
+     *                      wait for the queue to drain before returning.
+     */
     public record Storage(Duration retention, int queueCapacity, Duration flushTimeout) {
     }
 
