@@ -48,8 +48,8 @@ subprojects {
                     // targets per the v1.0.0 plan are 0.90 api / 0.80
                     // plugin; see docs/report/gap/plan/plan.md §6.0.
                     minimum = when (project.name) {
-                        "api" -> 0.15.toBigDecimal()
-                        "plugin" -> 0.15.toBigDecimal()
+                        "spyglass-api" -> 0.15.toBigDecimal()
+                        "spyglass" -> 0.15.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
@@ -72,9 +72,9 @@ tasks.register<Exec>("regression") {
 tasks.register("deployToRpServer") {
     group = "deployment"
     description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Spyglass.jar."
-    dependsOn(":plugin:shadowJar")
+    dependsOn(":spyglass:shadowJar")
     doLast {
-        val pluginProject = project(":plugin")
+        val pluginProject = project(":spyglass")
         val candidate = pluginProject.layout.buildDirectory
             .file("libs/Spyglass-${pluginProject.version}.jar")
             .get().asFile
