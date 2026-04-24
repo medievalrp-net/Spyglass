@@ -7,7 +7,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
-import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
 import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
@@ -31,49 +30,49 @@ import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.command.service.UndoService;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
-import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
-import net.medievalrp.spyglass.plugin.listener.block.BlockBreakExtractor;
-import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceExtractor;
-import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceExtractor;
-import net.medievalrp.spyglass.plugin.listener.block.ContainerDropExtractor;
-import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakExtractor;
-import net.medievalrp.spyglass.plugin.listener.chat.ChatExtractor;
-import net.medievalrp.spyglass.plugin.listener.chat.CommandExtractor;
-import net.medievalrp.spyglass.plugin.listener.container.ContainerDragExtractor;
-import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionExtractor;
-import net.medievalrp.spyglass.plugin.listener.entity.ArmorStandManipulateExtractor;
-import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageExtractor;
-import net.medievalrp.spyglass.plugin.listener.entity.EntityDeathExtractor;
-import net.medievalrp.spyglass.plugin.listener.entity.EntityDismountExtractor;
-import net.medievalrp.spyglass.plugin.listener.entity.EntityMountExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.BlockExplodeExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.BlockFadeExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.BlockFormExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.BlockGrowExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.BlockIgniteExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.EntityExplodeExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayExtractor;
-import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowExtractor;
-import net.medievalrp.spyglass.plugin.listener.item.ItemDropExtractor;
-import net.medievalrp.spyglass.plugin.listener.item.ItemPickupExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.BookshelfExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.BrushExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.CrafterExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.DecoratedPotExtractor;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
+import net.medievalrp.spyglass.plugin.listener.RecordingListener;
+import net.medievalrp.spyglass.plugin.listener.block.BlockBreakListener;
+import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceListener;
+import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceListener;
+import net.medievalrp.spyglass.plugin.listener.block.ContainerDropListener;
+import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakListener;
+import net.medievalrp.spyglass.plugin.listener.chat.ChatListener;
+import net.medievalrp.spyglass.plugin.listener.chat.CommandListener;
+import net.medievalrp.spyglass.plugin.listener.container.ContainerDragListener;
+import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionListener;
+import net.medievalrp.spyglass.plugin.listener.entity.ArmorStandManipulateListener;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDamageListener;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDeathListener;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityDismountListener;
+import net.medievalrp.spyglass.plugin.listener.entity.EntityMountListener;
+import net.medievalrp.spyglass.plugin.listener.environment.BlockExplodeListener;
+import net.medievalrp.spyglass.plugin.listener.environment.BlockFadeListener;
+import net.medievalrp.spyglass.plugin.listener.environment.BlockFormListener;
+import net.medievalrp.spyglass.plugin.listener.environment.BlockGrowListener;
+import net.medievalrp.spyglass.plugin.listener.environment.BlockIgniteListener;
+import net.medievalrp.spyglass.plugin.listener.environment.EntityExplodeListener;
+import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayListener;
+import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowListener;
+import net.medievalrp.spyglass.plugin.listener.item.ItemDropListener;
+import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
+import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
+import net.medievalrp.spyglass.plugin.listener.modern.BrushListener;
+import net.medievalrp.spyglass.plugin.listener.modern.CrafterListener;
+import net.medievalrp.spyglass.plugin.listener.modern.DecoratedPotListener;
 import net.medievalrp.spyglass.plugin.listener.modern.DelayedInteractionTracker;
-import net.medievalrp.spyglass.plugin.listener.modern.SculkExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.ShulkerTransactionExtractor;
-import net.medievalrp.spyglass.plugin.listener.modern.VaultExtractor;
-import net.medievalrp.spyglass.plugin.listener.player.JoinExtractor;
-import net.medievalrp.spyglass.plugin.listener.player.QuitExtractor;
-import net.medievalrp.spyglass.plugin.listener.player.TeleportExtractor;
+import net.medievalrp.spyglass.plugin.listener.modern.SculkListener;
+import net.medievalrp.spyglass.plugin.listener.modern.ShulkerTransactionListener;
+import net.medievalrp.spyglass.plugin.listener.modern.VaultListener;
+import net.medievalrp.spyglass.plugin.listener.player.JoinListener;
+import net.medievalrp.spyglass.plugin.listener.player.QuitListener;
+import net.medievalrp.spyglass.plugin.listener.player.TeleportListener;
 import net.medievalrp.spyglass.plugin.migration.MigrationCommand;
 import net.medievalrp.spyglass.plugin.migration.MigrationService;
 import net.medievalrp.spyglass.plugin.migration.V1ItemDecoder;
 import net.medievalrp.spyglass.plugin.migration.V1ToV2Translator;
 import net.medievalrp.spyglass.plugin.migration.WorldNameLookup;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
-import net.medievalrp.spyglass.plugin.pipeline.ExtractorRegistry;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
@@ -120,59 +119,51 @@ public final class SpyglassPlugin extends JavaPlugin {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toUnmodifiableSet());
 
-        ExtractorSupport support = new ExtractorSupport(config.storage().retention());
-        ExtractorRegistry registry = new ExtractorRegistry(recorder);
-
-        // Extractor-pattern listeners: each declares the events it emits via
-        // events(); we register it if any are enabled.
-        List<EventExtractor<?, ?>> extractors = List.of(
-                new BlockBreakExtractor(support),
-                new MultiBlockBreakExtractor(support),
-                new BlockExplodeExtractor(support),
-                new EntityExplodeExtractor(support),
-                new BlockPlaceExtractor(support),
-                new BlockMultiPlaceExtractor(support),
-                new ContainerTransactionExtractor(support),
-                new ContainerDragExtractor(support),
-                new ContainerDropExtractor(support),
-                new ChatExtractor(support),
-                new CommandExtractor(support),
-                new JoinExtractor(support),
-                new QuitExtractor(support),
-                new LeavesDecayExtractor(support),
-                new BlockFadeExtractor(support),
-                new BlockFormExtractor(support),
-                new BlockGrowExtractor(support),
-                new StructureGrowExtractor(support),
-                new BlockIgniteExtractor(support),
-                new ItemDropExtractor(support),
-                new ItemPickupExtractor(support),
-                new TeleportExtractor(support),
-                new EntityDeathExtractor(support),
-                new EntityDamageExtractor(support),
-                new EntityMountExtractor(support),
-                new EntityDismountExtractor(support),
-                new ArmorStandManipulateExtractor(support),
-                new BookshelfExtractor(support),
-                new DecoratedPotExtractor(support),
-                new ShulkerTransactionExtractor(support),
-                new CrafterExtractor(support),
-                new SculkExtractor(support));
-        for (EventExtractor<?, ?> extractor : extractors) {
-            if (extractor.events().stream().anyMatch(enabledEvents::contains)) {
-                registry.register(this, extractor);
-            }
-        }
-
-        // Delayed-verify listeners live outside the EventExtractor interface
-        // because they emit records from scheduled callbacks, not from the
-        // event itself.
+        RecordingSupport support = new RecordingSupport(config.storage().retention());
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
-        if (enabledEvents.contains("brush")) {
-            getServer().getPluginManager().registerEvents(new BrushExtractor(recorder, support, delayedTracker), this);
-        }
-        if (enabledEvents.contains("vault")) {
-            getServer().getPluginManager().registerEvents(new VaultExtractor(recorder, support, delayedTracker), this);
+
+        // Every recording listener in one list. `events()` declares the event
+        // names each emits; we register with Bukkit only when at least one is
+        // enabled in config.
+        List<RecordingListener> listeners = List.of(
+                new BlockBreakListener(recorder, support),
+                new MultiBlockBreakListener(recorder, support),
+                new BlockExplodeListener(recorder, support),
+                new EntityExplodeListener(recorder, support),
+                new BlockPlaceListener(recorder, support),
+                new BlockMultiPlaceListener(recorder, support),
+                new ContainerTransactionListener(recorder, support),
+                new ContainerDragListener(recorder, support),
+                new ContainerDropListener(recorder, support),
+                new ChatListener(recorder, support),
+                new CommandListener(recorder, support),
+                new JoinListener(recorder, support),
+                new QuitListener(recorder, support),
+                new LeavesDecayListener(recorder, support),
+                new BlockFadeListener(recorder, support),
+                new BlockFormListener(recorder, support),
+                new BlockGrowListener(recorder, support),
+                new StructureGrowListener(recorder, support),
+                new BlockIgniteListener(recorder, support),
+                new ItemDropListener(recorder, support),
+                new ItemPickupListener(recorder, support),
+                new TeleportListener(recorder, support),
+                new EntityDeathListener(recorder, support),
+                new EntityDamageListener(recorder, support),
+                new EntityMountListener(recorder, support),
+                new EntityDismountListener(recorder, support),
+                new ArmorStandManipulateListener(recorder, support),
+                new BookshelfListener(recorder, support),
+                new DecoratedPotListener(recorder, support),
+                new ShulkerTransactionListener(recorder, support),
+                new CrafterListener(recorder, support),
+                new SculkListener(recorder, support),
+                new BrushListener(recorder, support, delayedTracker),
+                new VaultListener(recorder, support, delayedTracker));
+        for (RecordingListener listener : listeners) {
+            if (listener.events().stream().anyMatch(enabledEvents::contains)) {
+                getServer().getPluginManager().registerEvents(listener, this);
+            }
         }
 
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
