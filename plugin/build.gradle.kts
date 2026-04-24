@@ -25,6 +25,8 @@ repositories {
     maven("https://maven.enginehub.org/repo/")
 }
 
+val faweJar = rootProject.rootDir.resolve("../RP_Server/plugins/FastAsyncWorldEdit.jar")
+
 dependencies {
     implementation(project(":api"))
 
@@ -32,6 +34,9 @@ dependencies {
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     compileOnly("com.sk89q.worldedit:worldedit-core:7.3.15")
     compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
+    if (faweJar.exists()) {
+        compileOnly(files(faweJar))
+    }
     implementation("org.mongodb:mongodb-driver-sync:$mongoDriverVersion")
     implementation("org.mongodb:bson-record-codec:$mongoDriverVersion")
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
