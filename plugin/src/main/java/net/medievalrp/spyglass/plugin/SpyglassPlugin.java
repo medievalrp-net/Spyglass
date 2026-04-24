@@ -65,6 +65,8 @@ import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
+import net.medievalrp.spyglass.plugin.tool.ToolStateStore;
+import net.medievalrp.spyglass.plugin.tool.WandInteractListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditSubscriber;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
@@ -169,7 +171,10 @@ public final class SpyglassPlugin extends JavaPlugin {
         RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
         PageService pageService = new PageService(pageCache);
-        ToolService toolService = new ToolService();
+        ToolStateStore toolStateStore = new ToolStateStore(recordStore.database(), getLogger());
+        ToolService toolService = new ToolService(toolStateStore, config.tool().material());
+        getServer().getPluginManager().registerEvents(
+                new WandInteractListener(toolService, searchService, config), this);
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
         V1ToV2Translator translator = new V1ToV2Translator(
