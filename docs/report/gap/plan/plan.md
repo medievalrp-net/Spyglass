@@ -371,6 +371,18 @@ After each phase runs `./gradlew test regression` green, commit, and land. No bl
 
 Fold these into the relevant phases above; tracked here separately so coverage gates (Block 13a: ≥90% api, ≥80% plugin) stay green.
 
+### 6.0 Raise coverage thresholds back to target
+
+- **What:** Phase 0 lowered both `api` and `plugin` coverage thresholds to `0.05` in [`build.gradle.kts`](../../../../build.gradle.kts) so the build could pass after wave 7 landed. Wave 7 added ~1400 lines of listener/renderer/codec code with only one new test file (`ItemSerializationTest`), and the migration deletion removed ~520 lines of tests. Net effect: plugin coverage fell from ~20% to ~10%, api coverage fell from ~15% to ~9%.
+- **How:** as Phases 2-4 restore listeners and params, add unit tests alongside each. Once each phase commits, raise the thresholds by steps until reaching `api=0.90`, `plugin=0.80` per the original v1.0.0 plan Block 13a target. A reasonable ramp:
+  - After Phase 2 lands: `api=0.10`, `plugin=0.10`
+  - After Phase 3 lands: `api=0.25`, `plugin=0.20`
+  - After Phase 4 lands: `api=0.50`, `plugin=0.40`
+  - After Phase 5 lands: `api=0.90`, `plugin=0.80`
+- **Priority:** P3 (track, raise incrementally)
+- **Effort:** S per step (just a `build.gradle.kts` edit once tests are in place)
+- **Acceptance:** `./gradlew build` green with `api=0.90, plugin=0.80`.
+
 ### 6.1 Regression cases for Phase 2 restorations
 
 - Add a case to [`regression/cases.json`](../../../../regression/cases.json) for each restored listener:
@@ -439,3 +451,4 @@ Each version bump is a `./gradlew build` green, `./gradlew regression` green, ta
 | 5.3 | P4 | varies | Custom event extension decision |
 | 5.4 | P4 | S | WE enabled-check hardening |
 | 5.5 | P4 | S | Document PageCache TTL |
+| 6.0 | P3 | S each | Ramp coverage thresholds back up to 0.90/0.80 |
