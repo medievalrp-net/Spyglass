@@ -40,6 +40,7 @@ import net.medievalrp.omniscience2.plugin.listener.block.BlockBreakListener;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockMultiPlaceListener;
 import net.medievalrp.omniscience2.plugin.listener.block.BlockPlaceListener;
 import net.medievalrp.omniscience2.plugin.listener.block.ContainerDropListener;
+import net.medievalrp.omniscience2.plugin.listener.block.DependantBreakListener;
 import net.medievalrp.omniscience2.plugin.listener.block.MultiBlockBreakListener;
 import net.medievalrp.omniscience2.plugin.listener.chat.ChatListener;
 import net.medievalrp.omniscience2.plugin.listener.chat.CommandListener;
@@ -130,6 +131,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
         List<RecordingListener> listeners = List.of(
                 new BlockBreakListener(recorder, support),
                 new MultiBlockBreakListener(recorder, support),
+                new DependantBreakListener(recorder, support),
                 new BlockExplodeListener(recorder, support),
                 new EntityExplodeListener(recorder, support),
                 new BlockPlaceListener(recorder, support),
