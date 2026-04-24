@@ -33,6 +33,10 @@ public final class EventCatalog {
         m.put("quit", QuitRecord.class);
         m.put("deposit", ContainerDepositRecord.class);
         m.put("withdraw", ContainerWithdrawRecord.class);
+        m.put("open", ContainerInteractRecord.class);
+        m.put("shulker-open", ContainerInteractRecord.class);
+        m.put("shulker-close", ContainerInteractRecord.class);
+        m.put("use", BlockUseRecord.class);
         m.put("decay", BlockBreakRecord.class);
         m.put("form", BlockPlaceRecord.class);
         m.put("grow", BlockPlaceRecord.class);

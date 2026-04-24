@@ -148,6 +148,86 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void queriesItemNameLoreAndEnchantsAcrossPaths() {
+        Instant now = Instant.now();
+        BlockLocation loc = new BlockLocation(WORLD, "world", 5, 64, 5);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        StoredItem enchanted = new StoredItem(
+                0, "DIAMOND_SWORD", null,
+                "Excaliblur",
+                List.of("Forged in primordial fire", "Blessed by saints"),
+                List.of("sharpness=5", "mending=1"));
+
+        // deposit carries the item as afterItem; drop carries it as item;
+        // place carries it inside newBlock.containerItems[]. Save one of each
+        // so we prove the Or-across-paths predicate actually hits every path.
+        BlockSnapshot chestWithItem = new BlockSnapshot(
+                org.bukkit.Material.CHEST, "minecraft:chest",
+                List.of(enchanted), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+
+        List<EventRecord> records = List.of(
+                new ContainerDepositRecord(UUID.randomUUID(), 1, "deposit",
+                        now, now.plusSeconds(3600),
+                        origin, source, loc, "DIAMOND_SWORD", "CHEST",
+                        0, 1, null, enchanted),
+                new net.medievalrp.spyglass.api.event.ItemDropRecord(
+                        UUID.randomUUID(), 1, "drop",
+                        now, now.plusSeconds(3600),
+                        origin, source, loc, "DIAMOND_SWORD", 1, enchanted),
+                new BlockPlaceRecord(UUID.randomUUID(), 1, "place",
+                        now, now.plusSeconds(3600),
+                        origin, source, loc, "CHEST", air, chestWithItem));
+        store.save(records);
+
+        // iname:Excal — three paths, three records should match.
+        QueryRequest byName = new QueryRequest(
+                List.of(anyItemField("name", "Excal")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        List<EventRecord> byNameHits = store.query(byName).records();
+        assertThat(byNameHits).hasSize(3);
+
+        // ilore:primordial — same three records hit.
+        QueryRequest byLore = new QueryRequest(
+                List.of(anyItemField("lore", "primordial")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byLore).records()).hasSize(3);
+
+        // ench:sharpness — matches.
+        QueryRequest byEnch = new QueryRequest(
+                List.of(anyItemField("enchants", "sharpness")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byEnch).records()).hasSize(3);
+
+        // ench:sharpness=5 — exact name+level.
+        QueryRequest byEnchLevel = new QueryRequest(
+                List.of(anyItemField("enchants", "sharpness=5")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byEnchLevel).records()).hasSize(3);
+
+        // Missing name, no hits.
+        QueryRequest missing = new QueryRequest(
+                List.of(anyItemField("name", "Glamdring")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(missing).records()).isEmpty();
+    }
+
+    private static QueryPredicate anyItemField(String subField, String raw) {
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                java.util.regex.Pattern.quote(raw),
+                java.util.regex.Pattern.CASE_INSENSITIVE);
+        return new QueryPredicate.Or(List.of(
+                new QueryPredicate.Eq("item." + subField, pattern),
+                new QueryPredicate.Eq("beforeItem." + subField, pattern),
+                new QueryPredicate.Eq("afterItem." + subField, pattern),
+                new QueryPredicate.Eq("originalBlock.containerItems." + subField, pattern),
+                new QueryPredicate.Eq("newBlock.containerItems." + subField, pattern)));
+    }
+
+    @Test
     void respectsLimit() {
         Instant now = Instant.now();
         BlockLocation loc = new BlockLocation(WORLD, "world", 0, 64, 0);
