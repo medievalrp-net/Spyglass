@@ -54,6 +54,11 @@ import net.medievalrp.omniscience2.plugin.listener.item.ItemPickupExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.JoinExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.QuitExtractor;
 import net.medievalrp.omniscience2.plugin.listener.player.TeleportExtractor;
+import net.medievalrp.omniscience2.plugin.migration.MigrationCommand;
+import net.medievalrp.omniscience2.plugin.migration.MigrationService;
+import net.medievalrp.omniscience2.plugin.migration.V1ItemDecoder;
+import net.medievalrp.omniscience2.plugin.migration.V1ToV2Translator;
+import net.medievalrp.omniscience2.plugin.migration.WorldNameLookup;
 import net.medievalrp.omniscience2.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.omniscience2.plugin.pipeline.ExtractorRegistry;
 import net.medievalrp.omniscience2.plugin.rollback.RollbackEngine;
@@ -167,6 +172,11 @@ public final class Omniscience2Plugin extends JavaPlugin {
         ToolService toolService = new ToolService();
         OmniSuggestions suggestions = new OmniSuggestions(apiImpl);
 
+        V1ToV2Translator translator = new V1ToV2Translator(
+                V1ItemDecoder.bukkit(), WorldNameLookup.bukkit(), getLogger());
+        MigrationService migrationService = new MigrationService(recordStore, config, translator, getLogger());
+        MigrationCommand migrationCommand = new MigrationCommand(migrationService, getLogger());
+
         OmniCommands commands = new OmniCommands(
                 this,
                 helpService,
@@ -176,7 +186,8 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 undoService,
                 pageService,
                 toolService,
-                suggestions);
+                suggestions,
+                migrationCommand);
         commands.register();
 
         if (isWorldEditInstalled()) {

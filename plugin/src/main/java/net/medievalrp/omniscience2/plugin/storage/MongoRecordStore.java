@@ -104,6 +104,10 @@ public final class MongoRecordStore implements RecordStore {
         return database;
     }
 
+    public MongoClient client() {
+        return client;
+    }
+
     public CodecRegistry codecRegistry() {
         return codecRegistry;
     }
