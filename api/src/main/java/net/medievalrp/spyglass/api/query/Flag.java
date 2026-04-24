@@ -4,6 +4,5 @@ public enum Flag {
     NO_GROUP,
     GLOBAL,
     NO_CHAT,
-    EXTENDED,
-    DRAIN
+    EXTENDED
 }
