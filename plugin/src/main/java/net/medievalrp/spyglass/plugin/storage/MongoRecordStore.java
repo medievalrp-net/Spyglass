@@ -70,7 +70,9 @@ public final class MongoRecordStore implements RecordStore {
             Map.entry("hit", EntityHitRecord.class),
             Map.entry("shot", EntityHitRecord.class),
             Map.entry("mount", EntityMountRecord.class),
-            Map.entry("dismount", EntityMountRecord.class));
+            Map.entry("dismount", EntityMountRecord.class),
+            Map.entry("entity-deposit", ContainerDepositRecord.class),
+            Map.entry("entity-withdraw", ContainerWithdrawRecord.class));
 
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;

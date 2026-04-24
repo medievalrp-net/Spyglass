@@ -1,6 +1,8 @@
 package net.medievalrp.spyglass.plugin.listener.container;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
@@ -35,27 +37,42 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
 
     @Override
     public Stream<EventRecord> extract(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return Stream.empty();
+        }
         Inventory clicked = event.getClickedInventory();
         if (clicked == null) {
             return Stream.empty();
         }
-        InventoryHolder holder = clicked.getHolder();
-        if (!(holder instanceof Container container)) {
-            return Stream.empty();
-        }
-        if (!(event.getWhoClicked() instanceof Player player)) {
-            return Stream.empty();
-        }
 
         InventoryAction action = event.getAction();
-        Direction direction = directionOf(action);
-        if (direction == null) {
+        Instant occurred = support.now();
+
+        // MOVE_TO_OTHER_INVENTORY: the item moves from the clicked inventory to the opposite.
+        // If the clicked inventory is the player's and the top inventory is a container, the
+        // item moves INTO the container -> deposit. Otherwise, if the clicked inventory is
+        // the container and the opposite is the player's, the item moves OUT -> withdraw.
+        if (action == InventoryAction.MOVE_TO_OTHER_INVENTORY) {
+            return handleMoveToOther(event, player, clicked, occurred).stream();
+        }
+
+        InventoryHolder holder = clicked.getHolder();
+        if (!(holder instanceof Container container)) {
             return Stream.empty();
         }
 
         int slot = event.getSlot();
         ItemStack slotItem = clicked.getItem(slot);
         ItemStack cursor = event.getCursor();
+
+        if (action == InventoryAction.SWAP_WITH_CURSOR) {
+            return handleSwap(container, player, slot, slotItem, cursor, occurred).stream();
+        }
+
+        Direction direction = directionOf(action);
+        if (direction == null) {
+            return Stream.empty();
+        }
         int amount = amountOf(action, slotItem, cursor);
         if (amount <= 0) {
             return Stream.empty();
@@ -64,47 +81,96 @@ public final class ContainerTransactionExtractor implements EventExtractor<Inven
         BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
         String containerType = container.getBlock().getType().name();
         StoredItem before = ItemSerialization.storedItem(slot, slotItem);
-        Instant occurred = support.now();
 
         EventRecord record = switch (direction) {
             case DEPOSIT -> {
                 String target = cursor == null ? "UNKNOWN" : cursor.getType().name();
                 yield new ContainerDepositRecord(
-                        support.newId(),
-                        1,
-                        "deposit",
-                        occurred,
+                        support.newId(), 1, "deposit", occurred,
                         support.expiresAt(occurred),
-                        support.playerOrigin(),
-                        support.playerSource(player),
-                        location,
-                        target,
-                        containerType,
-                        slot,
-                        amount,
-                        before,
-                        null);
+                        support.playerOrigin(), support.playerSource(player),
+                        location, target, containerType, slot, amount, before, null);
             }
             case WITHDRAW -> {
                 String target = slotItem == null ? "UNKNOWN" : slotItem.getType().name();
                 yield new ContainerWithdrawRecord(
-                        support.newId(),
-                        1,
-                        "withdraw",
-                        occurred,
+                        support.newId(), 1, "withdraw", occurred,
                         support.expiresAt(occurred),
-                        support.playerOrigin(),
-                        support.playerSource(player),
-                        location,
-                        target,
-                        containerType,
-                        slot,
-                        amount,
-                        before,
-                        null);
+                        support.playerOrigin(), support.playerSource(player),
+                        location, target, containerType, slot, amount, before, null);
             }
         };
         return Stream.of(record);
+    }
+
+    private List<EventRecord> handleMoveToOther(InventoryClickEvent event, Player player,
+                                                Inventory clicked, Instant occurred) {
+        Inventory top = event.getView().getTopInventory();
+        Inventory bottom = event.getView().getBottomInventory();
+        boolean clickedIsTop = clicked.equals(top);
+
+        InventoryHolder topHolder = top.getHolder();
+        if (!(topHolder instanceof Container container)) {
+            return List.of();
+        }
+
+        ItemStack moved = clicked.getItem(event.getSlot());
+        if (moved == null || moved.getType() == Material.AIR) {
+            return List.of();
+        }
+        int amount = moved.getAmount();
+        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
+        String containerType = container.getBlock().getType().name();
+        StoredItem before = ItemSerialization.storedItem(event.getSlot(), moved);
+
+        if (clickedIsTop) {
+            // Shift-click from container to player inventory -> withdraw.
+            return List.of(new ContainerWithdrawRecord(
+                    support.newId(), 1, "withdraw", occurred,
+                    support.expiresAt(occurred),
+                    support.playerOrigin(), support.playerSource(player),
+                    location, moved.getType().name(), containerType, event.getSlot(), amount, before, null));
+        }
+        if (!clicked.equals(bottom)) {
+            return List.of();
+        }
+        // Shift-click from player inventory to container -> deposit.
+        return List.of(new ContainerDepositRecord(
+                support.newId(), 1, "deposit", occurred,
+                support.expiresAt(occurred),
+                support.playerOrigin(), support.playerSource(player),
+                location, moved.getType().name(), containerType, -1, amount, null, before));
+    }
+
+    private List<EventRecord> handleSwap(Container container, Player player, int slot,
+                                          ItemStack slotItem, ItemStack cursor, Instant occurred) {
+        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
+        String containerType = container.getBlock().getType().name();
+        boolean hadSlotItem = slotItem != null && slotItem.getType() != Material.AIR;
+        boolean hadCursorItem = cursor != null && cursor.getType() != Material.AIR;
+        if (!hadSlotItem && !hadCursorItem) {
+            return List.of();
+        }
+        List<EventRecord> records = new ArrayList<>();
+        if (hadSlotItem) {
+            records.add(new ContainerWithdrawRecord(
+                    support.newId(), 1, "withdraw", occurred,
+                    support.expiresAt(occurred),
+                    support.playerOrigin(), support.playerSource(player),
+                    location, slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
+                    ItemSerialization.storedItem(slot, slotItem),
+                    hadCursorItem ? ItemSerialization.storedItem(slot, cursor) : null));
+        }
+        if (hadCursorItem) {
+            records.add(new ContainerDepositRecord(
+                    support.newId(), 1, "deposit", occurred,
+                    support.expiresAt(occurred),
+                    support.playerOrigin(), support.playerSource(player),
+                    location, cursor.getType().name(), containerType, slot, cursor.getAmount(),
+                    hadSlotItem ? ItemSerialization.storedItem(slot, slotItem) : null,
+                    ItemSerialization.storedItem(slot, cursor)));
+        }
+        return records;
     }
 
     private static Direction directionOf(InventoryAction action) {
