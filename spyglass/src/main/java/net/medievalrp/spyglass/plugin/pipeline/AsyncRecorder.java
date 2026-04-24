@@ -56,6 +56,7 @@ public final class AsyncRecorder implements Recorder {
     }
 
     private void drainLoop() {
+        int consecutiveFailures = 0;
         try {
             while (running.get() || !queue.isEmpty()) {
                 EventRecord first = queue.poll(250, TimeUnit.MILLISECONDS);
@@ -65,14 +66,43 @@ public final class AsyncRecorder implements Recorder {
                 List<EventRecord> batch = new ArrayList<>();
                 batch.add(first);
                 queue.drainTo(batch, 511);
-                store.save(batch);
-                drained.addAndGet(batch.size());
+
+                // Persist with retry + exponential backoff. A transient store
+                // failure (Mongo hiccup, replica-set election, network blip)
+                // must not kill the drain thread and silently drop every
+                // subsequent record. We retry the same batch until either it
+                // succeeds or shutdown is requested, then loop back to polling.
+                while (true) {
+                    try {
+                        store.save(batch);
+                        drained.addAndGet(batch.size());
+                        consecutiveFailures = 0;
+                        break;
+                    } catch (RuntimeException saveFailure) {
+                        consecutiveFailures++;
+                        long backoffMs = Math.min(30_000L,
+                                250L << Math.min(consecutiveFailures - 1, 7));
+                        if (consecutiveFailures == 1 || consecutiveFailures % 10 == 0) {
+                            logger.warning("Spyglass recorder save failed ("
+                                    + consecutiveFailures + "x, retry in "
+                                    + backoffMs + "ms): " + saveFailure.getMessage());
+                        }
+                        if (!running.get()) {
+                            logger.warning("Recorder shutting down mid-retry; re-queueing "
+                                    + batch.size() + " records for final flush.");
+                            for (int i = batch.size() - 1; i >= 0; i--) {
+                                if (!queue.offerFirst(batch.get(i))) {
+                                    dropped.incrementAndGet();
+                                }
+                            }
+                            return;
+                        }
+                        Thread.sleep(backoffMs);
+                    }
+                }
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-        } catch (Exception exception) {
-            logger.severe("Spyglass recorder drain failed: " + exception.getMessage());
-            exception.printStackTrace();
         } finally {
             stopped.countDown();
         }
@@ -81,9 +111,16 @@ public final class AsyncRecorder implements Recorder {
     private void flushRemaining() {
         List<EventRecord> batch = new ArrayList<>();
         queue.drainTo(batch);
-        if (!batch.isEmpty()) {
+        if (batch.isEmpty()) {
+            return;
+        }
+        try {
             store.save(batch);
             drained.addAndGet(batch.size());
+        } catch (RuntimeException ex) {
+            logger.severe("Recorder shutdown flush failed; " + batch.size()
+                    + " records lost: " + ex.getMessage());
+            dropped.addAndGet(batch.size());
         }
     }
 
