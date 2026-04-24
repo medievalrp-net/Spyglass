@@ -1,3 +1,3 @@
 rootProject.name = "Spyglass"
 
-include("api", "plugin")
+include("spyglass-api", "spyglass")
