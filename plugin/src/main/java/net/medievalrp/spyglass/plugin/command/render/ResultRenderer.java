@@ -7,7 +7,6 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.ChatRecord;
@@ -41,45 +40,51 @@ public final class ResultRenderer {
     public Component renderAggregation(QueryResult.RecordAggregation aggregation) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
-        Component line = Component.text()
-                .append(Component.text("| ", NamedTextColor.DARK_GRAY))
-                .append(Component.text(sample.sourceName(), NamedTextColor.YELLOW))
-                .append(Component.text(" ", NamedTextColor.GRAY))
-                .append(Component.text(verb(sample), NamedTextColor.GREEN))
-                .append(Component.text(" ", NamedTextColor.GRAY))
-                .append(Component.text("x" + count, NamedTextColor.GOLD))
-                .append(Component.text(" ", NamedTextColor.GRAY))
-                .append(Component.text(targetOf(sample), NamedTextColor.AQUA))
-                .append(Component.text(" " + timeAgo(sample.occurred()), NamedTextColor.DARK_GRAY))
-                .hoverEvent(HoverEvent.showText(hover(sample, count)))
-                .clickEvent(ClickEvent.runCommand("/sg search "
-                        + "a:" + sample.event()
-                        + " p:" + sample.sourceName()
-                        + " -ng"))
-                .build();
-        return line;
+        return line(sample, count, true);
     }
 
     public Component renderSingle(EventRecord record) {
-        Component line = Component.text()
-                .append(Component.text("| ", NamedTextColor.DARK_GRAY))
-                .append(Component.text(record.sourceName(), NamedTextColor.YELLOW))
-                .append(Component.text(" ", NamedTextColor.GRAY))
-                .append(Component.text(verb(record), NamedTextColor.GREEN))
-                .append(Component.text(" ", NamedTextColor.GRAY))
-                .append(Component.text(targetOf(record), NamedTextColor.AQUA))
-                .append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.DARK_GRAY))
-                .hoverEvent(HoverEvent.showText(hover(record, 1)))
-                .build();
-        return line;
+        return line(record, 1, false);
     }
 
-    public Component pageHeader(int page, int totalPages) {
+    private Component line(EventRecord record, long count, boolean grouped) {
+        var builder = Component.text()
+                .append(Component.text("= ", NamedTextColor.WHITE));
+        String tag = originTag(record.origin());
+        if (!tag.isEmpty()) {
+            builder.append(Component.text(tag + " ", NamedTextColor.AQUA));
+        }
+        builder.append(Component.text(record.sourceName(), NamedTextColor.GREEN))
+                .append(Component.text(" " + verb(record) + " ", NamedTextColor.WHITE));
+        if (grouped && count > 1) {
+            builder.append(Component.text(count + " ", NamedTextColor.WHITE));
+        } else {
+            int qty = quantityOf(record);
+            if (qty > 0) {
+                builder.append(Component.text(qty + " ", NamedTextColor.WHITE));
+            }
+        }
+        builder.append(Component.text(targetOf(record), NamedTextColor.AQUA))
+                .append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.GRAY))
+                .hoverEvent(HoverEvent.showText(hover(record, count)));
+        if (grouped) {
+            builder.clickEvent(ClickEvent.runCommand("/sg search "
+                    + "a:" + record.event()
+                    + " p:" + record.sourceName()
+                    + " -ng"));
+        }
+        return builder.build();
+    }
+
+    public Component pageHeader(int page, int totalPages, int totalResults) {
         return Component.text()
-                .append(Component.text("« ", NamedTextColor.DARK_GRAY))
-                .append(Component.text("Spyglass", NamedTextColor.AQUA).decoration(TextDecoration.BOLD, true))
-                .append(Component.text(" » ", NamedTextColor.DARK_GRAY))
-                .append(Component.text("Page " + page + "/" + totalPages, NamedTextColor.GRAY))
+                .append(Component.text("«", NamedTextColor.WHITE))
+                .append(Component.text("v1", NamedTextColor.AQUA))
+                .append(Component.text("»", NamedTextColor.GREEN))
+                .append(Component.text(" ", NamedTextColor.WHITE))
+                .append(Component.text(
+                        "((Page " + page + "/" + totalPages + " — " + totalResults + " results))",
+                        NamedTextColor.GRAY))
                 .build();
     }
 
@@ -125,18 +130,40 @@ public final class ResultRenderer {
         return switch (record) {
             case BlockBreakRecord breakRec -> breakRec.target();
             case BlockPlaceRecord placeRec -> placeRec.target();
-            case ContainerDepositRecord deposit -> deposit.amount() + "x " + deposit.target();
-            case ContainerWithdrawRecord withdraw -> withdraw.amount() + "x " + withdraw.target();
+            case ContainerDepositRecord deposit -> deposit.target();
+            case ContainerWithdrawRecord withdraw -> withdraw.target();
             case ChatRecord chat -> chat.message();
             case CommandRecord command -> "/" + command.target();
             case JoinRecord join -> join.target();
             case QuitRecord quit -> quit.target();
-            case ItemDropRecord drop -> drop.amount() + "x " + drop.target();
-            case ItemPickupRecord pickup -> pickup.amount() + "x " + pickup.target();
+            case ItemDropRecord drop -> drop.target();
+            case ItemPickupRecord pickup -> pickup.target();
             case TeleportRecord tp -> tp.target() + " via " + tp.cause();
             case EntityDeathRecord death -> death.target() + " (" + death.damageCause() + ")";
             case EntityHitRecord hit -> hit.target() + " for " + String.format("%.1f", hit.damage());
             case EntityMountRecord mount -> (mount.dismount() ? "dismounted " : "mounted ") + mount.target();
+        };
+    }
+
+    private static int quantityOf(EventRecord record) {
+        return switch (record) {
+            case ContainerDepositRecord deposit -> deposit.amount();
+            case ContainerWithdrawRecord withdraw -> withdraw.amount();
+            case ItemDropRecord drop -> drop.amount();
+            case ItemPickupRecord pickup -> pickup.amount();
+            default -> 0;
+        };
+    }
+
+    private static String originTag(Origin origin) {
+        if (origin == null || origin.kind() == null) {
+            return "";
+        }
+        return switch (origin.kind().toLowerCase()) {
+            case Origin.WORLDEDIT -> "[WE]";
+            case Origin.FAWE -> "[FAWE]";
+            case Origin.PLUGIN -> "[" + (origin.detail() == null ? "PL" : origin.detail().toUpperCase()) + "]";
+            default -> "";
         };
     }
 

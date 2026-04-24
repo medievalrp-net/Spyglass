@@ -48,7 +48,13 @@ public final class PageCache implements Listener {
         int end = Math.min(start + PAGE_SIZE, lines.size());
 
         Audience audience = sender;
-        audience.sendMessage(Component.text("Page " + pageClamped + "/" + total + " — " + lines.size() + " results", NamedTextColor.GRAY));
+        audience.sendMessage(Component.text()
+                .append(Component.text("«", NamedTextColor.WHITE))
+                .append(Component.text("v1", NamedTextColor.AQUA))
+                .append(Component.text("»", NamedTextColor.GREEN))
+                .append(Component.text(" ((Page " + pageClamped + "/" + total + " — " + lines.size() + " results))",
+                        NamedTextColor.GRAY))
+                .build());
         for (int index = start; index < end; index++) {
             audience.sendMessage(lines.get(index));
         }
