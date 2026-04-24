@@ -27,8 +27,9 @@ public record RecordContext(
 
     /**
      * Mint a fresh context with a random id and {@link #SCHEMA} as the schema
-     * version. Use this when recording a live event; {@link #of} is for
-     * migration / replay paths that carry an existing id.
+     * version. Use this when recording a live event. Callers with an existing
+     * id (e.g. replay paths) can construct {@link RecordContext} directly via
+     * the canonical constructor instead.
      */
     public static RecordContext fresh(Instant occurred, Instant expiresAt,
                                       Origin origin, Source source, BlockLocation location) {
