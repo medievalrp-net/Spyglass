@@ -21,11 +21,17 @@ java {
     withSourcesJar()
 }
 
+repositories {
+    maven("https://maven.enginehub.org/repo/")
+}
+
 dependencies {
     implementation(project(":api"))
 
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
+    compileOnly("com.sk89q.worldedit:worldedit-core:7.3.15")
+    compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
     implementation("org.mongodb:mongodb-driver-sync:$mongoDriverVersion")
     implementation("org.mongodb:bson-record-codec:$mongoDriverVersion")
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
