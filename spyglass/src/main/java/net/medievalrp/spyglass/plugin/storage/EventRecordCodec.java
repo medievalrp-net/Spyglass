@@ -4,14 +4,10 @@ import java.util.HashMap;
 import java.util.Map;
 import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
-import org.bson.BsonDocument;
-import org.bson.BsonDocumentReader;
-import org.bson.BsonDocumentWriter;
 import org.bson.BsonReader;
-import org.bson.BsonString;
-import org.bson.BsonValue;
+import org.bson.BsonReaderMark;
+import org.bson.BsonType;
 import org.bson.BsonWriter;
-import org.bson.codecs.BsonDocumentCodec;
 import org.bson.codecs.Codec;
 import org.bson.codecs.DecoderContext;
 import org.bson.codecs.EncoderContext;
@@ -21,33 +17,34 @@ import org.bson.codecs.configuration.CodecRegistry;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * Polymorphic codec for the sealed {@link EventRecord} hierarchy. The
- * POJO / record codec alone can't decode a sealed interface because
- * the stored document doesn't name which permits to instantiate; this
- * codec stamps a {@code _class} discriminator on write and dispatches
- * to the concrete record codec via the registry on read.
+ * Polymorphic codec for the sealed {@link EventRecord} hierarchy.
  *
- * <p>Lets {@link MongoRecordStore} hand the driver a single
- * {@code MongoCollection<EventRecord>} and round-trip all 17 permits
- * through it — one query, one sort, no in-JVM merge of per-type
- * result sets.
+ * <p>The driver's record codec alone can't decode a sealed interface: the
+ * stored document doesn't tell the codec which permit to instantiate. This
+ * codec dispatches to the matching concrete record codec by reading the
+ * {@code event} field from the BSON stream — {@link EventCatalog} gives us
+ * a total name -> record-class map, so {@code event} is a complete
+ * discriminator on its own.
  *
- * <p>Documents written before the discriminator existed (v1.0.0 and
- * prior wave-7 test data) fall back to event-name lookup via
- * {@link EventCatalog#recordClassOf(String)}, so upgrading in place
- * keeps old rows readable. Mirrors the same shape as
- * {@link RollbackEffectCodec}, which did this for the sealed
- * RollbackEffect hierarchy first.
+ * <p>Earlier revisions stamped an additional {@code _class} field to
+ * simplify dispatch, but that required a full in-memory BsonDocument
+ * detour on every encode <em>and</em> decode — the intermediate tree was
+ * the largest per-record allocation in the search hot path. We no longer
+ * write {@code _class}; the driver's RecordCodec silently skips unknown
+ * fields, so any pre-existing {@code _class} entries still decode.
+ *
+ * <p>Mirror code lives in {@link RollbackEffectCodec} for the sealed
+ * RollbackEffect hierarchy.
  */
 @ApiStatus.Internal
 final class EventRecordCodec implements Codec<EventRecord> {
 
-    private static final String TYPE_FIELD = "_class";
-    private static final BsonDocumentCodec BSON_DOC_CODEC = new BsonDocumentCodec();
+    private static final String LEGACY_TYPE_FIELD = "_class";
+    private static final String EVENT_FIELD = "event";
 
     /**
-     * Simple-name → record class, precomputed from EventCatalog at
-     * load so we don't reflect on every decode.
+     * Simple-name -> record class, used only to read legacy documents that
+     * were written with a {@code _class} discriminator.
      */
     private static final Map<String, Class<? extends EventRecord>> BY_SIMPLE_NAME;
 
@@ -85,46 +82,55 @@ final class EventRecordCodec implements Codec<EventRecord> {
 
     @Override
     public void encode(BsonWriter writer, EventRecord value, EncoderContext ctx) {
-        BsonDocument buffer = new BsonDocument();
-        try (BsonDocumentWriter bufWriter = new BsonDocumentWriter(buffer)) {
-            @SuppressWarnings({"rawtypes", "unchecked"})
-            Codec<EventRecord> concrete = (Codec) registry.get(value.getClass());
-            concrete.encode(bufWriter, value, ctx);
-        }
-        buffer.put(TYPE_FIELD, new BsonString(value.getClass().getSimpleName()));
-        BSON_DOC_CODEC.encode(writer, buffer, ctx);
+        // Delegate straight to the concrete codec — no intermediate
+        // BsonDocument buffer, no discriminator rewrite. The concrete codec
+        // writes {@code event} itself as a record component, so decode can
+        // dispatch on it without any extra field.
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        Codec<EventRecord> concrete = (Codec) registry.get(value.getClass());
+        concrete.encode(writer, value, ctx);
     }
 
     @Override
     public EventRecord decode(BsonReader reader, DecoderContext ctx) {
-        BsonDocument doc = BSON_DOC_CODEC.decode(reader, ctx);
-        Class<? extends EventRecord> target = pickType(doc);
+        // Mark -> scan for discriminator -> reset -> hand raw stream to the
+        // concrete codec. No BsonDocument tree is ever allocated. Scan cost
+        // is a handful of skipValue calls on fields we don't care about;
+        // the whole doc is already in the driver's buffer.
+        BsonReaderMark mark = reader.getMark();
+        String eventName = null;
+        String legacyClass = null;
+        reader.readStartDocument();
+        while (reader.readBsonType() != BsonType.END_OF_DOCUMENT) {
+            String fieldName = reader.readName();
+            switch (fieldName) {
+                case EVENT_FIELD -> eventName = reader.readString();
+                case LEGACY_TYPE_FIELD -> legacyClass = reader.readString();
+                default -> reader.skipValue();
+            }
+            // Prefer `event`; it's authoritative. Stop scanning as soon as
+            // we have it — no need to walk to END_OF_DOCUMENT.
+            if (eventName != null) {
+                break;
+            }
+        }
+        mark.reset();
+
+        Class<? extends EventRecord> target = null;
+        if (eventName != null) {
+            target = EventCatalog.recordClassOf(eventName);
+        }
+        if (target == null && legacyClass != null) {
+            // Pre-EventCatalog docs without an event field fall back to the
+            // simple-class-name lookup. Keeps the very oldest fixtures
+            // decodable.
+            target = BY_SIMPLE_NAME.get(legacyClass);
+        }
         if (target == null) {
             throw new CodecConfigurationException(
                     "Cannot determine EventRecord subtype for stored document:"
-                            + " _class=" + doc.get(TYPE_FIELD)
-                            + " event=" + doc.get("event"));
+                            + " event=" + eventName + " _class=" + legacyClass);
         }
-        doc.remove(TYPE_FIELD);
-        try (BsonDocumentReader docReader = new BsonDocumentReader(doc)) {
-            return registry.get(target).decode(docReader, ctx);
-        }
-    }
-
-    private static Class<? extends EventRecord> pickType(BsonDocument doc) {
-        BsonValue discriminator = doc.get(TYPE_FIELD);
-        if (discriminator != null && discriminator.isString()) {
-            Class<? extends EventRecord> t = BY_SIMPLE_NAME.get(discriminator.asString().getValue());
-            if (t != null) {
-                return t;
-            }
-        }
-        // Fallback for pre-discriminator documents: the event-name field
-        // maps to a single concrete record class via EventCatalog.
-        BsonValue event = doc.get("event");
-        if (event != null && event.isString()) {
-            return EventCatalog.recordClassOf(event.asString().getValue());
-        }
-        return null;
+        return registry.get(target).decode(reader, ctx);
     }
 }

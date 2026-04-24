@@ -100,7 +100,13 @@ class SearchServiceTest {
 
         fixture.subject.execute(fixture.sender, "a:break -ng");
 
-        verify(fixture.pageCache).store(ArgumentMatchers.eq(fixture.sender), ArgumentMatchers.any());
+        // Lazy store: the search service passes a record count + a
+        // per-index renderer closure, not a pre-materialised component
+        // list. Verify the (sender, count=2, renderer) shape.
+        verify(fixture.pageCache).store(
+                ArgumentMatchers.eq(fixture.sender),
+                ArgumentMatchers.eq(2),
+                ArgumentMatchers.any(java.util.function.IntFunction.class));
         verify(fixture.pageCache).show(fixture.sender, 1);
         // "Querying records..." goes out first, then cache-store/show drive the page header.
         assertThat(ServiceTestSupport.plainTexts(messages).get(0)).contains("Querying records...");
