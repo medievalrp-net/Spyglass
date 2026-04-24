@@ -58,6 +58,7 @@ import net.medievalrp.omniscience2.plugin.listener.entity.EntityDamageListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDeathListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDismountListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityMountListener;
+import net.medievalrp.omniscience2.plugin.listener.entity.ItemFrameInteractListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockBurnListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockExplodeListener;
 import net.medievalrp.omniscience2.plugin.listener.environment.BlockFadeListener;
@@ -167,6 +168,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 new EntityMountListener(recorder, support),
                 new EntityDismountListener(recorder, support),
                 new ArmorStandManipulateListener(recorder, support),
+                new ItemFrameInteractListener(recorder, support),
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
                 new ShulkerTransactionListener(recorder, support),
