@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.listener.entity;
 
 import java.time.Instant;
+import java.util.Base64;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.Origin;
@@ -9,6 +10,7 @@ import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDeathEvent;
@@ -54,6 +56,8 @@ public final class EntityDeathExtractor implements EventExtractor<EntityDeathEve
                 ? victim.getLastDamageCause().getCause().name()
                 : "UNKNOWN";
 
+        String nbt = serializeEntity(victim);
+
         return Stream.of(new EntityDeathRecord(
                 support.newId(),
                 1,
@@ -67,6 +71,16 @@ public final class EntityDeathExtractor implements EventExtractor<EntityDeathEve
                 entityType,
                 victim.getUniqueId(),
                 killerType,
-                damageCause));
+                damageCause,
+                nbt));
+    }
+
+    private static String serializeEntity(LivingEntity entity) {
+        try {
+            byte[] bytes = Bukkit.getUnsafe().serializeEntity(entity);
+            return Base64.getEncoder().encodeToString(bytes);
+        } catch (Throwable thrown) {
+            return null;
+        }
     }
 }
