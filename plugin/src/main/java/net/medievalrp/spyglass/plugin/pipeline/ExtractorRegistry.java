@@ -42,6 +42,12 @@ public final class ExtractorRegistry {
     @SuppressWarnings("unchecked")
     private <E extends Event, R extends EventRecord> void dispatch(EventExtractor<?, ?> rawExtractor, Event event) throws EventException {
         EventExtractor<E, R> extractor = (EventExtractor<E, R>) rawExtractor;
+        // BlockMultiPlaceEvent (and a few others) share a HandlerList with their parent
+        // event, so Bukkit will dispatch a plain BlockPlaceEvent to a listener registered
+        // for BlockMultiPlaceEvent. Guard the cast before the extractor ever sees it.
+        if (!extractor.eventType().isInstance(event)) {
+            return;
+        }
         extractor.extract((E) event).forEach(recorder::record);
     }
 }
