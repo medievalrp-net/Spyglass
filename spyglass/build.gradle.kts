@@ -79,5 +79,49 @@ tasks.withType<JacocoReport>().configureEach {
 }
 
 tasks.test {
+    // The `bench` tag covers long-running throughput benches (testcontainers
+    // Mongo, multi-minute runs). They're excluded from the default test
+    // cycle so unit+IT stays fast; run them via `./gradlew :spyglass:ingestBench`.
+    useJUnitPlatform {
+        excludeTags("bench")
+    }
     finalizedBy(tasks.named("jacocoTestReport"))
+}
+
+// Ingest throughput benchmark: v2 AsyncRecorder + MongoRecordStore vs a
+// synthetic v1-equivalent pipeline (unbounded queue + scheduled drain +
+// bulkWrite with v1 doc shape) — see IngestThroughputBench.java. Gated
+// on Docker. Not part of `check`; run explicitly for metrics.
+tasks.register<Test>("ingestBench") {
+    description = "Runs the v1-vs-v2 ingest throughput benchmark (requires Docker)."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("bench")
+    }
+    // Don't run jacoco on the bench — instrumentation perturbs timing.
+    extensions.configure<JacocoTaskExtension> {
+        isEnabled = false
+    }
+    testLogging {
+        events("started", "passed", "failed", "standard_out")
+        showStandardStreams = true
+        showExceptions = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+    // Heavy: two pipelines × three scenarios with 200k-record overload.
+    // Bump test-jvm heap so the v1 unbounded deque can swell without GC
+    // thrashing during the overload scenario.
+    maxHeapSize = "2g"
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
+    // Forward SG_BENCH_* system properties from the gradle invocation
+    // into the test JVM so CI can override defaults without recompiling
+    // (./gradlew :spyglass:ingestBench -DSG_BENCH_SUSTAINED_SEC=60).
+    for ((key, value) in System.getProperties()) {
+        val name = key.toString()
+        if (name.startsWith("SG_BENCH_")) {
+            systemProperty(name, value.toString())
+        }
+    }
 }

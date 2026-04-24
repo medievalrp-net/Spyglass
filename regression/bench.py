@@ -24,6 +24,7 @@ Usage:
   python3 regression/bench.py --skip-seed # bench against current DB
   python3 regression/bench.py --skip-seed --only queries # only query bench
   python3 regression/bench.py --skip-seed --only pageturn # only page-turn bench
+  python3 regression/bench.py --only ingest --ingest-docs 100000 # raw save-side bulk_write bench
 """
 from __future__ import annotations
 
@@ -339,6 +340,93 @@ def summarize(samples):
     }
 
 
+def bench_ingest(client, docs_total, batch_size, seed_value):
+    """Raw pymongo ingest throughput bench — v1 shape vs v2 shape.
+
+    Complementary to the Java-side IngestThroughputBench (which measures
+    the whole plugin pipeline). This one isolates the *save-side* cost by
+    timing `bulk_write(InsertOne, ordered=False)` with each version's doc
+    schema, against the same Mongo instance.
+
+    What this answers: does v2's richer doc (typed snapshots, nested
+    origin/source/location, UUID id) cost meaningfully more to insert
+    than v1's flat-field doc? If yes, that's a steady-state write-side
+    tax we need to account for in production capacity planning.
+
+    Process:
+      1. Drop + recreate both collections with the same indexes the
+         plugin creates at boot (same as the query bench).
+      2. Generate `docs_total` synthetic docs per version, seeded for
+         repeatability.
+      3. Insert in chunks of `batch_size`, timing each bulk_write call.
+      4. Report mean/p50/p95/p99 per-batch time, total wall time, and
+         derived docs/sec for each version.
+    """
+    from pymongo import InsertOne
+
+    rng = random.Random(seed_value)
+    now = datetime.now(timezone.utc)
+
+    v2_coll = client["Spyglass"]["EventRecords"]
+    v1_coll = client["v1"]["DataEntry"]
+    v2_coll.drop()
+    v1_coll.drop()
+    create_indexes(v2_coll, v1_coll)
+
+    v2_docs, v1_docs = generate(docs_total, now, rng)
+    assert len(v2_docs) == docs_total
+    assert len(v1_docs) == docs_total
+
+    def run_side(coll, docs, label):
+        batch_samples_ms = []
+        wall_start = time.perf_counter()
+        for i in range(0, docs_total, batch_size):
+            chunk = docs[i:i + batch_size]
+            ops = [InsertOne(d) for d in chunk]
+            t0 = time.perf_counter()
+            coll.bulk_write(ops, ordered=False)
+            batch_samples_ms.append((time.perf_counter() - t0) * 1000.0)
+        wall_ms = (time.perf_counter() - wall_start) * 1000.0
+        summary = summarize(batch_samples_ms)
+        summary["label"] = label
+        summary["docs"] = docs_total
+        summary["batch_size"] = batch_size
+        summary["batches"] = len(batch_samples_ms)
+        summary["wall_ms"] = round(wall_ms, 2)
+        summary["docs_per_sec"] = round(docs_total * 1000.0 / wall_ms, 1) if wall_ms > 0 else 0
+        summary["avg_doc_size_bytes"] = coll.database.command(
+            "collStats", coll.name).get("avgObjSize", 0)
+        return summary
+
+    v2_result = run_side(v2_coll, v2_docs, "v2")
+    v1_result = run_side(v1_coll, v1_docs, "v1")
+    return {"v2": v2_result, "v1": v1_result}
+
+
+def render_ingest_table(result):
+    if not result:
+        return
+    print(f"ingest bench (pymongo bulk_write, "
+          f"{result['v2']['docs']} docs x {result['v2']['batch_size']} batch):")
+    header = (f"{'ver':>3} {'docs/s':>10} {'wall_ms':>10} "
+              f"{'mean':>8} {'p50':>8} {'p95':>8} {'p99':>8} {'max':>8} {'doc_B':>6}")
+    print(header)
+    print("-" * len(header))
+    for ver in ("v2", "v1"):
+        r = result[ver]
+        print(f"{ver:>3} {r['docs_per_sec']:>10.1f} {r['wall_ms']:>10.2f} "
+              f"{r['mean_ms']:>8.2f} {r['p50_ms']:>8.2f} {r['p95_ms']:>8.2f} "
+              f"{r['p99_ms']:>8.2f} {r['max_ms']:>8.2f} {r['avg_doc_size_bytes']:>6}")
+    v2ps = result["v2"]["docs_per_sec"]
+    v1ps = result["v1"]["docs_per_sec"]
+    if v2ps and v1ps:
+        # ratio > 1 => v1 faster, < 1 => v2 faster
+        ratio = v1ps / v2ps
+        print(f" v1/v2 docs-per-sec ratio = {ratio:.2f}x "
+              f"({'v1 faster' if ratio > 1.05 else 'v2 faster' if ratio < 0.95 else 'comparable'})")
+    print()
+
+
 def bench_queries(rcon_factory, queries, trials, warmup, inter_delay=0.05):
     """Run the query benchmark suite.
 
@@ -517,6 +605,17 @@ def run_once(args, records_for_size, client):
         payload["pageturn_results"] = bench_pageturn(
             rcon_factory, args.trials, args.warmup)
 
+    # Raw pymongo ingest bench. Intentionally runs last because it drops
+    # and re-seeds both collections, which would invalidate any query /
+    # pageturn state captured above. Skipped by default — gated on
+    # `--only ingest` or `--only all --include-ingest` so the ~1M-doc
+    # insert doesn't balloon the default run.
+    if args.only == "ingest" or (args.only == "all" and args.include_ingest):
+        print(f"Ingest bench: {args.ingest_docs} docs x {args.ingest_batch} batch "
+              f"per version...")
+        payload["ingest_results"] = bench_ingest(
+            client, args.ingest_docs, args.ingest_batch, args.seed_value)
+
     return payload
 
 
@@ -536,9 +635,21 @@ def main():
     parser.add_argument("--mongo", default="mongodb://localhost:27017")
     parser.add_argument("--skip-seed", action="store_true",
                         help="Skip re-seeding; bench the current DB state.")
-    parser.add_argument("--only", choices=("all", "queries", "pageturn"),
+    parser.add_argument("--only", choices=("all", "queries", "pageturn", "ingest"),
                         default="all",
-                        help="Which bench section(s) to run (default: all).")
+                        help="Which bench section(s) to run. 'ingest' runs the raw "
+                             "pymongo bulk_write save-side comparison (drops both "
+                             "collections, so don't combine with a live query bench "
+                             "without re-seeding). Default: all.")
+    parser.add_argument("--include-ingest", action="store_true",
+                        help="When --only=all, also run the ingest bench at the end. "
+                             "Off by default because it drops and re-seeds the "
+                             "collections, which would invalidate any prior state.")
+    parser.add_argument("--ingest-docs", type=int, default=100_000,
+                        help="Total docs per version for --only=ingest (default 100k).")
+    parser.add_argument("--ingest-batch", type=int, default=1000,
+                        help="Batch size (bulk_write op count) for --only=ingest "
+                             "(default 1000).")
     parser.add_argument("--filter-ids", nargs="+",
                         help="Restrict to the named query IDs (from QUERIES).")
     parser.add_argument("--report", default=str(REPORT_PATH))
@@ -559,6 +670,8 @@ def main():
                 render_query_table(payload["query_results"])
             if payload.get("pageturn_results"):
                 render_pageturn_table(payload["pageturn_results"])
+            if payload.get("ingest_results"):
+                render_ingest_table(payload["ingest_results"])
     else:
         payload = run_once(args, None if args.skip_seed else args.records, client)
         all_runs.append(payload)
@@ -567,6 +680,8 @@ def main():
             render_query_table(payload["query_results"])
         if payload.get("pageturn_results"):
             render_pageturn_table(payload["pageturn_results"])
+        if payload.get("ingest_results"):
+            render_ingest_table(payload["ingest_results"])
 
     client.close()
 
