@@ -1,9 +1,9 @@
 package net.medievalrp.spyglass.plugin.listener.environment;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
@@ -29,18 +29,7 @@ public final class BlockGrowExtractor implements EventExtractor<BlockGrowEvent, 
         BlockSnapshot before = BlockSnapshots.capture(event.getBlock().getState());
         BlockSnapshot after = BlockSnapshots.capture(event.getNewState());
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
-        Instant occurred = support.now();
-        return Stream.of(new BlockPlaceRecord(
-                support.newId(),
-                1,
-                "grow",
-                occurred,
-                support.expiresAt(occurred),
-                support.environmentOrigin("block-grow"),
-                support.environmentSource("block-grow"),
-                location,
-                after.material().name(),
-                before,
-                after));
+        RecordContext ctx = support.environmentContext("block-grow", location);
+        return Stream.of(BlockPlaceRecord.of(ctx, "grow", after.material().name(), before, after));
     }
 }

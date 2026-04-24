@@ -1,9 +1,9 @@
 package net.medievalrp.spyglass.plugin.listener.block;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
@@ -29,18 +29,7 @@ public final class BlockBreakExtractor implements EventExtractor<BlockBreakEvent
         BlockSnapshot original = BlockSnapshots.capture(event.getBlock().getState());
         BlockSnapshot after = BlockSnapshots.air();
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
-        Instant occurred = support.now();
-        return Stream.of(new BlockBreakRecord(
-                support.newId(),
-                1,
-                "break",
-                occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(),
-                support.playerSource(event.getPlayer()),
-                location,
-                original.material().name(),
-                original,
-                after));
+        RecordContext ctx = support.playerContext(event.getPlayer(), location);
+        return Stream.of(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
     }
 }

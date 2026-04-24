@@ -1,10 +1,10 @@
 package net.medievalrp.spyglass.plugin.listener.environment;
 
-import java.time.Instant;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.extension.EventExtractor;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -35,7 +35,6 @@ public final class BlockIgniteExtractor implements EventExtractor<BlockIgniteEve
         BlockSnapshot before = BlockSnapshots.capture(stateBefore);
         BlockSnapshot after = BlockSnapshots.of(Material.FIRE, Material.FIRE.createBlockData().getAsString());
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
-        Instant occurred = support.now();
 
         Origin origin;
         Source source;
@@ -51,17 +50,7 @@ public final class BlockIgniteExtractor implements EventExtractor<BlockIgniteEve
             source = support.environmentSource("ignite:" + event.getCause().name());
         }
 
-        return Stream.of(new BlockPlaceRecord(
-                support.newId(),
-                1,
-                "ignite",
-                occurred,
-                support.expiresAt(occurred),
-                origin,
-                source,
-                location,
-                "FIRE",
-                before,
-                after));
+        RecordContext ctx = support.context(origin, source, location);
+        return Stream.of(BlockPlaceRecord.of(ctx, "ignite", "FIRE", before, after));
     }
 }
