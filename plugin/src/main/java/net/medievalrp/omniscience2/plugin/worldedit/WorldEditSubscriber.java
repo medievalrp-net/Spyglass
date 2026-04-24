@@ -26,6 +26,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.ApiStatus;
 
 /**
  * Subscribes to WorldEdit's EditSessionEvent and wraps the extent chain with a
@@ -35,6 +36,7 @@ import org.bukkit.entity.Player;
  * <p>This path handles vanilla WorldEdit. FastAsyncWorldEdit's fast-placement
  * mode bypasses the extent chain and is wired separately (deferred).
  */
+@ApiStatus.Internal
 public final class WorldEditSubscriber {
 
     private final Recorder recorder;

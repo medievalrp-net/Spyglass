@@ -17,7 +17,9 @@ import net.medievalrp.omniscience2.api.query.QueryRequest;
 import net.medievalrp.omniscience2.api.query.QueryResult;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
 import net.medievalrp.omniscience2.plugin.storage.RecordStore;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class Omniscience2ApiImpl implements Omniscience2Api {
 
     private final Recorder recorder;

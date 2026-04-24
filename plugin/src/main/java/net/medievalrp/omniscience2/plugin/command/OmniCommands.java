@@ -17,7 +17,9 @@ import org.incendo.cloud.execution.ExecutionCoordinator;
 import org.incendo.cloud.parser.standard.IntegerParser;
 import org.incendo.cloud.parser.standard.StringParser;
 import org.incendo.cloud.paper.LegacyPaperCommandManager;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class OmniCommands {
 
     private static final List<String> ROOT_ALIASES = List.of("omniv2", "o2", "omniscience2");

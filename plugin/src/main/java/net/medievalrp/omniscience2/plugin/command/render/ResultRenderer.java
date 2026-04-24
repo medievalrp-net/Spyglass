@@ -27,7 +27,9 @@ import net.medievalrp.omniscience2.api.event.TeleportRecord;
 import net.medievalrp.omniscience2.api.query.QueryResult;
 import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class ResultRenderer {
 
     private final Omniscience2Config config;

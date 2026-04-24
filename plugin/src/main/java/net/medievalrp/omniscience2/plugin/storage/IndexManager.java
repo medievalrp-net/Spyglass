@@ -4,7 +4,9 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
 import org.bson.BsonDocument;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class IndexManager {
 
     public void ensureRecordIndexes(MongoCollection<BsonDocument> collection) {

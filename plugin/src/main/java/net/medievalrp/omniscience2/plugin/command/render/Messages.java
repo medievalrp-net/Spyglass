@@ -11,7 +11,9 @@ import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.hocon.HoconConfigurationLoader;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class Messages {
 
     private final MiniMessage miniMessage = MiniMessage.miniMessage();

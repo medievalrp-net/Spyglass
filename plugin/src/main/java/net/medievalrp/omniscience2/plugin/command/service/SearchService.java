@@ -12,7 +12,9 @@ import net.medievalrp.omniscience2.plugin.command.PageCache;
 import net.medievalrp.omniscience2.plugin.command.param.QueryStringParser;
 import net.medievalrp.omniscience2.plugin.command.render.ResultRenderer;
 import org.bukkit.command.CommandSender;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class SearchService {
 
     private final Omniscience2Api api;

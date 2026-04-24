@@ -11,7 +11,9 @@ import java.util.logging.Logger;
 import net.medievalrp.omniscience2.api.event.EventRecord;
 import net.medievalrp.omniscience2.api.util.Duration;
 import net.medievalrp.omniscience2.plugin.storage.RecordStore;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class AsyncRecorder implements Recorder {
 
     private final LinkedBlockingDeque<EventRecord> queue;

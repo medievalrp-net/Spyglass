@@ -15,7 +15,9 @@ import net.medievalrp.omniscience2.plugin.config.Omniscience2Config;
 import net.medievalrp.omniscience2.plugin.storage.MongoRecordStore;
 import org.bson.Document;
 import org.bson.types.ObjectId;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class MigrationService {
 
     private final MongoRecordStore recordStore;

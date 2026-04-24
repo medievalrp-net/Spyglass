@@ -2,7 +2,9 @@ package net.medievalrp.omniscience2.plugin.pipeline;
 
 import net.medievalrp.omniscience2.api.event.EventRecord;
 import net.medievalrp.omniscience2.api.util.Duration;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public interface Recorder {
 
     void record(EventRecord record);

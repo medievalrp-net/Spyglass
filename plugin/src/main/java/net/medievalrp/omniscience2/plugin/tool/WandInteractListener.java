@@ -27,7 +27,9 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class WandInteractListener implements Listener {
 
     private final ToolService tool;

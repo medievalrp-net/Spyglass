@@ -9,7 +9,9 @@ import java.util.Date;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class MigrationProgressStore {
 
     private final MongoCollection<Document> collection;

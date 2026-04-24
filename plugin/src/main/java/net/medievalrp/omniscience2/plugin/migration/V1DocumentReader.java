@@ -9,7 +9,9 @@ import org.bson.Document;
 import org.bson.conversions.Bson;
 import org.bson.types.ObjectId;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class V1DocumentReader {
 
     private final MongoCollection<Document> collection;

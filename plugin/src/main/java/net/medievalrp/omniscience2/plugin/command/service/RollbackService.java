@@ -22,7 +22,9 @@ import net.medievalrp.omniscience2.plugin.rollback.RollbackEngine;
 import net.medievalrp.omniscience2.plugin.rollback.UndoStack;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class RollbackService {
 
     private final Omniscience2Api api;

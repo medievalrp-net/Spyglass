@@ -2,7 +2,9 @@ package net.medievalrp.omniscience2.plugin.command.service;
 
 import net.medievalrp.omniscience2.plugin.command.PageCache;
 import org.bukkit.command.CommandSender;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class PageService {
 
     private final PageCache cache;
