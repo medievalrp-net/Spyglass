@@ -9,7 +9,9 @@ import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.configuration.serialization.ConfigurationSerialization;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public interface V1ItemDecoder {
 
     String V1_CLASS_KEY = "ClassName";

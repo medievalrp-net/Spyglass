@@ -11,7 +11,9 @@ import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class AsyncRecorder implements Recorder {
 
     private final LinkedBlockingDeque<EventRecord> queue;

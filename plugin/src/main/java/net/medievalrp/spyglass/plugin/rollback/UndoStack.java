@@ -14,7 +14,9 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 import org.bson.codecs.record.RecordCodecProvider;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class UndoStack {
 
     private final MongoCollection<UndoOperation> collection;

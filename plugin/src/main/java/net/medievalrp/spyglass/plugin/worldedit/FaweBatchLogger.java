@@ -30,8 +30,10 @@ import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.ApiStatus;
 
 @SuppressWarnings({"removal", "deprecation"})
+@ApiStatus.Internal
 final class FaweBatchLogger implements IBatchProcessor {
 
     private final Recorder recorder;

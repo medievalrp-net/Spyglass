@@ -12,7 +12,9 @@ import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.command.render.ResultRenderer;
 import org.bukkit.command.CommandSender;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class SearchService {
 
     private final SpyglassApi api;

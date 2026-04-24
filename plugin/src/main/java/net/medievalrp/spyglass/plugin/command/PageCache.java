@@ -13,7 +13,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class PageCache implements Listener {
 
     private static final int PAGE_SIZE = 10;

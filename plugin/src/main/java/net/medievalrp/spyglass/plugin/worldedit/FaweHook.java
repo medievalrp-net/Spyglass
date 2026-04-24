@@ -9,7 +9,9 @@ import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 final class FaweHook {
 
     private static final int MAX_DEPTH = 16;
