@@ -42,14 +42,18 @@ public final class ResultRenderer {
     public Component renderAggregation(QueryResult.RecordAggregation aggregation) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
-        return line(sample, count, true);
+        // Aggregations span multiple locations; `-ex` location-append is
+        // skipped because any one sample.location() would be misleading.
+        return line(sample, count, true, false);
     }
 
-    public Component renderSingle(EventRecord record) {
-        return line(record, 1, false);
+    public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags) {
+        boolean extended = flags != null
+                && flags.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
+        return line(record, 1, false, extended);
     }
 
-    private Component line(EventRecord record, long count, boolean grouped) {
+    private Component line(EventRecord record, long count, boolean grouped, boolean extended) {
         // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
         // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
@@ -79,6 +83,18 @@ public final class ResultRenderer {
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
                     + " -ng"));
+        }
+        if (extended && record.location() != null) {
+            // v1's `-ex`: a second inline gray line below the main line
+            // showing the block coordinates. Phase 2.2 will add click-to-
+            // teleport via /sg tele; for now it's plain text.
+            builder.append(Component.newline())
+                    .append(Component.text(
+                            " - (x: " + record.location().x()
+                                    + " y: " + record.location().y()
+                                    + " z: " + record.location().z()
+                                    + " world: " + record.location().worldName() + ")",
+                            NamedTextColor.GRAY));
         }
         return builder.build();
     }

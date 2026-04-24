@@ -64,7 +64,7 @@ class SearchServiceTest {
                 ServiceSupport.synchronous(), Logger.getLogger("test"));
 
         TestFixture() {
-            when(renderer.renderSingle(any(EventRecord.class))).thenReturn(Component.text("rendered"));
+            when(renderer.renderSingle(any(EventRecord.class), any())).thenReturn(Component.text("rendered"));
             when(renderer.renderAggregation(any())).thenReturn(Component.text("rendered-agg"));
         }
     }
