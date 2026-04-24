@@ -30,6 +30,7 @@ import net.medievalrp.spyglass.plugin.command.service.PageService;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
+import net.medievalrp.spyglass.plugin.command.service.TeleportService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.command.service.UndoService;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
@@ -203,6 +204,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
+        TeleportService teleportService = new TeleportService();
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
         SpyglassCommands commands = new SpyglassCommands(
@@ -214,6 +216,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 undoService,
                 pageService,
                 toolService,
+                teleportService,
                 suggestions);
         commands.register();
 

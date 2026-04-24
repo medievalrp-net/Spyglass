@@ -101,24 +101,37 @@ public final class ResultRenderer {
         builder.append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.WHITE))
                 .hoverEvent(HoverEvent.showText(hover(record, count)));
         if (grouped) {
+            // Grouped result: click drills down into the per-player,
+            // per-event stream. Matches v1's buildDetailCommand shape.
             builder.clickEvent(ClickEvent.runCommand("/sg search "
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
                     + " -ng"));
+        } else if (record.location() != null) {
+            // Single record: click teleports the operator to the scene.
+            builder.clickEvent(teleportClick(record.location()));
         }
         if (extended && record.location() != null) {
-            // v1's `-ex`: a second inline gray line below the main line
-            // showing the block coordinates. Phase 2.2 will add click-to-
-            // teleport via /sg tele; for now it's plain text.
+            // v1's `-ex`: a second inline gray line showing coordinates,
+            // also clickable for teleport (redundant with the main line
+            // click but consistent with v1's DataHelper.buildLocation).
             builder.append(Component.newline())
                     .append(Component.text(
-                            " - (x: " + record.location().x()
-                                    + " y: " + record.location().y()
-                                    + " z: " + record.location().z()
-                                    + " world: " + record.location().worldName() + ")",
-                            NamedTextColor.GRAY));
+                                    " - (x: " + record.location().x()
+                                            + " y: " + record.location().y()
+                                            + " z: " + record.location().z()
+                                            + " world: " + record.location().worldName() + ")",
+                                    NamedTextColor.GRAY)
+                            .clickEvent(teleportClick(record.location()))
+                            .hoverEvent(HoverEvent.showText(
+                                    Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
         return builder.build();
+    }
+
+    private static ClickEvent teleportClick(BlockLocation loc) {
+        return ClickEvent.runCommand("/sg tele "
+                + loc.worldId() + " " + loc.x() + " " + loc.y() + " " + loc.z());
     }
 
     private static String shortDate(Instant occurred) {

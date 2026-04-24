@@ -92,6 +92,34 @@ class ResultRendererTest {
     }
 
     @Test
+    void singleRecordCarriesTeleportClickEvent() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
+
+        assertThat(findRunCommand(rendered))
+                .as("click event on a single result should be /sg tele")
+                .startsWith("/sg tele " + WORLD_ID);
+    }
+
+    private static String findRunCommand(Component component) {
+        net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
+        if (click != null
+                && click.action() == net.kyori.adventure.text.event.ClickEvent.Action.RUN_COMMAND) {
+            return click.value();
+        }
+        for (Component child : component.children()) {
+            String nested = findRunCommand(child);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    @Test
     void rendererExceptionFallsBackToDefault() {
         SpyglassApi api = mock(SpyglassApi.class);
         DisplayRenderer broken = new DisplayRenderer() {
