@@ -75,20 +75,25 @@ import org.testcontainers.containers.MongoDBContainer;
  * noise.
  *
  * <p><b>Why compare to v1?</b> Spyglass replaces v1 in
- * production. The pipelines have very different shapes:
+ * production. The pipelines share one hard invariant but have very
+ * different shapes under it:
  *
  * <ul>
  * <li><b>v1</b>: Unbounded {@link LinkedBlockingDeque} + scheduled
  * batch-drain task that flushes the whole queue per tick, synchronous
- * {@code bulkWrite} via {@code MongoRecordHandler.write}. No drop
- * ceiling, no retry, no atomic counters. Unbounded queue is an
- * OOM-risk under sustained overload. (See {@code EntryQueueRunner}
- * + {@code MongoStorageHandler} in the v1 core.)</li>
- * <li><b>v2</b>: Bounded {@link LinkedBlockingDeque} (configurable cap,
- * default 100k) + virtual-thread continuous drain + per-batch save
- * with exponential-backoff retry + atomic {@code dropped}/{@code
- * drained} counters. Bounded queue drops on overload rather than
- * OOMing; retry makes transient Mongo hiccups recoverable. (See
+ * {@code bulkWrite} via {@code MongoRecordHandler.write}. No retry,
+ * no atomic counters. Intake is lossless; OOM is the only failure
+ * mode under sustained Mongo unavailability. (See {@code
+ * EntryQueueRunner} + {@code MongoStorageHandler} in the v1 core.)</li>
+ * <li><b>v2</b>: Unbounded {@link LinkedBlockingDeque} + virtual-thread
+ * continuous drain + per-batch save with exponential-backoff retry
+ * + atomic {@code drained}/{@code dropped} counters. Intake is
+ * lossless (matches v1); {@code queue-capacity} is a soft
+ * <i>warn threshold</i> for queue depth, not a drop ceiling. Retry
+ * makes transient Mongo hiccups recoverable; continuous drain
+ * keeps latency flat instead of bursty. Shutdown flush with
+ * deadline-bounded retry is the only path that can drop, and only
+ * if Mongo stays unreachable for the whole flush window. (See
  * {@link AsyncRecorder}.)</li>
  * </ul>
  *
@@ -109,9 +114,12 @@ import org.testcontainers.containers.MongoDBContainer;
  * <li>{@code sustained_*_per_sec} — N seconds at a controlled producer
  * rate. Measures steady-state latency + queue depth.</li>
  * <li>{@code burst_*} — 8 threads push N records each as fast as
- * possible. Measures saturated throughput + drop rate.</li>
- * <li>{@code overload_*} — Deliberately overflows v2's queue cap.
- * Measures v2's drop rate vs v1's unbounded growth.</li>
+ * possible. Measures saturated throughput + per-event latency
+ * under contention.</li>
+ * <li>{@code overload_*} — Push a large batch well past v2's warn
+ * threshold. Measures queue growth + retrospective drain
+ * throughput; both pipelines must save 100% of records with zero
+ * drops.</li>
  * </ol>
  */
 @Tag("bench")
@@ -126,7 +134,11 @@ class IngestThroughputBench {
     private static final int BURST_THREADS = (int) envLong("SG_BENCH_BURST_THREADS", 8L);
     private static final int BURST_PER_THREAD = (int) envLong("SG_BENCH_BURST_PER", 25_000L);
     private static final int OVERLOAD_RECORDS = (int) envLong("SG_BENCH_OVERLOAD", 200_000L);
-    private static final int V2_QUEUE_CAP = (int) envLong("SG_BENCH_V2_CAP", 10_000L);
+    // Warn threshold for v2's AsyncRecorder. Deliberately set an order of
+    // magnitude below the overload batch so the warn path fires — but the
+    // queue is unbounded, so no drops happen. Env key keeps the legacy
+    // _CAP suffix for CI back-compat; semantic is warn threshold.
+    private static final int V2_WARN_THRESHOLD = (int) envLong("SG_BENCH_V2_CAP", 10_000L);
 
     private MongoDBContainer container;
     private MongoClient mongoClient;
@@ -146,7 +158,7 @@ class IngestThroughputBench {
         BENCH_LOG.info(() -> "Mongo: " + mongoUri);
         BENCH_LOG.info(() -> "Controls: sustained=" + SUSTAINED_TARGET_RATE + "/s × "
                 + SUSTAINED_DURATION_SEC + "s, burst=" + BURST_THREADS + "×" + BURST_PER_THREAD
-                + ", overload=" + OVERLOAD_RECORDS + " (v2 cap=" + V2_QUEUE_CAP + ")");
+                + ", overload=" + OVERLOAD_RECORDS + " (v2 warn=" + V2_WARN_THRESHOLD + ")");
     }
 
     @AfterAll
@@ -161,7 +173,7 @@ class IngestThroughputBench {
     @Test
     void sustained_target_rate() throws Exception {
         long totalOps = SUSTAINED_TARGET_RATE * SUSTAINED_DURATION_SEC;
-        Harness v2 = Harness.v2(mongoUri, V2_QUEUE_CAP);
+        Harness v2 = Harness.v2(mongoUri, V2_WARN_THRESHOLD);
         ScenarioResult v2Result = runSustained(v2, SUSTAINED_TARGET_RATE, totalOps);
         Harness v1 = Harness.v1(mongoClient);
         ScenarioResult v1Result = runSustained(v1, SUSTAINED_TARGET_RATE, totalOps);
@@ -180,16 +192,16 @@ class IngestThroughputBench {
                 v2Result, v1Result);
 
         assertThat(v2Result.observedRatePerSec())
-                .as("v2 must achieve >=85%% of target rate under no-overflow conditions")
+                .as("v2 must achieve >=85%% of target rate under steady-state load")
                 .isGreaterThan(SUSTAINED_TARGET_RATE * 0.85);
         assertThat(v2Result.dropped)
-                .as("v2 must not drop when offered below queue capacity over time")
+                .as("no-drop invariant: v2 must never drop with a healthy store")
                 .isZero();
     }
 
     @Test
     void burst_max_throughput() throws Exception {
-        Harness v2 = Harness.v2(mongoUri, V2_QUEUE_CAP);
+        Harness v2 = Harness.v2(mongoUri, V2_WARN_THRESHOLD);
         ScenarioResult v2Result = runBurst(v2, BURST_THREADS, BURST_PER_THREAD);
         Harness v1 = Harness.v1(mongoClient);
         ScenarioResult v1Result = runBurst(v1, BURST_THREADS, BURST_PER_THREAD);
@@ -207,8 +219,11 @@ class IngestThroughputBench {
                 v2Result, v1Result);
 
         long offered = (long) BURST_THREADS * BURST_PER_THREAD;
-        assertThat(v2Result.saved + v2Result.dropped)
-                .as("v2: every offered record must be either saved or counted as dropped")
+        assertThat(v2Result.dropped)
+                .as("no-drop invariant: v2 must not drop under burst load")
+                .isZero();
+        assertThat(v2Result.saved)
+                .as("v2 must save every record offered in a burst")
                 .isEqualTo(offered);
         assertThat(v1Result.saved)
                 .as("v1 is unbounded and must save every record")
@@ -216,30 +231,45 @@ class IngestThroughputBench {
     }
 
     @Test
-    void overload_drops_v2_but_not_v1() throws Exception {
+    void overload_neither_pipeline_drops() throws Exception {
+        // The previous version of this test verified that v2's bounded
+        // queue dropped under overload while v1 did not. That asymmetry
+        // was a regression vs v1's no-drop contract and has been
+        // eliminated — v2's queue is now unbounded (see AsyncRecorder's
+        // no-drop Javadoc). The scenario is still useful because it
+        // exercises the warn-threshold path and measures retrospective
+        // drain throughput once the producer stops. Both pipelines must
+        // save 100% of records with zero drops.
         int perThread = OVERLOAD_RECORDS / 8;
-        Harness v2 = Harness.v2(mongoUri, V2_QUEUE_CAP);
+        Harness v2 = Harness.v2(mongoUri, V2_WARN_THRESHOLD);
         ScenarioResult v2Result = runBurst(v2, 8, perThread);
         Harness v1 = Harness.v1(mongoClient);
         ScenarioResult v1Result = runBurst(v1, 8, perThread);
 
         Map<String, Object> report = new LinkedHashMap<>();
-        report.put("scenario", "overload_" + OVERLOAD_RECORDS + "_cap_" + V2_QUEUE_CAP);
+        report.put("scenario", "overload_" + OVERLOAD_RECORDS + "_warn_" + V2_WARN_THRESHOLD);
         report.put("total_offered", (long) 8 * perThread);
-        report.put("v2_queue_cap", V2_QUEUE_CAP);
+        report.put("v2_warn_threshold", V2_WARN_THRESHOLD);
         report.put("v2", v2Result.toMap());
         report.put("v1", v1Result.toMap());
         scenarioReports.add(report);
 
-        printTable("OVERLOAD " + 8 * perThread + " offered, v2 cap=" + V2_QUEUE_CAP,
+        printTable("OVERLOAD " + 8 * perThread + " offered, v2 warn=" + V2_WARN_THRESHOLD,
                 v2Result, v1Result);
 
-        assertThat(v2Result.saved + v2Result.dropped)
-                .as("v2: saved + dropped must equal offered — no lost counter increments")
-                .isEqualTo((long) 8 * perThread);
+        long offered = (long) 8 * perThread;
+        assertThat(v2Result.dropped)
+                .as("no-drop invariant: v2 must not drop even when producer bursts past warn threshold")
+                .isZero();
+        assertThat(v2Result.saved)
+                .as("v2 must save every offered record (unbounded queue, healthy store)")
+                .isEqualTo(offered);
         assertThat(v1Result.dropped)
                 .as("v1 unbounded pipeline must not drop")
                 .isZero();
+        assertThat(v1Result.saved)
+                .as("v1 must save every offered record")
+                .isEqualTo(offered);
     }
 
     // -------- drivers ------------------------------------------------------
@@ -520,7 +550,7 @@ class IngestThroughputBench {
 
         // ---------- v2 factory ----------
 
-        static Harness v2(String mongoUri, int queueCap) {
+        static Harness v2(String mongoUri, int warnThreshold) {
             Harness h = new Harness("v2");
             String db = "SpyglassBench_" + System.nanoTime();
             // The MongoRecordStore builds its own MongoClient internally;
@@ -558,7 +588,7 @@ class IngestThroughputBench {
                     realStore.close();
                 }
             };
-            AsyncRecorder recorder = new AsyncRecorder(queueCap, wrapping, BENCH_LOG);
+            AsyncRecorder recorder = new AsyncRecorder(warnThreshold, wrapping, BENCH_LOG);
 
             h.submitFn = (rec, recordLatency) -> {
                 submitMap.put(rec.id(), recordLatency ? System.nanoTime() : 0L);

@@ -57,7 +57,12 @@ class AsyncRecorderTest {
     }
 
     @Test
-    void dropsRecordsWhenQueueIsFull() throws Exception {
+    void neverDropsAtIntakeEvenWhenStoreIsStalled() throws Exception {
+        // No-drop invariant: record() must accept every event, no matter how
+        // far behind the drain is. The warnThreshold is a soft signal — far
+        // below the offered count here — and must NOT cause drops. Once the
+        // store opens and shutdown runs, every offered record lands in the
+        // store; dropped stays zero.
         LatchedStore store = new LatchedStore();
         AsyncRecorder recorder = new AsyncRecorder(5, store, Logger.getLogger("test"));
         try {
@@ -67,7 +72,15 @@ class AsyncRecorderTest {
             // Let the drain proceed so shutdown can complete.
             store.open();
             AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("3s"));
-            assertThat(report.dropped()).isGreaterThan(0L);
+            assertThat(report.dropped())
+                    .as("no-drop invariant: intake must never reject records")
+                    .isZero();
+            assertThat(report.remaining())
+                    .as("all queued records must flush before shutdown returns")
+                    .isZero();
+            assertThat(store.totalSaved())
+                    .as("every offered record must reach the store")
+                    .isEqualTo(50);
         } finally {
             store.open();
         }
@@ -179,6 +192,10 @@ class AsyncRecorderTest {
 
         void open() {
             gate.countDown();
+        }
+
+        int totalSaved() {
+            return saved.get();
         }
 
         @Override

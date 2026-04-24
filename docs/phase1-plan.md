@@ -107,7 +107,7 @@ Spyglass/
 │ │ │ │ └── PredicateToBson.java ← QueryPredicate → org.bson.conversions.Bson
 │ │ │ ├── pipeline/
 │ │ │ │ ├── Recorder.java ← interface (the clean successor to OEntry)
-│ │ │ │ ├── AsyncRecorder.java ← bounded queue + virtual-thread drain
+│ │ │ │ ├── AsyncRecorder.java ← unbounded queue (no intake drops) + virtual-thread drain + warn threshold
 │ │ │ │ └── ExtractorRegistry.java
 │ │ │ ├── listener/
 │ │ │ │ ├── block/
@@ -162,7 +162,7 @@ Match these exactly. They are the difference from v1.
 5. **Service-based API surface.** `SpyglassApi` is a plain interface registered via `Bukkit.getServicesManager().register(...)`. No static singletons. External plugins do `Bukkit.getServicesManager().load(SpyglassApi.class)`.
 6. **Constructor injection.** Every listener/command/handler takes its dependencies via constructor. No global state.
 7. **Config as a record tree** loaded via Configurate. No `FileConfiguration` reads scattered across the codebase.
-8. **Virtual threads for the async queue drain.** `Thread.ofVirtual().name("sg-drain").start(...)`. No Bukkit async scheduler for the drain thread. Keep listener `save()` calls O(1) via `LinkedBlockingDeque.offer` with a bounded capacity; on full, drop with a counter + warn.
+8. **Virtual threads for the async queue drain.** `Thread.ofVirtual().name("sg-drain").start(...)`. No Bukkit async scheduler for the drain thread. Keep listener `save()` calls O(1) via `LinkedBlockingDeque.offer` on an unbounded queue — `record()` never rejects, same no-drop contract as v1. `queue-capacity` is a **warn threshold**: crossing it logs a warning and doubling intervals thereafter, so a backlog is surfaced before heap pressure becomes severe.
 9. **`onDisable` flushes the queue** with a timeout. No silent data loss.
 10. **Indexes upfront.** `IndexManager.ensureIndexes(collection)` on startup:
     - `{ source.playerId: 1, occurred: -1 }`
@@ -235,7 +235,7 @@ database {
 }
 storage {
   retention = "4w" # records expire after this (Mongo TTL)
-  queue-capacity = 100000
+  queue-capacity = 100000 # WARN threshold for the ingest queue (unbounded, never drops at intake — same contract as v1)
   flush-timeout = "5s"
 }
 defaults {
