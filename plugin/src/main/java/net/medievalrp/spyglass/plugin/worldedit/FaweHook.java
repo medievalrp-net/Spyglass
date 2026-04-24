@@ -5,7 +5,7 @@ import com.sk89q.worldedit.event.extent.EditSessionEvent;
 import com.sk89q.worldedit.extent.AbstractDelegateExtent;
 import com.sk89q.worldedit.extent.Extent;
 import java.util.UUID;
-import net.medievalrp.spyglass.plugin.listener.ExtractorSupport;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -19,7 +19,7 @@ final class FaweHook {
     private FaweHook() {
     }
 
-    static boolean tryInstall(Recorder recorder, ExtractorSupport support,
+    static boolean tryInstall(Recorder recorder, RecordingSupport support,
                               EditSessionEvent event, Player player, World world) {
         Extent extent = event.getExtent();
         if (extent == null) {
