@@ -60,7 +60,7 @@ public final class EventCatalog {
         m.put("bundle-insert", ContainerDepositRecord.class);
         m.put("bundle-extract", ContainerWithdrawRecord.class);
         m.put("brush", BlockBreakRecord.class);
-        m.put("sculk", BlockPlaceRecord.class);
+        m.put("sculk", BlockUseRecord.class);
         m.put("crafter", ContainerWithdrawRecord.class);
         m.put("vault", BlockBreakRecord.class);
         TYPES = Map.copyOf(m);

@@ -67,22 +67,14 @@ public final class BundleTransactionListener implements RecordingListener {
 
         int slotIndex = event.getSlot();
         int rawSlot = event.getRawSlot();
-        plugin.getLogger().info("bundle-click: action=" + event.getAction()
-                + " slotBundle=" + (slotSnap != null)
-                + " cursorBundle=" + (cursorSnap != null)
-                + " rawSlot=" + rawSlot);
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (slotSnap != null) {
                 ItemStack afterStack = rawSlot >= 0 ? event.getView().getItem(rawSlot) : null;
-                plugin.getLogger().info("bundle-diff (slot): beforeItems=" + slotSnap.items.size()
-                        + " afterStack=" + (afterStack == null ? "null" : afterStack.getType()));
                 diffAndEmit(player, slotSnap, slotIndex, afterStack);
             }
             if (cursorSnap != null) {
                 ItemStack afterCursor = player.getItemOnCursor();
-                plugin.getLogger().info("bundle-diff (cursor): beforeItems=" + cursorSnap.items.size()
-                        + " afterCursor=" + (afterCursor == null ? "null" : afterCursor.getType()));
                 diffAndEmit(player, cursorSnap, -1, afterCursor);
             }
         });
