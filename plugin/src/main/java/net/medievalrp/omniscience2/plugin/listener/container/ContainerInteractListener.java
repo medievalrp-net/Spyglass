@@ -20,9 +20,10 @@ import org.bukkit.inventory.InventoryHolder;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * Logs container open/close interactions. Regular containers emit {@code open}
- * only; shulkers emit both {@code shulker-open} and {@code shulker-close} to
- * mirror v1's behavior.
+ * Logs container open/close interactions. Both kinds of containers
+ * emit a matching close event — shulkers as {@code shulker-close} to
+ * preserve v1's distinct event name, every other container as
+ * {@code close}.
  */
 @ApiStatus.Internal
 public final class ContainerInteractListener implements RecordingListener {
@@ -37,7 +38,7 @@ public final class ContainerInteractListener implements RecordingListener {
 
     @Override
     public Set<String> events() {
-        return Set.of("open", "shulker-open", "shulker-close");
+        return Set.of("open", "close", "shulker-open", "shulker-close");
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -64,12 +65,13 @@ public final class ContainerInteractListener implements RecordingListener {
         }
         Inventory inv = event.getInventory();
         InventoryHolder holder = inv.getHolder();
-        if (!(holder instanceof ShulkerBox shulker)) {
+        if (!(holder instanceof Container container)) {
             return;
         }
-        BlockLocation location = BlockLocations.fromLocation(shulker.getBlock().getLocation());
-        String target = shulker.getBlock().getType().name();
+        String event_ = holder instanceof ShulkerBox ? "shulker-close" : "close";
+        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
+        String target = container.getBlock().getType().name();
         RecordContext ctx = support.playerContext(player, location);
-        recorder.record(ContainerInteractRecord.of(ctx, "shulker-close", target));
+        recorder.record(ContainerInteractRecord.of(ctx, event_, target));
     }
 }
