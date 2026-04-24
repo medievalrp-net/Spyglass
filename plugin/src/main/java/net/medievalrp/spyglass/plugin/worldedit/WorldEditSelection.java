@@ -9,7 +9,9 @@ import java.util.UUID;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class WorldEditSelection {
 
     private WorldEditSelection() {

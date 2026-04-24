@@ -15,7 +15,9 @@ import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import org.bson.Document;
 import org.bson.types.ObjectId;
+import org.jetbrains.annotations.ApiStatus;
 
+@ApiStatus.Internal
 public final class MigrationService {
 
     private final MongoRecordStore recordStore;
