@@ -374,11 +374,11 @@ Fold these into the relevant phases above; tracked here separately so coverage g
 ### 6.0 Raise coverage thresholds back to target
 
 - **What:** Phase 0 lowered both `api` and `plugin` coverage thresholds to `0.05` in [`build.gradle.kts`](../../../../build.gradle.kts) so the build could pass after wave 7 landed. Wave 7 added ~1400 lines of listener/renderer/codec code with only one new test file (`ItemSerializationTest`), and the migration deletion removed ~520 lines of tests. Net effect: plugin coverage fell from ~20% to ~10%, api coverage fell from ~15% to ~9%.
-- **How:** as Phases 2-4 restore listeners and params, add unit tests alongside each. Once each phase commits, raise the thresholds by steps until reaching `api=0.90`, `plugin=0.80` per the original v1.0.0 plan Block 13a target. A reasonable ramp:
-  - After Phase 2 lands: `api=0.10`, `plugin=0.10`
-  - After Phase 3 lands: `api=0.25`, `plugin=0.20`
-  - After Phase 4 lands: `api=0.50`, `plugin=0.40`
-  - After Phase 5 lands: `api=0.90`, `plugin=0.80`
+- **How:** as Phases 2-4 restore listeners and params, add unit tests alongside each. After each phase, raise both thresholds to a few points below actual coverage — the gate is a regression-prevention floor, not a target. Gate history (actual / gate):
+  - Phase 0 baseline: ~9% api / ~10% plugin, gate 0.05 / 0.05.
+  - After Phase 2: 17% api / 16% plugin, gate 0.10 / 0.10.
+  - After Phase 3: 17% api / 16% plugin, gate 0.15 / 0.15.
+  - Target per v1.0.0 plan Block 13a: `api=0.90`, `plugin=0.80`. Reaching it requires a dedicated testing push in Phase 5 or a follow-up block; Phase 3 / 4 param and listener restorations add more source than they can reasonably test in plain JVM without a MockBukkit / Testcontainers harness.
 - **Priority:** P3 (track, raise incrementally)
 - **Effort:** S per step (just a `build.gradle.kts` edit once tests are in place)
 - **Acceptance:** `./gradlew build` green with `api=0.90, plugin=0.80`.
