@@ -11,7 +11,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
  */
 public record ContainerInteractRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -22,7 +21,7 @@ public record ContainerInteractRecord(
 
     public static ContainerInteractRecord of(RecordContext ctx, String event, String target) {
         return new ContainerInteractRecord(
-                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), target);
     }
 }

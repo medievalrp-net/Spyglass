@@ -27,6 +27,38 @@ All permissions default to **op**:
 | `/omni2 tool` | `spyglass.tool` | `/omni2 tool` | Toggle inspection wand (players only) |
 | `/omni2 tele` | `spyglass.tele` | `/omni2 tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
 
+## Event names
+
+`/omni2 events` lists the active set. The names below are stable: queries
+use them as values for `a:` (action) parameters and they appear as the
+event column in search results.
+
+| v2 name | What it covers | v1 difference |
+|---------|----------------|---------------|
+| `break` | Block broken (player, explosion, entity-explosion, burn, entity-break-door, dependent attachments cascade) | — |
+| `place` | Block placed | — |
+| `drop` | Item dropped (player, dispenser, mob, container destroyed by explosion) | — |
+| `pickup` | Item picked up | — |
+| `deposit` / `withdraw` | Container slot in / out | — |
+| `entity-deposit` / `entity-withdraw` | Item in / out of an item frame | — |
+| `open` / `close` / `shulker-open` / `shulker-close` | Container interactions | — |
+| `use` / `useSign` | Block right-click, CraftBook sign use | — |
+| `bookshelf-insert` / `bookshelf-remove` | Chiseled bookshelf slot edits | — |
+| `pot-insert` / `pot-remove` | Decorated pot transactions | — |
+| `bundle-insert` / `bundle-extract` | Bundle transactions | — |
+| `brush` | Brush use on suspicious sand/gravel | — |
+| `vault` | 1.21 vault interactions | — |
+| `crafter` | Crafter block (1.21+) crafted an item | v1 called this `craft`. Renamed for accuracy — vanilla crafting tables are not tracked, only the Crafter block. |
+| `sculk` | Sculk sensor / shrieker triggered by a player | — |
+| `mount` / `dismount` | Entity ride start / end | — |
+| `named` | Name tag rename | — |
+| `chat` / `command` | Chat message, command (player or console) | — |
+| `join` / `quit` | Login / logout | — |
+| `teleport` | Player teleport | — |
+| `hit` / `shot` / `death` | Combat events | — |
+| `clone` | Creative-mode middle-click | — |
+| `ignite` | Fire start (attribution chained to subsequent burn records) | — |
+
 ## Search Parameters
 
 Search, rollback, and restore commands use `alias:value` format:

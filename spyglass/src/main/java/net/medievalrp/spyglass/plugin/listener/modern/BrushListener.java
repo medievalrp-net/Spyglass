@@ -71,7 +71,7 @@ public final class BrushListener implements RecordingListener {
                     ctx.currentMaterial(),
                     ctx.location().getBlock().getBlockData().getAsString());
             recorder.record(new BlockBreakRecord(
-                    support.newId(), 1, "brush", occurred,
+                    support.newId(), "brush", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(),
                     support.playerSource(ctx.player()),

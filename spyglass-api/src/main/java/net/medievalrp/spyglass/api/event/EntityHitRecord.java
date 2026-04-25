@@ -6,7 +6,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 
 public record EntityHitRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -24,7 +23,7 @@ public record EntityHitRecord(
                                      String victimType, UUID victimId,
                                      double damage, boolean projectile, String projectileType) {
         return new EntityHitRecord(
-                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, victimType, victimId, damage, projectile, projectileType);
     }

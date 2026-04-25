@@ -29,7 +29,7 @@ class ResultRendererTest {
     private static BlockUseRecord useRecord() {
         Instant now = Instant.now();
         return new BlockUseRecord(
-                UUID.randomUUID(), 1, "sculk",
+                UUID.randomUUID(), "sculk",
                 now, now.plusSeconds(60),
                 Origin.player(),
                 Source.player(PLAYER_ID, "Alice"),

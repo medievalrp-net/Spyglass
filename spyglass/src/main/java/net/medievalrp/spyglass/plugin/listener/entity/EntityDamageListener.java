@@ -68,7 +68,6 @@ public final class EntityDamageListener implements RecordingListener {
         String eventName = projectile ? "shot" : "hit";
         recorder.record(new EntityHitRecord(
                 support.newId(),
-                1,
                 eventName,
                 occurred,
                 support.expiresAt(occurred),
