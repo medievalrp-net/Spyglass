@@ -86,15 +86,15 @@ class MongoRecordStoreIT {
         StoredItem item = new StoredItem(3, "DIAMOND", null);
 
         List<EventRecord> records = List.of(
-                new BlockBreakRecord(UUID.randomUUID(), 1, "break", now, now.plusSeconds(3600),
+                new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
                         origin, source, location, "STONE", stone, air),
-                new BlockPlaceRecord(UUID.randomUUID(), 1, "place", now, now.plusSeconds(3600),
+                new BlockPlaceRecord(UUID.randomUUID(), "place", now, now.plusSeconds(3600),
                         origin, source, location, "STONE", air, stone),
-                new ChatRecord(UUID.randomUUID(), 1, "say", now, now.plusSeconds(3600),
+                new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
                         origin, source, location, "Alice", "hello", List.of()),
-                new ContainerDepositRecord(UUID.randomUUID(), 1, "deposit", now, now.plusSeconds(3600),
+                new ContainerDepositRecord(UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
                         origin, source, location, "DIAMOND", "CHEST", 3, 1, null, item),
-                new EntityDeathRecord(UUID.randomUUID(), 1, "death", now, now.plusSeconds(3600),
+                new EntityDeathRecord(UUID.randomUUID(), "death", now, now.plusSeconds(3600),
                         origin, source, location, "ZOMBIE", "ZOMBIE",
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null));
 
@@ -169,15 +169,15 @@ class MongoRecordStoreIT {
                 List.of(), List.of(), List.of(), List.of(), null);
 
         List<EventRecord> records = List.of(
-                new ContainerDepositRecord(UUID.randomUUID(), 1, "deposit",
+                new ContainerDepositRecord(UUID.randomUUID(), "deposit",
                         now, now.plusSeconds(3600),
                         origin, source, loc, "DIAMOND_SWORD", "CHEST",
                         0, 1, null, enchanted),
                 new net.medievalrp.omniscience2.api.event.ItemDropRecord(
-                        UUID.randomUUID(), 1, "drop",
+                        UUID.randomUUID(), "drop",
                         now, now.plusSeconds(3600),
                         origin, source, loc, "DIAMOND_SWORD", 1, enchanted),
-                new BlockPlaceRecord(UUID.randomUUID(), 1, "place",
+                new BlockPlaceRecord(UUID.randomUUID(), "place",
                         now, now.plusSeconds(3600),
                         origin, source, loc, "CHEST", air, chestWithItem));
         store.save(records);
@@ -280,7 +280,7 @@ class MongoRecordStoreIT {
                 org.bukkit.Material.STONE, "minecraft:stone",
                 List.of(), List.of(), List.of(), List.of(), null);
         BlockBreakRecord expired = new BlockBreakRecord(
-                UUID.randomUUID(), 1, "break", past, past.minusSeconds(1),
+                UUID.randomUUID(), "break", past, past.minusSeconds(1),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 location, "STONE", stone, air);
 
@@ -350,7 +350,7 @@ class MongoRecordStoreIT {
             try {
                 for (int i = 0; i < totalWrites; i++) {
                     store.save(List.of(new BlockBreakRecord(
-                            UUID.randomUUID(), 1, "break",
+                            UUID.randomUUID(), "break",
                             base.plusMillis(i), base.plusSeconds(3600),
                             origin, source, loc, "STONE", stone, air)));
                 }
@@ -424,7 +424,7 @@ class MongoRecordStoreIT {
         Source source = Source.player(ALICE, "Alice");
         List<EventRecord> many = new java.util.ArrayList<>();
         for (int i = 0; i < 20; i++) {
-            many.add(new BlockBreakRecord(UUID.randomUUID(), 1, "break",
+            many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
                     now.plusSeconds(i), now.plusSeconds(3600),
                     origin, source, loc, "STONE", stone, air));
         }

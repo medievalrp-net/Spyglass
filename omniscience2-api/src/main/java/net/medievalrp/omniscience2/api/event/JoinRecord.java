@@ -8,7 +8,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record JoinRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -20,7 +19,7 @@ public record JoinRecord(
 
     public static JoinRecord of(RecordContext ctx, String target, String address) {
         return new JoinRecord(
-                ctx.id(), ctx.schemaVersion(), "join", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "join", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, address);
     }

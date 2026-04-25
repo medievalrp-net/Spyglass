@@ -6,7 +6,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record TeleportRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -21,7 +20,7 @@ public record TeleportRecord(
     public static TeleportRecord of(RecordContext ctx, String target,
                                     BlockLocation from, BlockLocation to, String cause) {
         return new TeleportRecord(
-                ctx.id(), ctx.schemaVersion(), "teleport", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "teleport", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, from, to, cause);
     }

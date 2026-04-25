@@ -45,7 +45,7 @@ class AsyncRecorderConcurrencyTest {
     private static JoinRecord sampleRecord() {
         Instant now = Instant.now();
         return new JoinRecord(
-                UUID.randomUUID(), 1, "join", now, now.plusSeconds(60),
+                UUID.randomUUID(), "join", now, now.plusSeconds(60),
                 Origin.player(),
                 Source.player(UUID.randomUUID(), "tester"),
                 new BlockLocation(UUID.randomUUID(), "world", 0, 64, 0),

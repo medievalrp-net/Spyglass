@@ -10,9 +10,11 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 import net.medievalrp.omniscience2.plugin.listener.RecordingListener;
 import net.medievalrp.omniscience2.plugin.listener.RecordingSupport;
 import net.medievalrp.omniscience2.plugin.pipeline.Recorder;
+import net.medievalrp.omniscience2.plugin.util.BlockDependents;
 import net.medievalrp.omniscience2.plugin.util.BlockLocations;
 import net.medievalrp.omniscience2.plugin.util.BlockSnapshots;
 import net.medievalrp.omniscience2.plugin.util.PlayerSourceMetadata;
+import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.BlockBurnEvent;
@@ -72,5 +74,17 @@ public final class BlockBurnListener implements RecordingListener {
 
         RecordContext ctx = support.context(origin, source, location);
         recorder.record(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
+
+        // Cascade: attachments on the burning block fall via physics
+        // without firing their own BurnEvent (non-flammable wall torches,
+        // pressure plates atop a burning plank, etc.). v1 walked these
+        // via saveDependantBreaks from onBlockBurn; v2 was missing it.
+        for (Block dependent : BlockDependents.collectDependents(event.getBlock())) {
+            BlockSnapshot depOriginal = BlockSnapshots.capture(dependent.getState());
+            BlockLocation depLocation = BlockLocations.fromLocation(dependent.getLocation());
+            RecordContext depCtx = support.context(origin, source, depLocation);
+            recorder.record(BlockBreakRecord.of(
+                    depCtx, "break", depOriginal.material().name(), depOriginal, BlockSnapshots.air()));
+        }
     }
 }

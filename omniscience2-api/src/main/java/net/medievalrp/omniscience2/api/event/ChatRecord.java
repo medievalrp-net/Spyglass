@@ -9,7 +9,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record ChatRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -26,7 +25,7 @@ public record ChatRecord(
 
     public static ChatRecord of(RecordContext ctx, String target, String message, List<UUID> recipients) {
         return new ChatRecord(
-                ctx.id(), ctx.schemaVersion(), "say", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "say", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, message, recipients);
     }

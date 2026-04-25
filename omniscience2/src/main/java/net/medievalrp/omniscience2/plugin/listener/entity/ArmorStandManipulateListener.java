@@ -55,7 +55,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
             // Swap: report the withdraw half only for brevity (armor stand loses armorStandItem,
             // player's item swaps in). Deposit side would double-count a single click.
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "entity-withdraw",
+                    support.newId(), "entity-withdraw",
                     occurred, support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(event.getPlayer()),
                     location, armorStandItem.getType().name(),
@@ -65,7 +65,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
         }
         if (standHas) {
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "entity-withdraw",
+                    support.newId(), "entity-withdraw",
                     occurred, support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(event.getPlayer()),
                     location, armorStandItem.getType().name(),
@@ -74,7 +74,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
             return;
         }
         recorder.record(new ContainerDepositRecord(
-                support.newId(), 1, "entity-deposit",
+                support.newId(), "entity-deposit",
                 occurred, support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(event.getPlayer()),
                 location, playerItem.getType().name(),

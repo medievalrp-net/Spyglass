@@ -1,9 +1,9 @@
 package net.medievalrp.omniscience2.plugin.command;
 
 import java.util.List;
-import net.medievalrp.omniscience2.plugin.command.service.EventsService;
+import net.medievalrp.omniscience2.api.Omniscience2Api;
+import net.medievalrp.omniscience2.plugin.command.render.Feedback;
 import net.medievalrp.omniscience2.plugin.command.service.HelpService;
-import net.medievalrp.omniscience2.plugin.command.service.PageService;
 import net.medievalrp.omniscience2.plugin.command.service.RollbackMode;
 import net.medievalrp.omniscience2.plugin.command.service.RollbackService;
 import net.medievalrp.omniscience2.plugin.command.service.SearchService;
@@ -25,33 +25,33 @@ public final class OmniCommands {
     private static final List<String> ROOT_ALIASES = List.of("omni2", "omniv2", "o2", "omniscience2");
 
     private final JavaPlugin plugin;
+    private final Omniscience2Api api;
     private final HelpService help;
-    private final EventsService events;
     private final SearchService search;
     private final RollbackService rollback;
     private final UndoService undo;
-    private final PageService page;
+    private final PageCache pageCache;
     private final ToolService tool;
     private final TeleportService teleport;
     private final OmniSuggestions suggestions;
 
     public OmniCommands(JavaPlugin plugin,
+                        Omniscience2Api api,
                         HelpService help,
-                        EventsService events,
                         SearchService search,
                         RollbackService rollback,
                         UndoService undo,
-                        PageService page,
+                        PageCache pageCache,
                         ToolService tool,
                         TeleportService teleport,
                         OmniSuggestions suggestions) {
         this.plugin = plugin;
+        this.api = api;
         this.help = help;
-        this.events = events;
         this.search = search;
         this.rollback = rollback;
         this.undo = undo;
-        this.page = page;
+        this.pageCache = pageCache;
         this.tool = tool;
         this.teleport = teleport;
         this.suggestions = suggestions;
@@ -71,7 +71,7 @@ public final class OmniCommands {
 
             manager.command(manager.commandBuilder(root).literal("events")
                     .permission("omniscience2.use")
-                    .handler(ctx -> events.send(ctx.sender())));
+                    .handler(ctx -> sendEnabledEvents(ctx.sender())));
 
             manager.command(manager.commandBuilder(root).literal("search")
                     .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
@@ -95,7 +95,7 @@ public final class OmniCommands {
             manager.command(manager.commandBuilder(root).literal("page")
                     .required("number", IntegerParser.integerParser(1))
                     .permission("omniscience2.use")
-                    .handler(ctx -> page.show(ctx.sender(), ctx.get("number"))));
+                    .handler(ctx -> pageCache.show(ctx.sender(), ctx.get("number"))));
 
             manager.command(manager.commandBuilder(root).literal("tool")
                     .permission("omniscience2.tool")
@@ -113,5 +113,13 @@ public final class OmniCommands {
                             ctx.get("world"), ctx.get("x"), ctx.get("y"), ctx.get("z"))));
         }
         return manager;
+    }
+
+    private void sendEnabledEvents(CommandSender sender) {
+        String joined = api.enabledEvents().stream().sorted()
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("(none)");
+        sender.sendMessage(Feedback.success("Enabled Events: "));
+        sender.sendMessage(Feedback.bonus(joined));
     }
 }

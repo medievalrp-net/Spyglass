@@ -6,7 +6,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record EntityMountRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -21,7 +20,7 @@ public record EntityMountRecord(
     public static EntityMountRecord of(RecordContext ctx, String event, String target,
                                        String mountType, UUID mountId, boolean dismount) {
         return new EntityMountRecord(
-                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, mountType, mountId, dismount);
     }

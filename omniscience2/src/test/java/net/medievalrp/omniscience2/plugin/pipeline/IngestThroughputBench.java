@@ -476,7 +476,7 @@ class IngestThroughputBench {
                 Collections.emptyList(), Collections.emptyList(),
                 Collections.emptyList(), Collections.emptyList(), null);
         return new BlockBreakRecord(
-                id, 1, "break", now, now.plusSeconds(60 * 60 * 24 * 30),
+                id, "break", now, now.plusSeconds(60 * 60 * 24 * 30),
                 Origin.player(),
                 Source.player(playerId, "player-" + (seed & 0xFF)),
                 new BlockLocation(worldId, "world",

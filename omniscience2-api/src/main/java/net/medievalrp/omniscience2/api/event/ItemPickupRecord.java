@@ -6,7 +6,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record ItemPickupRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -19,7 +18,7 @@ public record ItemPickupRecord(
 
     public static ItemPickupRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
         return new ItemPickupRecord(
-                ctx.id(), ctx.schemaVersion(), "pickup", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "pickup", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
     }
 }

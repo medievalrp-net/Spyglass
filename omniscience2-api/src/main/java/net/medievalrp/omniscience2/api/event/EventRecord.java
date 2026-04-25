@@ -25,8 +25,6 @@ public sealed interface EventRecord permits
 
     UUID id();
 
-    int schemaVersion();
-
     String event();
 
     Instant occurred();

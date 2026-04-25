@@ -72,7 +72,7 @@ public final class VaultListener implements RecordingListener {
             BlockSnapshot pre = BlockSnapshots.of(Material.VAULT, blockData);
             BlockSnapshot post = BlockSnapshots.of(Material.VAULT, nowData);
             recorder.record(new BlockBreakRecord(
-                    support.newId(), 1, "vault", occurred,
+                    support.newId(), "vault", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(),
                     support.playerSource(ctx.player()),

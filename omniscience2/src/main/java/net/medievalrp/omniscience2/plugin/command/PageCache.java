@@ -57,20 +57,26 @@ public final class PageCache implements Listener {
         store(sender, copy.size(), copy::get);
     }
 
+    /**
+     * Render the requested page to {@code sender}. Returns {@code true} if
+     * a cached result set was rendered; {@code false} if nothing was cached
+     * (or the entry had expired), in which case a warn message is sent
+     * instead. Callers that don't care about the distinction can ignore
+     * the return value.
+     */
     public boolean show(CommandSender sender, int page) {
         UUID id = idOf(sender);
         CachedPage cached = pages.get(id);
-        if (cached == null) {
-            return false;
-        }
-        if (System.currentTimeMillis() - cached.storedAt() > TTL_MILLIS) {
-            pages.remove(id);
+        if (cached == null || cached.count() <= 0
+                || System.currentTimeMillis() - cached.storedAt() > TTL_MILLIS) {
+            if (cached != null) {
+                pages.remove(id);
+            }
+            sender.sendMessage(net.medievalrp.omniscience2.plugin.command.render.Feedback.warn(
+                    "No active search results."));
             return false;
         }
         int count = cached.count();
-        if (count <= 0) {
-            return false;
-        }
         int total = (int) Math.ceil(count / (double) PAGE_SIZE);
         int pageClamped = Math.max(1, Math.min(page, total));
         int start = (pageClamped - 1) * PAGE_SIZE;

@@ -55,8 +55,17 @@ public final class RecordingSupport {
      * factory along with the type-specific fields.
      */
     public RecordContext context(Origin origin, Source source, BlockLocation location) {
-        Instant now = Instant.now();
-        return RecordContext.fresh(now, retention.after(now), origin, source, location);
+        return context(Instant.now(), origin, source, location);
+    }
+
+    /**
+     * Same as {@link #context(Origin, Source, BlockLocation)} but with an
+     * explicit {@code occurred} timestamp — so a listener iterating blocks
+     * from one event can share a single wall-clock across every record it
+     * emits, even though each record gets its own UUID.
+     */
+    public RecordContext context(Instant occurred, Origin origin, Source source, BlockLocation location) {
+        return RecordContext.fresh(occurred, retention.after(occurred), origin, source, location);
     }
 
     /** Shortcut: player-origin, player-source context for a located event. */

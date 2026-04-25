@@ -6,7 +6,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record ItemDropRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -19,7 +18,7 @@ public record ItemDropRecord(
 
     public static ItemDropRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
         return new ItemDropRecord(
-                ctx.id(), ctx.schemaVersion(), "drop", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "drop", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
     }
 }

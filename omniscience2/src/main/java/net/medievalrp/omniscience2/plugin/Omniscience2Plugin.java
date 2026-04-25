@@ -30,9 +30,7 @@ import net.medievalrp.omniscience2.plugin.command.param.TargetParam;
 import net.medievalrp.omniscience2.plugin.command.param.TimeParam;
 import net.medievalrp.omniscience2.plugin.command.param.WorldParam;
 import net.medievalrp.omniscience2.plugin.command.render.ResultRenderer;
-import net.medievalrp.omniscience2.plugin.command.service.EventsService;
 import net.medievalrp.omniscience2.plugin.command.service.HelpService;
-import net.medievalrp.omniscience2.plugin.command.service.PageService;
 import net.medievalrp.omniscience2.plugin.command.service.RollbackService;
 import net.medievalrp.omniscience2.plugin.command.service.SearchService;
 import net.medievalrp.omniscience2.plugin.command.service.ServiceSupport;
@@ -57,6 +55,7 @@ import net.medievalrp.omniscience2.plugin.listener.entity.ArmorStandManipulateLi
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDamageListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDeathListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityDismountListener;
+import net.medievalrp.omniscience2.plugin.listener.entity.EntityDoorBreakListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityMountListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.EntityNamingListener;
 import net.medievalrp.omniscience2.plugin.listener.entity.ItemFrameInteractListener;
@@ -176,6 +175,7 @@ public final class Omniscience2Plugin extends JavaPlugin {
                 new ArmorStandManipulateListener(recorder, support),
                 new ItemFrameInteractListener(recorder, support),
                 new EntityNamingListener(recorder, support),
+                new EntityDoorBreakListener(recorder, support),
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
                 new ShulkerTransactionListener(recorder, support),
@@ -229,11 +229,9 @@ public final class Omniscience2Plugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(pageCache, this);
 
         HelpService helpService = new HelpService();
-        EventsService eventsService = new EventsService(apiImpl);
         SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
         RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
-        PageService pageService = new PageService(pageCache);
         ToolStateStore toolStateStore = new ToolStateStore(recordStore.database(), getLogger());
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
@@ -243,12 +241,12 @@ public final class Omniscience2Plugin extends JavaPlugin {
 
         OmniCommands commands = new OmniCommands(
                 this,
+                apiImpl,
                 helpService,
-                eventsService,
                 searchService,
                 rollbackService,
                 undoService,
-                pageService,
+                pageCache,
                 toolService,
                 teleportService,
                 suggestions);

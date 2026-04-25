@@ -119,13 +119,13 @@ public final class WorldEditSubscriber {
 
             if (!originalIsAir) {
                 recorder.record(new BlockBreakRecord(
-                        support.newId(), 1, "break", occurred, support.expiresAt(occurred),
+                        support.newId(), "break", occurred, support.expiresAt(occurred),
                         origin, source, location,
                         original.material().name(), original, after));
             }
             if (!newIsAir) {
                 recorder.record(new BlockPlaceRecord(
-                        support.newId(), 1, "place", occurred, support.expiresAt(occurred),
+                        support.newId(), "place", occurred, support.expiresAt(occurred),
                         origin, source, location,
                         after.material().name(), original, after));
             }

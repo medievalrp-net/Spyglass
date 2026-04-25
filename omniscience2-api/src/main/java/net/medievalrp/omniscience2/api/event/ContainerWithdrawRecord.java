@@ -8,7 +8,6 @@ import net.medievalrp.omniscience2.api.util.BlockLocation;
 
 public record ContainerWithdrawRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -26,7 +25,7 @@ public record ContainerWithdrawRecord(
                                              String containerType, int slot, int amount,
                                              StoredItem beforeItem, StoredItem afterItem) {
         return new ContainerWithdrawRecord(
-                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, containerType, slot, amount, beforeItem, afterItem);
     }

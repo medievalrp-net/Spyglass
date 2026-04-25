@@ -57,7 +57,7 @@ public final class SculkListener implements RecordingListener {
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
         RecordContext ctx = support.playerContext(player, location);
         recorder.record(new BlockUseRecord(
-                ctx.id(), ctx.schemaVersion(), "sculk",
+                ctx.id(), "sculk",
                 ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 block.getType().name()));

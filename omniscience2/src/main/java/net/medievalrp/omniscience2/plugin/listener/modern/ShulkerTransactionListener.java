@@ -92,13 +92,13 @@ public final class ShulkerTransactionListener implements RecordingListener {
 
         switch (direction) {
             case DEPOSIT -> recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "shulker-deposit", occurred,
+                    support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, cursor == null ? "UNKNOWN" : cursor.getType().name(),
                     containerType, slot, amount, before, null));
             case WITHDRAW -> recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "shulker-withdraw", occurred,
+                    support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, slotItem == null ? "UNKNOWN" : slotItem.getType().name(),
@@ -138,7 +138,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
             StoredItem storedBefore = existingAmount > 0 ? ItemSerialization.storedItem(rawSlot, existing) : null;
             StoredItem storedAfter = ItemSerialization.storedItem(rawSlot, deposited);
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "shulker-deposit", occurred,
+                    support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, deposited.getType().name(), containerType,
@@ -166,7 +166,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
 
         if (clickedIsTop) {
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "shulker-withdraw", occurred,
+                    support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, moved.getType().name(), containerType,
@@ -177,7 +177,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
             return;
         }
         recorder.record(new ContainerDepositRecord(
-                support.newId(), 1, "shulker-deposit", occurred,
+                support.newId(), "shulker-deposit", occurred,
                 support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(player),
                 location, moved.getType().name(), containerType,
@@ -200,7 +200,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
         if (slotHadItem) {
             StoredItem stored = ItemSerialization.storedItem(slot, slotItem);
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "shulker-withdraw", occurred,
+                    support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, slotItem.getType().name(), containerType, slot,
@@ -209,7 +209,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
         if (hotbarHadItem) {
             StoredItem stored = ItemSerialization.storedItem(slot, hotbarItem);
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "shulker-deposit", occurred,
+                    support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, hotbarItem.getType().name(), containerType, slot,
@@ -227,7 +227,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
         }
         if (hadSlotItem) {
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "shulker-withdraw", occurred,
+                    support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
@@ -236,7 +236,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
         }
         if (hadCursorItem) {
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "shulker-deposit", occurred,
+                    support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, cursor.getType().name(), containerType, slot, cursor.getAmount(),

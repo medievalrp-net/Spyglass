@@ -50,7 +50,6 @@ public final class BlockMultiPlaceListener implements RecordingListener {
         BlockLocation location = BlockLocations.fromLocation(replaced.getLocation());
         return new BlockPlaceRecord(
                 support.newId(),
-                1,
                 "place",
                 occurred,
                 support.expiresAt(occurred),

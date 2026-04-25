@@ -1,7 +1,10 @@
 package net.medievalrp.omniscience2.plugin.util;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import net.medievalrp.omniscience2.api.util.BlockLocation;
 import org.bukkit.Material;
 import org.bukkit.Tag;
 import org.bukkit.block.Block;
@@ -65,6 +68,30 @@ public final class BlockDependents {
             Block neighbor = broken.getRelative(face);
             if (isAttachedTo(neighbor, face)) {
                 out.add(neighbor);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Dependents of every host in {@code hosts} that aren't themselves in
+     * {@code hosts} — i.e. attached blocks the explosion / burn won't have
+     * already destroyed directly. The first occurrence of each location is
+     * kept; later duplicates from sibling hosts are dropped so a torch
+     * attached to two destroyed walls only emits one record.
+     */
+    public static List<Block> collectDependentsBeyond(List<Block> hosts) {
+        Set<BlockLocation> seen = new HashSet<>(hosts.size() * 2);
+        for (Block host : hosts) {
+            seen.add(BlockLocations.fromLocation(host.getLocation()));
+        }
+        List<Block> out = new ArrayList<>();
+        for (Block host : hosts) {
+            for (Block dep : collectDependents(host)) {
+                BlockLocation depLoc = BlockLocations.fromLocation(dep.getLocation());
+                if (seen.add(depLoc)) {
+                    out.add(dep);
+                }
             }
         }
         return out;
