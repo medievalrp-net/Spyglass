@@ -82,7 +82,7 @@ public final class CraftBookSignListener implements RecordingListener {
         // Canonical constructor because BlockUseRecord.of hard-codes
         // event="use"; we need the event name to be "useSign".
         recorder.record(new BlockUseRecord(
-                ctx.id(), ctx.schemaVersion(), "useSign",
+                ctx.id(), "useSign",
                 ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target));

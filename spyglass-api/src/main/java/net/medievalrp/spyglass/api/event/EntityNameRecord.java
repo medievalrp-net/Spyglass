@@ -15,7 +15,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public record EntityNameRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -35,7 +34,7 @@ public record EntityNameRecord(
                                       @Nullable String oldName,
                                       String newName) {
         return new EntityNameRecord(
-                ctx.id(), ctx.schemaVersion(), "named",
+                ctx.id(), "named",
                 ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, entityType, entityId, oldName, newName);
