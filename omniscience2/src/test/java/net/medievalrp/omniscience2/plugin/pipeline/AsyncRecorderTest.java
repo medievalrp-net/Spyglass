@@ -99,6 +99,39 @@ class AsyncRecorderTest {
     }
 
     @Test
+    void shutdownFlushExhaustionCountsDroppedRecordsAndLogsSevere() throws Exception {
+        // The single remaining loss path: Mongo is unreachable through the
+        // entire shutdown flush-timeout. Under normal availability this is
+        // unreachable, but we still need to prove the accounting works —
+        // dropped is incremented exactly by the unflushed batch size,
+        // drained stays zero, remaining stays zero (the queue was drained
+        // into the batch even though the batch never persisted), and the
+        // ShutdownReport invariants sum correctly.
+        AlwaysFailingStore store = new AlwaysFailingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        for (int index = 0; index < 7; index++) {
+            recorder.record(sampleRecord());
+        }
+        // Tight deadline — exhaust the retry budget quickly. Each backoff
+        // is min(2000ms, 100 << min(attempt-1, 4)) so a 1s budget gives
+        // roughly one or two retry attempts before giving up.
+        AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("1s"));
+
+        assertThat(report.dropped())
+                .as("dropped must equal the records the flush couldn't persist")
+                .isEqualTo(7L);
+        assertThat(report.drained())
+                .as("nothing reached the store; drained stays zero")
+                .isZero();
+        assertThat(report.remaining())
+                .as("the flush drained the queue into the failing batch; remaining is zero")
+                .isZero();
+        assertThat(store.attempts())
+                .as("the flush must have attempted at least one save before giving up")
+                .isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
     void drainRecoversAfterTransientStoreFailures() throws Exception {
         // Regression for the silent-death bug: a Mongo hiccup used to kill the
         // virtual drain thread permanently. Verify the drain now retries the
@@ -174,6 +207,34 @@ class AsyncRecorderTest {
                 throw new RuntimeException("simulated store failure");
             }
             persisted.addAll(records);
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * Store that always throws. Models a Mongo outage that lasts for the
+     * entire shutdown flush window — the one path where AsyncRecorder
+     * gives up and increments {@code dropped}.
+     */
+    private static final class AlwaysFailingStore implements RecordStore {
+        private final AtomicInteger attempts = new AtomicInteger();
+
+        int attempts() {
+            return attempts.get();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            attempts.incrementAndGet();
+            throw new RuntimeException("simulated mongo outage");
         }
 
         @Override
