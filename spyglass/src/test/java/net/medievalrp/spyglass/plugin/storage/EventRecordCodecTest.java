@@ -78,7 +78,7 @@ class EventRecordCodecTest {
                 List.of(), List.of(), List.of(), List.of(), null);
         return new BlockBreakRecord(
                 UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-                1, "break", WHEN, WHEN.plusSeconds(3600),
+                "break", WHEN, WHEN.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 new BlockLocation(WORLD, "world", 10, 64, 20),
                 "STONE", stone, air);
@@ -295,7 +295,7 @@ class EventRecordCodecTest {
 
         for (String alias : List.of("break", "decay", "brush", "vault")) {
             BlockBreakRecord original = new BlockBreakRecord(
-                    UUID.randomUUID(), 1, alias, WHEN, WHEN.plusSeconds(3600),
+                    UUID.randomUUID(), alias, WHEN, WHEN.plusSeconds(3600),
                     Origin.player(), Source.player(ALICE, "Alice"),
                     loc, "STONE", stone, air);
 
@@ -313,7 +313,7 @@ class EventRecordCodecTest {
         // for each. Catches any accidental state leak between decodes
         // (cached last-type, etc).
         ChatRecord chat = new ChatRecord(
-                UUID.randomUUID(), 1, "say", WHEN, WHEN.plusSeconds(3600),
+                UUID.randomUUID(), "say", WHEN, WHEN.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 new BlockLocation(WORLD, "world", 5, 64, 5),
                 "Alice", "hello world", List.of());

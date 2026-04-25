@@ -10,7 +10,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 
 public record BlockPlaceRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -24,7 +23,7 @@ public record BlockPlaceRecord(
     public static BlockPlaceRecord of(RecordContext ctx, String event, String target,
                                       BlockSnapshot originalBlock, BlockSnapshot newBlock) {
         return new BlockPlaceRecord(
-                ctx.id(), ctx.schemaVersion(), event, ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, originalBlock, newBlock);
     }

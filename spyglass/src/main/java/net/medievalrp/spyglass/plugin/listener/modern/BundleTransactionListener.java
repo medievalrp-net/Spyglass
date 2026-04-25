@@ -129,13 +129,13 @@ public final class BundleTransactionListener implements RecordingListener {
             StoredItem stored = ItemSerialization.storedItem(0, new ItemStack(material, Math.abs(d)));
             if (d > 0) {
                 recorder.record(new ContainerDepositRecord(
-                        support.newId(), 1, "bundle-insert", occurred,
+                        support.newId(), "bundle-insert", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
                         location, material.name(), bundleType, slot, d, null, stored));
             } else {
                 recorder.record(new ContainerWithdrawRecord(
-                        support.newId(), 1, "bundle-extract", occurred,
+                        support.newId(), "bundle-extract", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
                         location, material.name(), bundleType, slot, -d, stored, null));

@@ -71,7 +71,6 @@ public final class CreativeCloneListener implements RecordingListener {
         // the factory's hard-coded "pickup" event name.
         recorder.record(new ItemPickupRecord(
                 ctx.id(),
-                ctx.schemaVersion(),
                 "clone",
                 ctx.occurred(),
                 ctx.expiresAt(),

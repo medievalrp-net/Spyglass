@@ -15,7 +15,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public record EntityDeathRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -34,7 +33,7 @@ public record EntityDeathRecord(
                                        String killerType, String damageCause,
                                        @Nullable String entityNbt) {
         return new EntityDeathRecord(
-                ctx.id(), ctx.schemaVersion(), "death", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "death", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, entityType, entityId, killerType, damageCause, entityNbt);
     }
