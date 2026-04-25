@@ -103,7 +103,7 @@ public final class ContainerTransactionListener implements RecordingListener {
             case DEPOSIT -> {
                 String target = cursor == null ? "UNKNOWN" : cursor.getType().name();
                 recorder.record(new ContainerDepositRecord(
-                        support.newId(), 1, "deposit", occurred,
+                        support.newId(), "deposit", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
                         location, target, containerType, slot, amount, before, null));
@@ -111,7 +111,7 @@ public final class ContainerTransactionListener implements RecordingListener {
             case WITHDRAW -> {
                 String target = slotItem == null ? "UNKNOWN" : slotItem.getType().name();
                 recorder.record(new ContainerWithdrawRecord(
-                        support.newId(), 1, "withdraw", occurred,
+                        support.newId(), "withdraw", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
                         location, target, containerType, slot, amount, before, null));
@@ -145,7 +145,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (clickedIsTop) {
             // Shift-click from container to player inventory -> withdraw.
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "withdraw", occurred,
+                    support.newId(), "withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, moved.getType().name(), containerType, event.getSlot(), amount, before, null));
@@ -156,7 +156,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
         // Shift-click from player inventory to container -> deposit.
         recorder.record(new ContainerDepositRecord(
-                support.newId(), 1, "deposit", occurred,
+                support.newId(), "deposit", occurred,
                 support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(player),
                 location, moved.getType().name(), containerType, -1, amount, null, before));
@@ -179,7 +179,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (slotHadItem) {
             StoredItem stored = ItemSerialization.storedItem(slot, slotItem);
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "withdraw", occurred,
+                    support.newId(), "withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, slotItem.getType().name(), containerType, slot,
@@ -188,7 +188,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (hotbarHadItem) {
             StoredItem stored = ItemSerialization.storedItem(slot, hotbarItem);
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "deposit", occurred,
+                    support.newId(), "deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, hotbarItem.getType().name(), containerType, slot,
@@ -207,7 +207,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
         if (hadSlotItem) {
             recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), 1, "withdraw", occurred,
+                    support.newId(), "withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
@@ -216,7 +216,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
         if (hadCursorItem) {
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "deposit", occurred,
+                    support.newId(), "deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, cursor.getType().name(), containerType, slot, cursor.getAmount(),

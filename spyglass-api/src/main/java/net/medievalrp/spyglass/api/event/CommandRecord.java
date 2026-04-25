@@ -8,7 +8,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 
 public record CommandRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -20,7 +19,7 @@ public record CommandRecord(
 
     public static CommandRecord of(RecordContext ctx, String target, String commandLine) {
         return new CommandRecord(
-                ctx.id(), ctx.schemaVersion(), "command", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "command", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(),
                 target, commandLine);
     }

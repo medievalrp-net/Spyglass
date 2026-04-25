@@ -1,9 +1,9 @@
 package net.medievalrp.spyglass.plugin.command;
 
 import java.util.List;
-import net.medievalrp.spyglass.plugin.command.service.EventsService;
+import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import net.medievalrp.spyglass.plugin.command.service.HelpService;
-import net.medievalrp.spyglass.plugin.command.service.PageService;
 import net.medievalrp.spyglass.plugin.command.service.RollbackMode;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
@@ -25,33 +25,33 @@ public final class SpyglassCommands {
     private static final List<String> ROOT_ALIASES = List.of("sg", "sg", "o2", "spyglass");
 
     private final JavaPlugin plugin;
+    private final SpyglassApi api;
     private final HelpService help;
-    private final EventsService events;
     private final SearchService search;
     private final RollbackService rollback;
     private final UndoService undo;
-    private final PageService page;
+    private final PageCache pageCache;
     private final ToolService tool;
     private final TeleportService teleport;
     private final SpyglassSuggestions suggestions;
 
     public SpyglassCommands(JavaPlugin plugin,
+                        SpyglassApi api,
                         HelpService help,
-                        EventsService events,
                         SearchService search,
                         RollbackService rollback,
                         UndoService undo,
-                        PageService page,
+                        PageCache pageCache,
                         ToolService tool,
                         TeleportService teleport,
                         SpyglassSuggestions suggestions) {
         this.plugin = plugin;
+        this.api = api;
         this.help = help;
-        this.events = events;
         this.search = search;
         this.rollback = rollback;
         this.undo = undo;
-        this.page = page;
+        this.pageCache = pageCache;
         this.tool = tool;
         this.teleport = teleport;
         this.suggestions = suggestions;
@@ -71,7 +71,7 @@ public final class SpyglassCommands {
 
             manager.command(manager.commandBuilder(root).literal("events")
                     .permission("spyglass.use")
-                    .handler(ctx -> events.send(ctx.sender())));
+                    .handler(ctx -> sendEnabledEvents(ctx.sender())));
 
             manager.command(manager.commandBuilder(root).literal("search")
                     .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
@@ -95,7 +95,7 @@ public final class SpyglassCommands {
             manager.command(manager.commandBuilder(root).literal("page")
                     .required("number", IntegerParser.integerParser(1))
                     .permission("spyglass.use")
-                    .handler(ctx -> page.show(ctx.sender(), ctx.get("number"))));
+                    .handler(ctx -> pageCache.show(ctx.sender(), ctx.get("number"))));
 
             manager.command(manager.commandBuilder(root).literal("tool")
                     .permission("spyglass.tool")
@@ -113,5 +113,13 @@ public final class SpyglassCommands {
                             ctx.get("world"), ctx.get("x"), ctx.get("y"), ctx.get("z"))));
         }
         return manager;
+    }
+
+    private void sendEnabledEvents(CommandSender sender) {
+        String joined = api.enabledEvents().stream().sorted()
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("(none)");
+        sender.sendMessage(Feedback.success("Enabled Events: "));
+        sender.sendMessage(Feedback.bonus(joined));
     }
 }

@@ -41,7 +41,6 @@ class SearchServiceTest {
                 org.bukkit.Material.STONE, "minecraft:stone", List.of(), List.of(), List.of(), List.of(), null);
         return new BlockBreakRecord(
                 UUID.randomUUID(),
-                1,
                 "break",
                 now,
                 now.plusSeconds(60),
