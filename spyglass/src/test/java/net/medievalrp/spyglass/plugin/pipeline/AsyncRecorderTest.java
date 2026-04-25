@@ -27,7 +27,6 @@ class AsyncRecorderTest {
         Instant now = Instant.now();
         return new JoinRecord(
                 UUID.randomUUID(),
-                1,
                 "join",
                 now,
                 now.plusSeconds(60),

@@ -12,7 +12,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
  */
 public record BlockUseRecord(
         UUID id,
-        int schemaVersion,
         String event,
         Instant occurred,
         Instant expiresAt,
@@ -23,7 +22,7 @@ public record BlockUseRecord(
 
     public static BlockUseRecord of(RecordContext ctx, String target) {
         return new BlockUseRecord(
-                ctx.id(), ctx.schemaVersion(), "use", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), "use", ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), target);
     }
 }

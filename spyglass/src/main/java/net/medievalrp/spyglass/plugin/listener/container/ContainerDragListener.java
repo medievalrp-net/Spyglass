@@ -74,7 +74,7 @@ public final class ContainerDragListener implements RecordingListener {
             StoredItem storedBefore = existingAmount > 0 ? ItemSerialization.storedItem(rawSlot, existing) : null;
             StoredItem storedAfter = ItemSerialization.storedItem(rawSlot, deposited);
             recorder.record(new ContainerDepositRecord(
-                    support.newId(), 1, "deposit", occurred,
+                    support.newId(), "deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, deposited.getType().name(), containerType,
