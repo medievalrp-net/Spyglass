@@ -67,6 +67,14 @@ public final class EventCatalog {
         m.put("sculk", BlockUseRecord.class);
         m.put("crafter", ContainerWithdrawRecord.class);
         m.put("vault", BlockBreakRecord.class);
+        // Synthesized rollback-source records — emitted by RollbackEngine
+        // every time it successfully restores a block, so the wand on a
+        // rolled-back block reads "ROLLBACK placed STONE" / "ROLLBACK
+        // broke STONE". Lightweight: just context + target material, no
+        // BlockSnapshot blobs (those would dump megabytes into the
+        // recorder queue on big rollbacks).
+        m.put("rolled-place", BlockUseRecord.class);
+        m.put("rolled-break", BlockUseRecord.class);
         TYPES = Map.copyOf(m);
     }
 

@@ -556,7 +556,12 @@ class IngestThroughputBench {
             // The MongoRecordStore builds its own MongoClient internally;
             // the URI carries uuidRepresentation + all connection state.
             Omniscience2Config.Database cfg = new Omniscience2Config.Database(
-                    mongoUri, db, "EventRecords");
+                    Omniscience2Config.Backend.MONGO,
+                    mongoUri,
+                    db,
+                    "EventRecords",
+                    new Omniscience2Config.ClickHouse(
+                            "localhost", 8123, "x", "x", "default", "", false));
             MongoRecordStore realStore = new MongoRecordStore(cfg, new IndexManager());
 
             ConcurrentHashMap<UUID, Long> submitMap = new ConcurrentHashMap<>();

@@ -15,15 +15,18 @@ public final class ItemLoreParam implements QueryParamHandler {
 
     @Override
     public List<String> aliases() {
-        return List.of("ilore", "itemlore");
+        // {@code d} is the v1 alias from {@code ItemDescParameter}; kept so
+        // pre-existing operator macros keep working after the v2 cutover.
+        return List.of("ilore", "itemlore", "d");
     }
 
     @Override
     public QueryPredicate parse(String alias, String value, ParamContext context) throws ParamParseException {
         if (value == null || value.isBlank()) {
-            throw new ParamParseException("ilore requires a value.");
+            throw new ParamParseException(alias + " requires a value.");
         }
-        return ItemFieldParams.anyItemField("lore", ItemFieldParams.substringPattern(value.trim()));
+        String safe = ItemFieldParams.requireSafeTerm(alias, value.trim());
+        return ItemFieldParams.anyItemField("lore", ItemFieldParams.substringPattern(safe));
     }
 
     @Override

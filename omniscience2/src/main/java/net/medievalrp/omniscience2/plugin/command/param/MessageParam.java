@@ -26,7 +26,11 @@ public final class MessageParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("m requires a value.");
         }
-        Pattern pattern = Pattern.compile(Pattern.quote(value.trim()), Pattern.CASE_INSENSITIVE);
+        // {@link Pattern#quote} already blocks regex-metachar injection;
+        // {@link ItemFieldParams#requireSafeTerm} adds the length cap and
+        // control-char reject we lost when we dropped v1's whitelist.
+        String safe = ItemFieldParams.requireSafeTerm(alias, value.trim());
+        Pattern pattern = Pattern.compile(Pattern.quote(safe), Pattern.CASE_INSENSITIVE);
         return new QueryPredicate.Or(List.of(
                 new QueryPredicate.Eq("message", pattern),
                 new QueryPredicate.Eq("commandLine", pattern)));

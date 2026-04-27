@@ -54,8 +54,15 @@ class MongoRecordStoreIT {
         container.start();
         String uri = container.getReplicaSetUrl();
         rawClient = MongoClients.create(uri);
-        Omniscience2Config.Database config = new Omniscience2Config.Database(uri, "IT", "EventRecords");
+        Omniscience2Config.Database config = new Omniscience2Config.Database(
+                Omniscience2Config.Backend.MONGO, uri, "IT", "EventRecords",
+                stubClickHouse());
         store = new MongoRecordStore(config, new IndexManager());
+    }
+
+    private static Omniscience2Config.ClickHouse stubClickHouse() {
+        return new Omniscience2Config.ClickHouse(
+                "localhost", 8123, "x", "x", "default", "", false);
     }
 
     @AfterAll

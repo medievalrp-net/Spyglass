@@ -23,8 +23,9 @@ public final class EnchantParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("ench requires a value.");
         }
+        String safe = ItemFieldParams.requireSafeTerm(alias, value.trim());
         // Allow `ench:sharpness:5` as an alternative spelling of `ench:sharpness=5`.
-        String normalised = value.trim().replace(':', '=').toLowerCase(java.util.Locale.ROOT);
+        String normalised = safe.replace(':', '=').toLowerCase(java.util.Locale.ROOT);
         return ItemFieldParams.anyItemField("enchants", ItemFieldParams.substringPattern(normalised));
     }
 

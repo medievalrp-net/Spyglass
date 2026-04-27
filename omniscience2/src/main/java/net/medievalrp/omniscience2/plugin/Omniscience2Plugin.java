@@ -7,6 +7,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.omniscience2.api.Omniscience2Api;
+import net.medievalrp.omniscience2.api.OmniscienceLimits;
+import net.medievalrp.omniscience2.api.event.RecordCommittedEvent;
 import net.medievalrp.omniscience2.api.util.Duration;
 import net.medievalrp.omniscience2.plugin.api.Omniscience2ApiImpl;
 import net.medievalrp.omniscience2.plugin.command.OmniCommands;
@@ -14,6 +16,7 @@ import net.medievalrp.omniscience2.plugin.command.OmniSuggestions;
 import net.medievalrp.omniscience2.plugin.command.PageCache;
 import net.medievalrp.omniscience2.plugin.command.param.BlockParam;
 import net.medievalrp.omniscience2.plugin.command.param.CauseParam;
+import net.medievalrp.omniscience2.plugin.command.param.CustomItemParam;
 import net.medievalrp.omniscience2.plugin.command.param.EnchantParam;
 import net.medievalrp.omniscience2.plugin.command.param.EntityParam;
 import net.medievalrp.omniscience2.plugin.command.param.EventParam;
@@ -86,10 +89,16 @@ import net.medievalrp.omniscience2.plugin.listener.player.JoinListener;
 import net.medievalrp.omniscience2.plugin.listener.player.QuitListener;
 import net.medievalrp.omniscience2.plugin.listener.player.TeleportListener;
 import net.medievalrp.omniscience2.plugin.pipeline.AsyncRecorder;
+import net.medievalrp.omniscience2.plugin.rollback.ClickHouseUndoStack;
+import net.medievalrp.omniscience2.plugin.rollback.MongoUndoStack;
 import net.medievalrp.omniscience2.plugin.rollback.RollbackEngine;
 import net.medievalrp.omniscience2.plugin.rollback.UndoStack;
+import net.medievalrp.omniscience2.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.omniscience2.plugin.storage.IndexManager;
 import net.medievalrp.omniscience2.plugin.storage.MongoRecordStore;
+import net.medievalrp.omniscience2.plugin.storage.RecordStore;
+import net.medievalrp.omniscience2.plugin.command.service.tool.ClickHouseToolStateStore;
+import net.medievalrp.omniscience2.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.omniscience2.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.omniscience2.plugin.command.service.tool.WandInteractListener;
 import net.medievalrp.omniscience2.plugin.worldedit.WorldEditLifecycleListener;
@@ -101,7 +110,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class Omniscience2Plugin extends JavaPlugin {
 
     private AsyncRecorder recorder;
-    private MongoRecordStore recordStore;
+    private RecordStore recordStore;
+    private UndoStack undoStack;
+    private ToolStateStore toolStateStore;
     private Executor queryExecutor;
     private Omniscience2Config config;
     private WorldEditSubscriber worldEditSubscriber;
@@ -118,16 +129,61 @@ public final class Omniscience2Plugin extends JavaPlugin {
         }
 
         try {
-            IndexManager indexManager = new IndexManager();
-            recordStore = new MongoRecordStore(config.database(), indexManager);
+            switch (config.database().backend()) {
+                case MONGO -> {
+                    MongoRecordStore mongoStore = new MongoRecordStore(
+                            config.database(), new IndexManager());
+                    recordStore = mongoStore;
+                    undoStack = new MongoUndoStack(
+                            mongoStore.database(), mongoStore.codecRegistry());
+                    toolStateStore = new MongoToolStateStore(
+                            mongoStore.database(), getLogger());
+                }
+                case CLICKHOUSE -> {
+                    ClickHouseRecordStore chStore =
+                            new ClickHouseRecordStore(config.database().clickhouse());
+                    recordStore = chStore;
+                    undoStack = new ClickHouseUndoStack(
+                            chStore.client(), config.database().clickhouse().database());
+                    toolStateStore = new ClickHouseToolStateStore(
+                            chStore.client(), config.database().clickhouse().database());
+                }
+            }
+            getLogger().info("Omniscience2: backend = " + config.database().backend());
         } catch (Exception ex) {
-            getLogger().severe("Failed to connect to MongoDB: " + ex.getMessage());
+            getLogger().severe("Failed to initialize record store ("
+                    + config.database().backend() + "): " + ex.getMessage());
             setEnabled(false);
             return;
         }
 
         queryExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        recorder = new AsyncRecorder(config.storage().queueCapacity(), recordStore, getLogger());
+
+        boolean walEnabled = config.storage().durability()
+                == Omniscience2Config.Durability.WAL_BATCHED;
+        net.medievalrp.omniscience2.plugin.pipeline.WalDurability wal =
+                new net.medievalrp.omniscience2.plugin.pipeline.WalDurability(
+                        getDataFolder().toPath(), walEnabled, getLogger());
+        if (walEnabled) {
+            getLogger().info("Omniscience2 durability mode: WAL-batched (fsync per drain batch).");
+        }
+
+        recorder = new AsyncRecorder(
+                config.storage().queueCapacity(), recordStore, wal, getLogger());
+        // Publish RecordCommittedEvent to Bukkit listeners on every
+        // intake. Done via a hook (rather than a direct Bukkit call
+        // inside AsyncRecorder) so the recorder stays unit-testable
+        // headless.
+        recorder.onCommitted(record ->
+                Bukkit.getPluginManager().callEvent(new RecordCommittedEvent(record)));
+
+        // Replay any WAL files left from a prior crash before the
+        // listeners come online, so recovered records land in the DB
+        // before new ones start flowing.
+        java.util.List<net.medievalrp.omniscience2.api.event.EventRecord> recovered = wal.recover();
+        for (net.medievalrp.omniscience2.api.event.EventRecord record : recovered) {
+            recorder.record(record);
+        }
 
         Set<String> enabledEvents = config.events().entrySet().stream()
                 .filter(entry -> entry.getValue().enabled())
@@ -199,7 +255,13 @@ public final class Omniscience2Plugin extends JavaPlugin {
             getLogger().info("Omniscience2: CraftBook detected, useSign logging enabled.");
         }
 
-        Omniscience2ApiImpl apiImpl = new Omniscience2ApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
+        OmniscienceLimits apiLimits = new OmniscienceLimits(
+                config.limits().maxRadius(),
+                config.defaults().radius(),
+                config.defaults().time(),
+                config.storage().retention());
+        Omniscience2ApiImpl apiImpl = new Omniscience2ApiImpl(
+                recorder, recordStore, queryExecutor, enabledEvents, apiLimits, getLogger());
         apiImpl.registerQueryParamHandler(new PlayerParam());
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
@@ -213,14 +275,15 @@ public final class Omniscience2Plugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new MessageParam());
         apiImpl.registerQueryParamHandler(new CauseParam());
         apiImpl.registerQueryParamHandler(new ItemMaterialParam());
+        apiImpl.registerQueryParamHandler(new CustomItemParam());
         apiImpl.registerQueryParamHandler(new TargetParam());
         apiImpl.registerQueryParamHandler(new IpParam());
         apiImpl.registerQueryParamHandler(new RecipientParam());
 
         Bukkit.getServicesManager().register(Omniscience2Api.class, apiImpl, this, ServicePriority.Normal);
 
-        RollbackEngine engine = new RollbackEngine();
-        UndoStack undoStack = new UndoStack(recordStore.database(), recordStore.codecRegistry());
+        RollbackEngine engine = new RollbackEngine(recorder, support);
+        engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
@@ -232,7 +295,6 @@ public final class Omniscience2Plugin extends JavaPlugin {
         SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
         RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
-        ToolStateStore toolStateStore = new ToolStateStore(recordStore.database(), getLogger());
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);

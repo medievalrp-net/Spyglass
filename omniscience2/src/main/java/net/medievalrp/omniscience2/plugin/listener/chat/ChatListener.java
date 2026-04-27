@@ -36,7 +36,8 @@ public final class ChatListener implements RecordingListener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onAsyncChat(AsyncChatEvent event) {
         Player sender = event.getPlayer();
-        String message = PlainTextComponentSerializer.plainText().serialize(event.message());
+        String message = RecordingSupport.safeText(
+                PlainTextComponentSerializer.plainText().serialize(event.message()));
         // Include the speaker in recipients so "who heard this" is always
         // answerable on hover, even for a chat sent to an empty server.
         List<UUID> recipients = event.viewers().stream()

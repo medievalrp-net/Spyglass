@@ -24,7 +24,7 @@ import org.jetbrains.annotations.ApiStatus;
  * on write and dispatches on it during read.
  */
 @ApiStatus.Internal
-final class RollbackEffectCodec implements Codec<RollbackEffect> {
+public final class RollbackEffectCodec implements Codec<RollbackEffect> {
 
     private static final String TYPE_FIELD = "_type";
     private static final BsonDocumentCodec BSON_DOC_CODEC = new BsonDocumentCodec();
@@ -90,6 +90,7 @@ final class RollbackEffectCodec implements Codec<RollbackEffect> {
             case "ContainerSlotWrite" -> RollbackEffect.ContainerSlotWrite.class;
             case "EntitySpawn" -> RollbackEffect.EntitySpawn.class;
             case "EntityRemove" -> RollbackEffect.EntityRemove.class;
+            case "Custom" -> RollbackEffect.Custom.class;
             default -> null;
         };
     }
