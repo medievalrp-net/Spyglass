@@ -52,7 +52,7 @@ class ClickHouseRecordStoreIT {
         SpyglassConfig.ClickHouse config = new SpyglassConfig.ClickHouse(
                 container.getHost(),
                 container.getMappedPort(8123),
-                "omni2_it",
+                "spyglass_it",
                 "event_records_it",
                 container.getUsername(),
                 container.getPassword(),
@@ -75,7 +75,7 @@ class ClickHouseRecordStoreIT {
         // CH MergeTree TTL fires opportunistically on background
         // merges. Wiping between tests removes the cross-test data
         // dependency.
-        store.client().execute("TRUNCATE TABLE `omni2_it`.`event_records_it`")
+        store.client().execute("TRUNCATE TABLE `spyglass_it`.`event_records_it`")
                 .get(30, java.util.concurrent.TimeUnit.SECONDS).close();
     }
 
@@ -266,7 +266,7 @@ class ClickHouseRecordStoreIT {
         // Force a merge so dedup is observable; in production this
         // happens lazily on background merges.
         store.client().execute(
-                "OPTIMIZE TABLE `omni2_it`.`event_records_it` FINAL DEDUPLICATE")
+                "OPTIMIZE TABLE `spyglass_it`.`event_records_it` FINAL DEDUPLICATE")
                 .get(60, java.util.concurrent.TimeUnit.SECONDS).close();
 
         QueryRequest byId = new QueryRequest(

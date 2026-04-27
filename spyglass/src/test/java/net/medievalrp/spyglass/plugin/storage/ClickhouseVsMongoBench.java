@@ -114,7 +114,7 @@ class ClickhouseVsMongoBench {
         SpyglassConfig.ClickHouse chConfig = new SpyglassConfig.ClickHouse(
                 clickHouseContainer.getHost(),
                 clickHouseContainer.getMappedPort(8123),
-                "omni2_bench",
+                "spyglass_bench",
                 "event_records_bench",
                 clickHouseContainer.getUsername(),
                 clickHouseContainer.getPassword(),
@@ -245,7 +245,7 @@ class ClickhouseVsMongoBench {
     }
 
     private BenchResult compareQuery(String label, QueryRequest request) {
-        // querySummary mirrors what `/omni2 search` actually runs in
+        // querySummary mirrors what `/spyglass search` actually runs in
         // production: the search renderer never reads the heavy
         // BlockSnapshot / StoredItem fields, so both backends drop
         // them at projection time. Comparing query() (which also
@@ -291,7 +291,7 @@ class ClickhouseVsMongoBench {
     }
 
     private void truncateClickHouse() throws Exception {
-        clickHouseStore.client().execute("TRUNCATE TABLE `omni2_bench`.`event_records_bench`")
+        clickHouseStore.client().execute("TRUNCATE TABLE `spyglass_bench`.`event_records_bench`")
                 .get(30, java.util.concurrent.TimeUnit.SECONDS).close();
     }
 

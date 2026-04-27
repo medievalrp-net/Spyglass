@@ -302,7 +302,7 @@ per `(event, target)` tuple plus a count). Read them via
 
 ## 5. Adding a custom search parameter
 
-Want users to type `/omni2 search faction=red` and have your plugin
+Want users to type `/spyglass search faction=red` and have your plugin
 translate that into a predicate? Implement `QueryParamHandler`:
 
 ```java
@@ -398,7 +398,7 @@ cannot be shadowed — the parser checks built-ins first.
 
 ## 6. Customising display
 
-Override how a specific event renders in `/omni2 search` output and
+Override how a specific event renders in `/spyglass search` output and
 inspection-wand hovers:
 
 ```java
@@ -513,7 +513,7 @@ public final class FactionTerritoryHandler implements RollbackEffectHandler {
                     new RollbackReason.Error("Faction service rejected restore"));
         }
 
-        // Build the inverse so /omni2 undo can re-apply this rollback.
+        // Build the inverse so /spyglass undo can re-apply this rollback.
         RollbackEffect.Custom inverse = new RollbackEffect.Custom(
                 "faction-territory",
                 effect.location(),
@@ -534,7 +534,7 @@ RollbackEffect.Custom effect = new RollbackEffect.Custom(
         location,
         change.encode());
 // (Persist `effect` alongside your event record via your own storage,
-//  or push into Spyglass's undo ledger via /omni2 rollback when
+//  or push into Spyglass's undo ledger via /spyglass rollback when
 //  the operator runs a rollback that includes faction-claim events.)
 ```
 
@@ -567,7 +567,7 @@ Align your own bounds with Spyglass's by reading
 `omni.limits()`:
 
 ```java
-v1Limits limits = omni.limits();
+SpyglassLimits limits = omni.limits();
 int maxRadius = limits.maxRadius();         // hard cap on radius params
 int defaultRadius = limits.defaultRadius(); // default when user omits one
 Duration window = limits.defaultTimeWindow(); // default time= window

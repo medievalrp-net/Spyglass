@@ -19,15 +19,15 @@ class HelpServiceTest {
 
         List<String> lines = ServiceTestSupport.plainTexts(captured);
         assertThat(lines).isNotEmpty();
-        assertThat(lines.get(0)).contains("v1");
+        assertThat(lines.get(0)).contains("Spyglass");
         String combined = String.join("\n", lines);
         assertThat(combined)
-                .contains("/omni2 search")
-                .contains("/omni2 rollback")
-                .contains("/omni2 restore")
-                .contains("/omni2 undo")
-                .contains("/omni2 page")
-                .contains("/omni2 tool")
-                .contains("/omni2 events");
+                .contains("/spyglass search")
+                .contains("/spyglass rollback")
+                .contains("/spyglass restore")
+                .contains("/spyglass undo")
+                .contains("/spyglass page")
+                .contains("/spyglass tool")
+                .contains("/spyglass events");
     }
 }

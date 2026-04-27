@@ -9,7 +9,7 @@ Automated regression for Spyglass, side-by-side with the original v1.
    - `v1.DataEntry` (v1's shape)
    - `Spyglass.EventRecords` (v2's shape)
 3. Runs a query matrix (defined in `cases.json`) through RCON:
-   - Each case has a `v2` command (`/omniv2 search ...`) and, where applicable, a `v1` command (`/omni search ...`).
+   - Each case has a `v2` command (`/omniv2 search ...`) and, where applicable, a `v1` command (`/spyglass search ...`).
    - Expected result counts per case.
 4. Asserts the observed counts match the expectations; if `v1` is present, also asserts v2's count meets-or-exceeds v1's count (v2 must not regress relative to v1).
 5. Writes a report at `plugin/build/reports/regression/report.json`.

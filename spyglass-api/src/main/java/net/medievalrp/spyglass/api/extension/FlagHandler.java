@@ -73,7 +73,7 @@ public interface FlagHandler {
 
     /**
      * Whether this flag should suppress the implicit
-     * {@code radius=N} that {@code /omni2 search} injects when no
+     * {@code radius=N} that {@code /spyglass search} injects when no
      * spatial constraint is present. Override to {@code true} for
      * flags that already constrain spatially or globally.
      */

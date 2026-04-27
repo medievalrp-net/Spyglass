@@ -14,7 +14,7 @@ import org.incendo.cloud.suggestion.Suggestion;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
-public final class OmniSuggestions {
+public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(
             "-ng", "-g", "-nc", "-ex", "-we",
@@ -23,7 +23,7 @@ public final class OmniSuggestions {
 
     private final SpyglassApi api;
 
-    public OmniSuggestions(SpyglassApi api) {
+    public SpyglassSuggestions(SpyglassApi api) {
         this.api = api;
     }
 

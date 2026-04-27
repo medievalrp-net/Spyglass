@@ -41,7 +41,7 @@ import org.jetbrains.annotations.ApiStatus;
  *
  * <p>Earlier versions ran one Mongo query per record type when no
  * event filter was present — up to 13 round trips for a plain
- * {@code /omni2 search t:1h -g}. The event-dispatch codec replaces that
+ * {@code /spyglass search t:1h -g}. The event-dispatch codec replaces that
  * with a single query the driver sorts and limits server-side.
  */
 @ApiStatus.Internal

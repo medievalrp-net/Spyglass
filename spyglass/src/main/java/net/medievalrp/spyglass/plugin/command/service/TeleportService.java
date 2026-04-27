@@ -10,7 +10,7 @@ import org.bukkit.entity.Player;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * Backs the {@code /omni2 tele <world> <x> <y> <z>} subcommand that search
+ * Backs the {@code /spyglass tele <world> <x> <y> <z>} subcommand that search
  * results wire to via click events. World is resolved by UUID first and
  * then by name, so the renderer can emit either; in practice it emits
  * the UUID because that's stable across server restarts where worlds

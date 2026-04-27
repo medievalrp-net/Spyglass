@@ -99,7 +99,7 @@ public final class AsyncRecorder implements Recorder {
         this.wal = wal;
         this.logger = logger;
         Thread.ofVirtual()
-                .name("omni2-drain")
+                .name("spyglass-drain")
                 .start(this::drainLoop);
     }
 

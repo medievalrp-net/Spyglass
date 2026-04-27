@@ -13,7 +13,7 @@ import org.jetbrains.annotations.ApiStatus;
  *
  * <p>The plugin invokes {@link #push} every time a rollback / restore
  * operation lands successfully, recording the inverse effects so the
- * player can issue {@code /omni2 undo} and walk one step back. {@link
+ * player can issue {@code /spyglass undo} and walk one step back. {@link
  * #pop} returns the most recent operation for that player and removes
  * it from the ledger. Implementations choose their own retention
  * window (24 h for the default Mongo and ClickHouse backends).

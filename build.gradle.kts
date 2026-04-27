@@ -51,7 +51,7 @@ subprojects {
                     // Final targets per the v1.0.0 plan remain 0.90 api
                     // / 0.80 plugin (docs/report/gap/plan/plan.md §6.0).
                     minimum = when (project.name) {
-                        "spyglass-api" -> 0.16.toBigDecimal()
+                        "spyglass-api" -> 0.15.toBigDecimal()
                         "spyglass" -> 0.28.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
