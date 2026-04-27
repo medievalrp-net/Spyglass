@@ -1,51 +1,40 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.IndexOptions;
-import com.mongodb.client.model.Indexes;
-import com.mongodb.client.model.Sorts;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
-import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.codecs.pojo.annotations.BsonProperty;
-import org.bson.codecs.record.RecordCodecProvider;
 import org.jetbrains.annotations.ApiStatus;
 
+/**
+ * Per-player rollback ledger.
+ *
+ * <p>The plugin invokes {@link #push} every time a rollback / restore
+ * operation lands successfully, recording the inverse effects so the
+ * player can issue {@code /sg undo} and walk one step back. {@link
+ * #pop} returns the most recent operation for that player and removes
+ * it from the ledger. Implementations choose their own retention
+ * window (24 h for the default Mongo and ClickHouse backends).
+ *
+ * <p>Two implementations: {@link MongoUndoStack} for Mongo
+ * deployments and {@link ClickHouseUndoStack} for ClickHouse
+ * deployments. The plugin picks one at startup based on
+ * {@code database.backend}.
+ */
 @ApiStatus.Internal
-public final class UndoStack {
+public interface UndoStack {
 
-    private final MongoCollection<UndoOperation> collection;
+    void push(UUID playerId, String operationType, List<RollbackEffect> inverseEffects);
 
-    public UndoStack(MongoDatabase database, CodecRegistry codecRegistry) {
-        this.collection = database.withCodecRegistry(codecRegistry)
-                .getCollection("UndoHistory", UndoOperation.class);
-        this.collection.createIndex(Indexes.compoundIndex(
-                Indexes.ascending("playerId"),
-                Indexes.descending("createdAt")));
-        this.collection.createIndex(Indexes.ascending("createdAt"), new IndexOptions().expireAfter(24L, java.util.concurrent.TimeUnit.HOURS));
-    }
+    Optional<UndoOperation> pop(UUID playerId);
 
-    public void push(UUID playerId, String operationType, List<RollbackEffect> inverseEffects) {
-        collection.insertOne(new UndoOperation(UUID.randomUUID(), playerId, Instant.now(), operationType, List.copyOf(inverseEffects)));
-    }
-
-    public Optional<UndoOperation> pop(UUID playerId) {
-        UndoOperation latest = collection.find(Filters.eq("playerId", playerId))
-                .sort(Sorts.descending("createdAt"))
-                .first();
-        if (latest == null) {
-            return Optional.empty();
-        }
-        collection.deleteOne(Filters.eq("_id", latest.id()));
-        return Optional.of(latest);
-    }
-
-    public record UndoOperation(
+    /** {@code @BsonProperty} stays on the type-safe record because the
+     * Mongo backend's POJO codec uses it. The ClickHouse backend
+     * builds the record directly from columns and ignores the
+     * annotation. */
+    record UndoOperation(
             @BsonProperty("_id") UUID id,
             UUID playerId,
             Instant createdAt,

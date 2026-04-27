@@ -57,6 +57,19 @@ public final class SpyglassCommands {
         this.suggestions = suggestions;
     }
 
+    // v1-compat subcommand aliases. Operators have years of muscle memory
+    // around {@code /sg l} and {@code /sg rb}; v2 originally exposed
+    // only the long names. Each list is shipped to {@link #subcommand}
+    // which registers the same handler under every alias.
+    private static final List<String> SEARCH_ALIASES = List.of("search", "s", "sc", "lookup", "l");
+    private static final List<String> PAGE_ALIASES = List.of("page", "p", "pg");
+    private static final List<String> ROLLBACK_ALIASES = List.of("rollback", "rb", "roll");
+    private static final List<String> RESTORE_ALIASES = List.of("restore", "rs", "rst");
+    private static final List<String> UNDO_ALIASES = List.of("undo", "u");
+    private static final List<String> TOOL_ALIASES = List.of("tool", "t", "inspect");
+    private static final List<String> EVENTS_ALIASES = List.of("events", "e");
+    private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
+
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
                 plugin, ExecutionCoordinator.simpleCoordinator());
@@ -65,41 +78,57 @@ public final class SpyglassCommands {
                     .permission("spyglass.use")
                     .handler(ctx -> help.send(ctx.sender())));
 
-            manager.command(manager.commandBuilder(root).literal("help")
-                    .permission("spyglass.use")
-                    .handler(ctx -> help.send(ctx.sender())));
+            for (String name : HELP_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.use")
+                        .handler(ctx -> help.send(ctx.sender())));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("events")
-                    .permission("spyglass.use")
-                    .handler(ctx -> sendEnabledEvents(ctx.sender())));
+            for (String name : EVENTS_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.use")
+                        .handler(ctx -> sendEnabledEvents(ctx.sender())));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("search")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.search")
-                    .handler(ctx -> search.execute(ctx.sender(), ctx.get("params"))));
+            for (String name : SEARCH_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
+                        .permission("spyglass.search")
+                        .handler(ctx -> search.execute(ctx.sender(), ctx.get("params"))));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("rollback")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> rollback.execute(ctx.sender(), ctx.get("params"), RollbackMode.ROLLBACK)));
+            for (String name : ROLLBACK_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> rollback.execute(ctx.sender(), ctx.get("params"), RollbackMode.ROLLBACK)));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("restore")
-                    .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> rollback.execute(ctx.sender(), ctx.get("params"), RollbackMode.RESTORE)));
+            for (String name : RESTORE_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("params", suggestions.paramsParser(), suggestions.paramsProvider())
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> rollback.execute(ctx.sender(), ctx.get("params"), RollbackMode.RESTORE)));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("undo")
-                    .permission("spyglass.rollback")
-                    .handler(ctx -> undo.execute(ctx.sender())));
+            for (String name : UNDO_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> undo.execute(ctx.sender())));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("page")
-                    .required("number", IntegerParser.integerParser(1))
-                    .permission("spyglass.use")
-                    .handler(ctx -> pageCache.show(ctx.sender(), ctx.get("number"))));
+            for (String name : PAGE_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("number", IntegerParser.integerParser(1))
+                        .permission("spyglass.use")
+                        .handler(ctx -> pageCache.show(ctx.sender(), ctx.get("number"))));
+            }
 
-            manager.command(manager.commandBuilder(root).literal("tool")
-                    .permission("spyglass.tool")
-                    .handler(ctx -> tool.toggle(ctx.sender())));
+            for (String name : TOOL_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.tool")
+                        .handler(ctx -> tool.toggle(ctx.sender())));
+            }
 
             // /sg tele <world> <x> <y> <z> — wired to search-result click
             // events so staff can jump to the scene of an incident.

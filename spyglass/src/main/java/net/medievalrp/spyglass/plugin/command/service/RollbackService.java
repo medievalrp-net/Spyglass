@@ -4,8 +4,17 @@ import net.medievalrp.spyglass.plugin.command.render.Feedback;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
+import org.bukkit.Bukkit;
+import org.bukkit.World;
+import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.SpyglassApi;
@@ -69,8 +78,69 @@ public final class RollbackService {
                         Feedback.error(mode.label() + " failed: " + error.getMessage())));
                 return;
             }
-            support.onMainThread(() -> apply(sender, result, mode));
+            // Pre-warm chunks before bouncing to main thread. {@link
+            // World#getChunkAtAsync} fires the actual load on the
+            // chunk-loader pool — by the time {@link #apply} runs on
+            // the tick, the chunks are already resident, so neither
+            // FAWE nor the per-block fallback has to block on chunk
+            // I/O. Cheap if the chunks are already loaded (immediately
+            // completed future); a real win for rollbacks that touch
+            // unloaded chunks (e.g. a war zone the operator hasn't
+            // visited recently).
+            preWarmChunks(result).whenComplete((unused, warmError) -> {
+                if (warmError != null) {
+                    logger.fine("Spyglass chunk pre-warm warning: " + warmError);
+                }
+                support.onMainThread(() -> apply(sender, result, mode));
+            });
         });
+    }
+
+    private CompletableFuture<Void> preWarmChunks(QueryResult result) {
+        // Guard the whole thing — pre-warming is an optimization, not a
+        // requirement. Anything that throws here (Bukkit not initialized
+        // in tests, world lookup blew up, async API not available on
+        // this server build) just falls through to the main-thread
+        // apply with cold chunks, same as before this optimization
+        // existed. Tests run with a stubbed Bukkit and would otherwise
+        // never reach the summary message.
+        try {
+            Map<UUID, Set<Long>> byWorld = new HashMap<>();
+            for (EventRecord record : result.records()) {
+                if (!(record instanceof Rollbackable)) {
+                    continue;
+                }
+                BlockLocation loc = record.location();
+                if (loc == null) {
+                    continue;
+                }
+                int chunkX = loc.x() >> 4;
+                int chunkZ = loc.z() >> 4;
+                long packed = ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
+                byWorld.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
+            }
+            if (byWorld.isEmpty() || Bukkit.getServer() == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            List<CompletableFuture<?>> futures = new ArrayList<>();
+            for (Map.Entry<UUID, Set<Long>> entry : byWorld.entrySet()) {
+                World world = Bukkit.getWorld(entry.getKey());
+                if (world == null) {
+                    continue;
+                }
+                for (long packed : entry.getValue()) {
+                    int cx = (int) (packed >> 32);
+                    int cz = (int) packed;
+                    futures.add(world.getChunkAtAsync(cx, cz));
+                }
+            }
+            if (futures.isEmpty()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+        } catch (Throwable thrown) {
+            return CompletableFuture.completedFuture(null);
+        }
     }
 
     private void apply(CommandSender sender, QueryResult result, RollbackMode mode) {
@@ -81,17 +151,42 @@ public final class RollbackService {
         }
         List<RollbackResult> results = engine.applyAll(effects, sender);
         Summary summary = summarize(results);
-        // Skip reasons go out first (gray, one per skipped effect), then the
-        // green " N reversals" / " N reversals. M skipped" summary - matching
-        // v1's chat output exactly.
+        // Skip reasons used to emit one chat line per skipped effect.
+        // For a typical "rollback 1 hour of fire spread" that's
+        // hundreds of "Skip Reason: block changed" lines and you can't
+        // see anything else. Aggregate by reason instead — one gray
+        // line per distinct reason with the occurrence count.
+        java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         for (RollbackResult result_ : results) {
             if (result_ instanceof RollbackResult.Skipped skipped) {
-                sender.sendMessage(Feedback.bonus("Skip Reason: " + skipped.reason().message()));
+                skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
             }
+        }
+        for (var entry : skipCounts.entrySet()) {
+            String suffix = entry.getValue() == 1 ? "" : " ×" + entry.getValue();
+            sender.sendMessage(Feedback.bonus("Skip Reason: " + entry.getKey() + suffix));
         }
         sender.sendMessage(summaryLine(summary));
         if (sender instanceof Player player && !summary.inverses.isEmpty()) {
-            undoStack.push(player.getUniqueId(), mode.name(), summary.inverses);
+            // Push to undo stack OFF the main thread. The push encodes
+            // every inverse effect to BSON (CPU) and ships them to the
+            // DB over HTTP (blocking I/O); a 150-block rollback against
+            // ClickHouse held the tick for 30+ seconds before this and
+            // tripped Paper's watchdog. The summary line + skip reasons
+            // already went to the player; if the async push fails we
+            // log it and lose just this op's undo capability, not the
+            // rollback itself.
+            UUID playerId = player.getUniqueId();
+            String operation = mode.name();
+            List<RollbackEffect> inverses = summary.inverses;
+            support.onAsyncThread(() -> {
+                try {
+                    undoStack.push(playerId, operation, inverses);
+                } catch (RuntimeException ex) {
+                    logger.warning("Spyglass undo-stack push failed (rollback "
+                            + "applied but undo unavailable): " + ex.getMessage());
+                }
+            });
         }
     }
 

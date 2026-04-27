@@ -37,7 +37,7 @@ import org.jetbrains.annotations.ApiStatus;
  * RollbackEffect hierarchy.
  */
 @ApiStatus.Internal
-final class EventRecordCodec implements Codec<EventRecord> {
+public final class EventRecordCodec implements Codec<EventRecord> {
 
     private static final String LEGACY_TYPE_FIELD = "_class";
     private static final String EVENT_FIELD = "event";

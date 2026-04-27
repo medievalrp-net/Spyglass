@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.plugin.command.render;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
@@ -26,6 +27,7 @@ import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.query.QueryResult;
@@ -75,27 +77,33 @@ public final class ResultRenderer {
         if (!tag.isEmpty()) {
             builder.append(Component.text(tag + " ", NamedTextColor.AQUA));
         }
-        builder.append(Component.text(record.sourceName(), NamedTextColor.GREEN))
-                .append(Component.text(" " + verb(record) + " ", NamedTextColor.WHITE));
+        builder.append(Component.text(displaySourceName(record), NamedTextColor.GREEN))
+                .append(Component.text(" " + verb(record), NamedTextColor.WHITE));
         int qty = quantityOf(record);
         if (qty > 0) {
-            builder.append(Component.text(qty + " ", NamedTextColor.GREEN));
+            builder.append(Component.text(" " + qty, NamedTextColor.GREEN));
         }
-        // Let a registered DisplayRenderer customize the target span if it wants.
-        Component defaultTarget = Component.text(targetOf(record), NamedTextColor.AQUA);
-        java.util.Optional<DisplayRenderer> custom = api == null
-                ? java.util.Optional.empty()
-                : api.displayRenderer(record.event());
-        Component target = custom
-                .map(renderer -> {
-                    try {
-                        return renderer.renderTarget(record, defaultTarget, flags);
-                    } catch (RuntimeException ex) {
-                        return defaultTarget;
-                    }
-                })
-                .orElse(defaultTarget);
-        builder.append(target);
+        // Target span: skipped entirely when the record has nothing
+        // useful to put there (e.g. QuitRecord), otherwise rendered as
+        // " TARGET" with a single leading space so the line stays
+        // tidy regardless of whether quantity/target are present.
+        String targetText = targetOf(record);
+        if (!targetText.isEmpty()) {
+            Component defaultTarget = Component.text(" " + targetText, NamedTextColor.AQUA);
+            java.util.Optional<DisplayRenderer> custom = api == null
+                    ? java.util.Optional.empty()
+                    : api.displayRenderer(record.event());
+            Component target = custom
+                    .map(renderer -> {
+                        try {
+                            return renderer.renderTarget(record, defaultTarget, flags);
+                        } catch (RuntimeException ex) {
+                            return defaultTarget;
+                        }
+                    })
+                    .orElse(defaultTarget);
+            builder.append(target);
+        }
         if (grouped) {
             builder.append(Component.text(" x" + count, NamedTextColor.GREEN));
         }
@@ -141,15 +149,38 @@ public final class ResultRenderer {
     }
 
     public static Component pageHeader(int page, int totalPages, int totalResults) {
-        return Component.text()
-                .append(Component.text("«", NamedTextColor.WHITE))
+        // Each arrow only renders when there's a page to go to. On page 1
+        // the left disappears entirely; on the last page the right does.
+        // Single-page results show no arrows at all.
+        net.kyori.adventure.text.TextComponent.Builder builder = Component.text()
+                .append(Component.text("«", NamedTextColor.GREEN))
                 .append(Component.text("v1", NamedTextColor.AQUA))
                 .append(Component.text("»", NamedTextColor.GREEN))
                 .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(
-                        "((Page " + page + "/" + totalPages + " — " + totalResults + " results))",
-                        NamedTextColor.GRAY))
+                        "(page " + page + "/" + totalPages + " - " + totalResults + " results)",
+                        NamedTextColor.GRAY));
+        if (page > 1) {
+            builder.append(Component.text(" ", NamedTextColor.WHITE))
+                    .append(navButton("←", page - 1));
+        }
+        if (page < totalPages) {
+            builder.append(Component.text(" ", NamedTextColor.WHITE))
+                    .append(navButton("→", page + 1));
+        }
+        return builder.build();
+    }
+
+    private static Component navButton(String arrow, int targetPage) {
+        Component label = Component.text()
+                .append(Component.text("[", NamedTextColor.RED))
+                .append(Component.text(arrow, NamedTextColor.RED))
+                .append(Component.text("]", NamedTextColor.RED))
                 .build();
+        return label
+                .clickEvent(ClickEvent.runCommand("/sg page " + targetPage))
+                .hoverEvent(HoverEvent.showText(
+                        Component.text("Page " + targetPage, NamedTextColor.RED)));
     }
 
     private Component hover(EventRecord record, long count) {
@@ -171,6 +202,20 @@ public final class ResultRenderer {
         }
         if (record instanceof JoinRecord join && !join.address().isBlank()) {
             lines.add(kv("IP", join.address()));
+        }
+        if (record instanceof EntityHitRecord hit) {
+            lines.add(kv("Damage", String.format(Locale.ROOT, "%.1f", hit.damage())));
+            if (hit.projectile()) {
+                lines.add(kv("Weapon", hit.projectileType() == null
+                        ? "projectile" : upperOrEmpty(hit.projectileType())));
+            }
+        }
+        if (record instanceof EntityDeathRecord death && death.damageCause() != null
+                && !death.damageCause().isBlank()) {
+            lines.add(kv("Cause", death.damageCause()));
+        }
+        if (record instanceof TeleportRecord tp && tp.cause() != null && !tp.cause().isBlank()) {
+            lines.add(kv("Via", tp.cause()));
         }
         // Append extra hover lines from a registered DisplayRenderer, if any.
         if (api != null) {
@@ -196,29 +241,79 @@ public final class ResultRenderer {
         return config.pastTense(record.event());
     }
 
+    /**
+     * Source-name display rule: keep player names verbatim (case
+     * matters — "Itdontmatta" is the actual identity), but uppercase
+     * everything else (entity types, env descriptions like "fire" /
+     * "lava", console, command_block) so they read as identifiers
+     * matching the uppercase target style ("FIRE broke SHORT_GRASS"
+     * rather than "fire broke SHORT_GRASS").
+     */
+    private static String displaySourceName(EventRecord record) {
+        Source source = record.source();
+        String name = record.sourceName();
+        if (source == null || name == null) {
+            return name;
+        }
+        if (Source.PLAYER.equals(source.kind())) {
+            return name;
+        }
+        return name.toUpperCase(Locale.ROOT);
+    }
+
+    /** Defensive uppercase for entity-type / target tokens that are
+     * conventionally uppercase but might come back lowercase from
+     * legacy data. */
+    private static String upperOrEmpty(String value) {
+        return value == null ? "" : value.toUpperCase(Locale.ROOT);
+    }
+
+    /** "ITEM IN CONTAINER" — appends the container type to the
+     * deposit / withdraw target so the line reads like
+     * "itdontmatta deposited ACTIVATOR_RAIL IN HOPPER". Falls
+     * back to just the item if container type is unknown. */
+    private static String withContainer(String item, String containerType) {
+        if (containerType == null || containerType.isBlank()) {
+            return item;
+        }
+        return item + " IN " + containerType;
+    }
+
     private static String targetOf(EventRecord record) {
         return switch (record) {
             case BlockBreakRecord breakRec -> breakRec.target();
             case BlockPlaceRecord placeRec -> placeRec.target();
-            case ContainerDepositRecord deposit -> deposit.target();
-            case ContainerWithdrawRecord withdraw -> withdraw.target();
+            case ContainerDepositRecord deposit -> withContainer(deposit.target(), deposit.containerType());
+            case ContainerWithdrawRecord withdraw -> withContainer(withdraw.target(), withdraw.containerType());
             case ContainerInteractRecord interact -> interact.target();
             case BlockUseRecord use -> use.target();
             case ChatRecord chat -> chat.target();
             case CommandRecord command -> "/" + command.target();
-            case JoinRecord join -> join.target();
-            case QuitRecord quit -> quit.target();
+            // Join's "target" in the data model is the player's own
+            // name, which duplicates the source — show the IP instead
+            // so the line reads "<player> joined <ip>". Quit has no
+            // companion field so the target span gets suppressed
+            // entirely (the line() builder skips empty targets).
+            case JoinRecord join -> join.address() == null ? "" : join.address();
+            case QuitRecord quit -> "";
             case ItemDropRecord drop -> drop.target();
             case ItemPickupRecord pickup -> pickup.target();
             case TeleportRecord tp -> tp.target() + " via " + tp.cause();
-            case EntityDeathRecord death -> death.target() + " (" + death.damageCause() + ")";
-            case EntityHitRecord hit -> hit.target() + " for " + String.format("%.1f", hit.damage());
-            case EntityMountRecord mount -> (mount.dismount() ? "dismounted " : "mounted ") + mount.target();
+            // Entity events: bukkit EntityType names are conventionally
+            // uppercase (ZOMBIE, SNIFFER, etc.). Display lowercase /
+            // mixed-case incoming values uppercased for consistency.
+            // Damage / damage-cause / projectile detail moves to the
+            // hover so the inline form matches "<src> hit TARGET TIME"
+            // — not "<src> hit TARGET for 1.0 TIME".
+            case EntityDeathRecord death -> upperOrEmpty(death.target());
+            case EntityHitRecord hit -> upperOrEmpty(hit.target());
+            case EntityMountRecord mount ->
+                    (mount.dismount() ? "dismounted " : "mounted ") + upperOrEmpty(mount.target());
             case EntityNameRecord named -> {
                 String arrow = named.oldName() == null
                         ? "→ " + named.newName()
                         : "'" + named.oldName() + "' → '" + named.newName() + "'";
-                yield named.target() + " " + arrow;
+                yield upperOrEmpty(named.target()) + " " + arrow;
             }
         };
     }

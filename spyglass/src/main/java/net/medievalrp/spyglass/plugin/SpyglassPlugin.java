@@ -7,6 +7,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.v1Limits;
+import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
 import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
@@ -14,6 +16,7 @@ import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
 import net.medievalrp.spyglass.plugin.command.param.CauseParam;
+import net.medievalrp.spyglass.plugin.command.param.CustomItemParam;
 import net.medievalrp.spyglass.plugin.command.param.EnchantParam;
 import net.medievalrp.spyglass.plugin.command.param.EntityParam;
 import net.medievalrp.spyglass.plugin.command.param.EventParam;
@@ -86,10 +89,16 @@ import net.medievalrp.spyglass.plugin.listener.player.JoinListener;
 import net.medievalrp.spyglass.plugin.listener.player.QuitListener;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportListener;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
+import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
+import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
+import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
+import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
+import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.WandInteractListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditLifecycleListener;
@@ -101,7 +110,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class SpyglassPlugin extends JavaPlugin {
 
     private AsyncRecorder recorder;
-    private MongoRecordStore recordStore;
+    private RecordStore recordStore;
+    private UndoStack undoStack;
+    private ToolStateStore toolStateStore;
     private Executor queryExecutor;
     private SpyglassConfig config;
     private WorldEditSubscriber worldEditSubscriber;
@@ -118,16 +129,61 @@ public final class SpyglassPlugin extends JavaPlugin {
         }
 
         try {
-            IndexManager indexManager = new IndexManager();
-            recordStore = new MongoRecordStore(config.database(), indexManager);
+            switch (config.database().backend()) {
+                case MONGO -> {
+                    MongoRecordStore mongoStore = new MongoRecordStore(
+                            config.database(), new IndexManager());
+                    recordStore = mongoStore;
+                    undoStack = new MongoUndoStack(
+                            mongoStore.database(), mongoStore.codecRegistry());
+                    toolStateStore = new MongoToolStateStore(
+                            mongoStore.database(), getLogger());
+                }
+                case CLICKHOUSE -> {
+                    ClickHouseRecordStore chStore =
+                            new ClickHouseRecordStore(config.database().clickhouse());
+                    recordStore = chStore;
+                    undoStack = new ClickHouseUndoStack(
+                            chStore.client(), config.database().clickhouse().database());
+                    toolStateStore = new ClickHouseToolStateStore(
+                            chStore.client(), config.database().clickhouse().database());
+                }
+            }
+            getLogger().info("Spyglass: backend = " + config.database().backend());
         } catch (Exception ex) {
-            getLogger().severe("Failed to connect to MongoDB: " + ex.getMessage());
+            getLogger().severe("Failed to initialize record store ("
+                    + config.database().backend() + "): " + ex.getMessage());
             setEnabled(false);
             return;
         }
 
         queryExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        recorder = new AsyncRecorder(config.storage().queueCapacity(), recordStore, getLogger());
+
+        boolean walEnabled = config.storage().durability()
+                == SpyglassConfig.Durability.WAL_BATCHED;
+        net.medievalrp.spyglass.plugin.pipeline.WalDurability wal =
+                new net.medievalrp.spyglass.plugin.pipeline.WalDurability(
+                        getDataFolder().toPath(), walEnabled, getLogger());
+        if (walEnabled) {
+            getLogger().info("Spyglass durability mode: WAL-batched (fsync per drain batch).");
+        }
+
+        recorder = new AsyncRecorder(
+                config.storage().queueCapacity(), recordStore, wal, getLogger());
+        // Publish RecordCommittedEvent to Bukkit listeners on every
+        // intake. Done via a hook (rather than a direct Bukkit call
+        // inside AsyncRecorder) so the recorder stays unit-testable
+        // headless.
+        recorder.onCommitted(record ->
+                Bukkit.getPluginManager().callEvent(new RecordCommittedEvent(record)));
+
+        // Replay any WAL files left from a prior crash before the
+        // listeners come online, so recovered records land in the DB
+        // before new ones start flowing.
+        java.util.List<net.medievalrp.spyglass.api.event.EventRecord> recovered = wal.recover();
+        for (net.medievalrp.spyglass.api.event.EventRecord record : recovered) {
+            recorder.record(record);
+        }
 
         Set<String> enabledEvents = config.events().entrySet().stream()
                 .filter(entry -> entry.getValue().enabled())
@@ -199,7 +255,13 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass: CraftBook detected, useSign logging enabled.");
         }
 
-        SpyglassApiImpl apiImpl = new SpyglassApiImpl(recorder, recordStore, queryExecutor, enabledEvents);
+        v1Limits apiLimits = new v1Limits(
+                config.limits().maxRadius(),
+                config.defaults().radius(),
+                config.defaults().time(),
+                config.storage().retention());
+        SpyglassApiImpl apiImpl = new SpyglassApiImpl(
+                recorder, recordStore, queryExecutor, enabledEvents, apiLimits, getLogger());
         apiImpl.registerQueryParamHandler(new PlayerParam());
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
@@ -213,14 +275,15 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new MessageParam());
         apiImpl.registerQueryParamHandler(new CauseParam());
         apiImpl.registerQueryParamHandler(new ItemMaterialParam());
+        apiImpl.registerQueryParamHandler(new CustomItemParam());
         apiImpl.registerQueryParamHandler(new TargetParam());
         apiImpl.registerQueryParamHandler(new IpParam());
         apiImpl.registerQueryParamHandler(new RecipientParam());
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
-        RollbackEngine engine = new RollbackEngine();
-        UndoStack undoStack = new UndoStack(recordStore.database(), recordStore.codecRegistry());
+        RollbackEngine engine = new RollbackEngine(recorder, support);
+        engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
@@ -232,7 +295,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
         RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
-        ToolStateStore toolStateStore = new ToolStateStore(recordStore.database(), getLogger());
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);

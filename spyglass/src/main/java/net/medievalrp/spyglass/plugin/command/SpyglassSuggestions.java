@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
 import org.bukkit.command.CommandSender;
 import org.incendo.cloud.parser.ParserDescriptor;
@@ -43,7 +44,32 @@ public final class SpyglassSuggestions {
     private List<String> suggestFor(CommandSender sender, String token) {
         if (token.startsWith("-")) {
             String lower = token.toLowerCase();
-            return FLAGS.stream().filter(flag -> flag.startsWith(lower)).toList();
+            // After the dash there may be `=value` — split on first
+            // `=` so that completion against a custom flag's value-side
+            // works the same as for built-ins.
+            int eq = lower.indexOf('=');
+            if (eq > 1) {
+                String flagName = lower.substring(1, eq);
+                String partialValue = lower.substring(eq + 1);
+                Optional<FlagHandler> handler = api.flag(flagName);
+                if (handler.isPresent()) {
+                    List<String> values = handler.get().suggestions(sender, flagName, partialValue);
+                    List<String> prefixed = new ArrayList<>(values.size());
+                    for (String v : values) {
+                        prefixed.add("-" + flagName + "=" + v);
+                    }
+                    return prefixed;
+                }
+                // Fall through — built-in flags (`-ord=`, `-nod=`)
+                // already appear in FLAGS with their values prefilled.
+            }
+            List<String> all = new ArrayList<>(FLAGS);
+            for (FlagHandler handler : api.flags()) {
+                for (String alias : handler.aliases()) {
+                    all.add("-" + alias);
+                }
+            }
+            return all.stream().filter(flag -> flag.startsWith(lower)).toList();
         }
         int colon = token.indexOf(':');
         if (colon > 0) {
@@ -68,6 +94,11 @@ public final class SpyglassSuggestions {
             }
         }
         out.addAll(FLAGS);
+        for (FlagHandler handler : api.flags()) {
+            for (String alias : handler.aliases()) {
+                out.add("-" + alias);
+            }
+        }
         out.removeIf(item -> !item.startsWith(token));
         return out;
     }

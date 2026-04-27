@@ -556,7 +556,12 @@ class IngestThroughputBench {
             // The MongoRecordStore builds its own MongoClient internally;
             // the URI carries uuidRepresentation + all connection state.
             SpyglassConfig.Database cfg = new SpyglassConfig.Database(
-                    mongoUri, db, "EventRecords");
+                    SpyglassConfig.Backend.MONGO,
+                    mongoUri,
+                    db,
+                    "EventRecords",
+                    new SpyglassConfig.ClickHouse(
+                            "localhost", 8123, "x", "x", "default", "", false));
             MongoRecordStore realStore = new MongoRecordStore(cfg, new IndexManager());
 
             ConcurrentHashMap<UUID, Long> submitMap = new ConcurrentHashMap<>();

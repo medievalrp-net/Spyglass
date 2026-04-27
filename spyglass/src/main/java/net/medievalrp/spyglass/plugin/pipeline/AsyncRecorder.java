@@ -7,6 +7,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.util.Duration;
@@ -60,12 +61,14 @@ public final class AsyncRecorder implements Recorder {
     private final LinkedBlockingDeque<EventRecord> queue = new LinkedBlockingDeque<>();
     private final long warnThreshold;
     private final RecordStore store;
+    private final WalDurability wal;
     private final Logger logger;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final CountDownLatch stopped = new CountDownLatch(1);
     private final AtomicLong drained = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong lastWarnedDepth = new AtomicLong();
+    private volatile Consumer<EventRecord> committedHook = r -> {};
 
     /**
      * @param warnThreshold queue depth at which we start warning the operator.
@@ -80,12 +83,39 @@ public final class AsyncRecorder implements Recorder {
      * @param logger plugin logger for warnings + retry diagnostics.
      */
     public AsyncRecorder(long warnThreshold, RecordStore store, Logger logger) {
+        this(warnThreshold, store, new WalDurability(null, false, logger), logger);
+    }
+
+    /**
+     * Constructor with explicit {@link WalDurability}. When the WAL is
+     * enabled, the drain thread writes each batch to disk + fsyncs
+     * before pushing to the database, then deletes the file after a
+     * successful save. Crash recovery on next startup replays any
+     * leftover files via {@link WalDurability#recover()}.
+     */
+    public AsyncRecorder(long warnThreshold, RecordStore store, WalDurability wal, Logger logger) {
         this.warnThreshold = warnThreshold;
         this.store = store;
+        this.wal = wal;
         this.logger = logger;
         Thread.ofVirtual()
                 .name("sg-drain")
                 .start(this::drainLoop);
+    }
+
+    /**
+     * Install a hook fired immediately after every successful intake.
+     * The plugin uses this to publish {@code RecordCommittedEvent} to
+     * Bukkit listeners without coupling AsyncRecorder to Bukkit (so
+     * unit tests can run headless).
+     *
+     * <p>Hook executes on the calling thread and must be fast and
+     * non-blocking — it sits on the listener hot path. Throwing here
+     * does NOT drop the record (it's already queued); the exception
+     * is logged and swallowed.
+     */
+    public void onCommitted(Consumer<EventRecord> hook) {
+        this.committedHook = hook == null ? r -> {} : hook;
     }
 
     @Override
@@ -96,6 +126,11 @@ public final class AsyncRecorder implements Recorder {
         // to pay — same contract as v1. Heap pressure becomes the
         // operator's early-warning signal, surfaced via warnThreshold.
         queue.offer(record);
+        try {
+            committedHook.accept(record);
+        } catch (RuntimeException hookFailure) {
+            logger.warning("Spyglass committed-hook threw: " + hookFailure);
+        }
         int depth = queue.size();
         if (depth > warnThreshold) {
             // Fire once when we first cross the threshold, and again at
@@ -144,6 +179,18 @@ public final class AsyncRecorder implements Recorder {
                 batch.add(first);
                 queue.drainTo(batch, 511);
 
+                // WAL durability: when enabled, fsync the batch to disk
+                // before the DB push so a hard crash leaves a recoverable
+                // file behind. write() is a no-op + null when WAL is
+                // disabled, which keeps the RAM-only path identical to v1.
+                java.nio.file.Path walFile = null;
+                try {
+                    walFile = wal.write(batch);
+                } catch (java.io.IOException walFailure) {
+                    logger.warning("Spyglass WAL write failed (" + walFailure.getMessage()
+                            + "); proceeding with DB save anyway. Records still durable iff DB save succeeds.");
+                }
+
                 // Persist with retry + exponential backoff. A transient store
                 // failure (Mongo hiccup, replica-set election, network blip)
                 // must not kill the drain thread and silently drop every
@@ -152,6 +199,7 @@ public final class AsyncRecorder implements Recorder {
                 while (true) {
                     try {
                         store.save(batch);
+                        wal.ack(walFile);
                         drained.addAndGet(batch.size());
                         consecutiveFailures = 0;
                         break;
@@ -199,10 +247,21 @@ public final class AsyncRecorder implements Recorder {
         if (batch.isEmpty()) {
             return;
         }
+        // Mirror the drain loop's WAL contract on the shutdown path:
+        // fsync the batch first so a crashed-shutdown leaves the
+        // records recoverable on next startup.
+        java.nio.file.Path walFile = null;
+        try {
+            walFile = wal.write(batch);
+        } catch (java.io.IOException walFailure) {
+            logger.warning("Spyglass WAL write failed at shutdown ("
+                    + walFailure.getMessage() + "); proceeding with DB save anyway.");
+        }
         int attempt = 0;
         while (true) {
             try {
                 store.save(batch);
+                wal.ack(walFile);
                 drained.addAndGet(batch.size());
                 return;
             } catch (RuntimeException ex) {
@@ -223,14 +282,22 @@ public final class AsyncRecorder implements Recorder {
                 }
             }
         }
-        // Only reached if Mongo was unreachable for the entire shutdown
-        // window. v1 has the same exposure — we log loudly and count
-        // the records so operators can compare reports across restarts.
-        logger.severe("Recorder shutdown flush gave up within deadline; "
-                + batch.size() + " records could not be persisted and are lost. "
-                + "Mongo was unreachable through the full flush-timeout. "
-                + "Consider spill-to-disk if zero-loss across Mongo outages is required.");
-        dropped.addAndGet(batch.size());
+        // Only reached when the database was unreachable for the entire
+        // shutdown window. With WAL enabled, the batch is already on disk
+        // and will be replayed automatically on next startup — no
+        // operator action required. With WAL disabled, the records are
+        // genuinely lost.
+        if (wal.enabled()) {
+            logger.severe("Recorder shutdown flush gave up within deadline; "
+                    + batch.size() + " records left on the WAL and will be "
+                    + "replayed on next startup once the database is reachable.");
+        } else {
+            logger.severe("Recorder shutdown flush gave up within deadline; "
+                    + batch.size() + " records could not be persisted and are lost. "
+                    + "Database was unreachable through the full flush-timeout. "
+                    + "Set storage.durability = \"wal-batched\" to make this recoverable.");
+            dropped.addAndGet(batch.size());
+        }
     }
 
     public record ShutdownReport(long drained, long dropped, long remaining) {

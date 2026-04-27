@@ -1,0 +1,728 @@
+package net.medievalrp.spyglass.plugin.storage;
+
+import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.command.CommandResponse;
+import com.clickhouse.client.api.data_formats.RowBinaryFormatWriter;
+import com.clickhouse.client.api.insert.InsertResponse;
+import com.clickhouse.client.api.insert.InsertSettings;
+import com.clickhouse.client.api.metadata.TableSchema;
+import com.clickhouse.client.api.query.GenericRecord;
+import com.clickhouse.data.ClickHouseFormat;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import net.medievalrp.spyglass.api.event.BlockBreakRecord;
+import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
+import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.BlockUseRecord;
+import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CommandRecord;
+import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
+import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
+import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityHitRecord;
+import net.medievalrp.spyglass.api.event.EntityMountRecord;
+import net.medievalrp.spyglass.api.event.EntityNameRecord;
+import net.medievalrp.spyglass.api.event.EventCatalog;
+import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
+import net.medievalrp.spyglass.api.event.ItemPickupRecord;
+import net.medievalrp.spyglass.api.event.JoinRecord;
+import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
+import net.medievalrp.spyglass.api.event.TeleportRecord;
+import net.medievalrp.spyglass.api.query.Flag;
+import net.medievalrp.spyglass.api.query.QueryPredicate;
+import net.medievalrp.spyglass.api.query.QueryRequest;
+import net.medievalrp.spyglass.api.query.QueryResult;
+import net.medievalrp.spyglass.api.query.Sort;
+import net.medievalrp.spyglass.api.util.BlockLocation;
+import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
+import org.jetbrains.annotations.ApiStatus;
+
+/**
+ * Wide flat-table {@link RecordStore} backed by ClickHouse, fully on
+ * the {@code clickhouse-java client-v2} stack.
+ *
+ * <h2>Why client-v2 only (no JDBC)</h2>
+ *
+ * <p>Direct measurement showed JDBC roundtrip latency dwarfing
+ * server-side query time on Mac Docker — {@code curl} hits the same
+ * SELECT in 1-2 ms while clickhouse-jdbc 0.9.8 returns in 40-50 ms
+ * for the same query. Client-v2's {@link Client#queryAll} returns
+ * {@link GenericRecord}s decoded from the binary
+ * {@code RowBinaryWithNamesAndTypes} format with HTTP keep-alive
+ * pooling and no JDBC overhead. Inserts, schema bootstrap, and
+ * queries all share one {@link Client} instance.
+ *
+ * <h2>Encoding</h2>
+ *
+ * Inserts go through {@link RowBinaryFormatWriter} — every row sets
+ * every column (Nullable columns get {@code null} explicitly), and a
+ * single {@link Client#insert} call ships the buffered RowBinary
+ * stream over HTTP keep-alive. Reads come back as
+ * {@link GenericRecord}s with typed getters; {@link #decodeRow}
+ * switches on the {@code event} discriminator to instantiate the
+ * right concrete {@link EventRecord} subtype.
+ *
+ * <p>Heavy nested fields ({@link BlockSnapshot}, {@link StoredItem})
+ * are stored as base64-encoded BSON in dedicated ZSTD-compressed
+ * String columns via {@link BsonBlobs}; the codec hierarchy already
+ * knows how to encode/decode them.
+ */
+@ApiStatus.Internal
+public final class ClickHouseRecordStore implements RecordStore {
+
+    private static final List<String> COMMON_COLUMNS = List.of(
+            "id", "event", "occurred", "expires_at",
+            "origin_kind", "origin_detail",
+            "source_kind", "source_player_id", "source_player_name",
+            "source_entity_id", "source_entity_type", "source_plugin_name",
+            "source_command_block_world_id", "source_command_block_world_name",
+            "source_command_block_x", "source_command_block_y", "source_command_block_z",
+            "source_description",
+            "location_world_id", "location_world_name",
+            "location_x", "location_y", "location_z",
+            "target");
+
+    private static final List<String> SUMMARY_EXTRAS = List.of(
+            "container_type", "slot", "amount",
+            "message", "recipients", "command_line",
+            "address",
+            "teleport_from_world_id", "teleport_from_world_name",
+            "teleport_from_x", "teleport_from_y", "teleport_from_z",
+            "teleport_to_world_id", "teleport_to_world_name",
+            "teleport_to_x", "teleport_to_y", "teleport_to_z",
+            "teleport_cause",
+            "entity_type", "entity_id",
+            "entity_killer_type", "entity_damage_cause",
+            "entity_damage", "entity_projectile", "entity_projectile_type",
+            "entity_dismount", "entity_old_name", "entity_new_name");
+
+    private static final List<String> HEAVY_COLUMNS = List.of(
+            "original_block", "new_block",
+            "before_item", "after_item",
+            "item",
+            "entity_nbt");
+
+    private final PredicateToSql predicateToSql = new PredicateToSql();
+    private final Client client;
+    private final TableSchema tableSchema;
+    private final String database;
+    private final String table;
+    private final String qualifiedTable;
+    private final String summarySelect;
+    private final String fullSelect;
+
+    public ClickHouseRecordStore(SpyglassConfig.ClickHouse config) {
+        this.database = config.database();
+        this.table = config.table();
+        this.qualifiedTable = ClickHouseSchema.qualifiedTable(database, table);
+        this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS));
+        this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, HEAVY_COLUMNS));
+
+        this.client = new Client.Builder()
+                .addEndpoint((config.ssl() ? "https" : "http") + "://"
+                        + config.host() + ":" + config.port())
+                .setUsername(config.user())
+                .setPassword(config.password() == null ? "" : config.password())
+                .setDefaultDatabase("default")
+                // LZ4 on insert traffic only — request bodies are
+                // big and compress well, but small query responses
+                // pay decompression-setup cost without much win.
+                .compressClientRequest(true)
+                .compressServerResponse(false)
+                .build();
+        ClickHouseSchema.ensure(client, database, table);
+        this.tableSchema = client.getTableSchema(table, database);
+    }
+
+    public Client client() {
+        return client;
+    }
+
+    public String databaseName() {
+        return database;
+    }
+
+    public String qualifiedTableName() {
+        return qualifiedTable;
+    }
+
+    // ===== Save =================================================
+
+    @Override
+    public void save(List<EventRecord> records) {
+        if (records.isEmpty()) {
+            return;
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(records.size() * 256);
+        try {
+            RowBinaryFormatWriter writer = new RowBinaryFormatWriter(
+                    buffer, tableSchema, ClickHouseFormat.RowBinary);
+            for (EventRecord record : records) {
+                writer.clearRow();
+                writeRow(writer, record);
+                writer.commitRow();
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException("ClickHouse RowBinary write failed: " + ex.getMessage(), ex);
+        }
+
+        InsertSettings settings = new InsertSettings()
+                .setDatabase(database)
+                .serverSetting("async_insert", "1")
+                .serverSetting("wait_for_async_insert", "1");
+        try (InsertResponse ignored = client.insert(
+                table,
+                new ByteArrayInputStream(buffer.toByteArray()),
+                ClickHouseFormat.RowBinary,
+                settings).get(60, TimeUnit.SECONDS)) {
+            // ack received
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("ClickHouse insert interrupted", ie);
+        } catch (ExecutionException | TimeoutException ex) {
+            throw new RuntimeException("ClickHouse insert failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    private void writeRow(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        // Every column must be set per row. Nullable columns get an
+        // explicit null — skipping a column in RowBinary doesn't emit
+        // a NULL marker, it emits zero bytes, which corrupts every
+        // following column.
+        writeCommon(writer, record);
+        writeBlockColumns(writer, record);
+        writeContainerColumns(writer, record);
+        writeItemColumns(writer, record);
+        writeChatCommandColumns(writer, record);
+        writeJoinColumns(writer, record);
+        writeTeleportColumns(writer, record);
+        writeEntityColumns(writer, record);
+    }
+
+    private void writeCommon(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        Origin origin = record.origin();
+        Source source = record.source();
+        BlockLocation location = record.location();
+
+        writer.setValue("id", record.id());
+        writer.setString("event", record.event());
+        writer.setDateTime("occurred", toLocalDateTime(record.occurred()));
+        writer.setDateTime("expires_at", toLocalDateTime(record.expiresAt()));
+        writer.setString("origin_kind", nullToEmpty(origin == null ? null : origin.kind()));
+        writer.setValue("origin_detail", origin == null ? null : origin.detail());
+        writer.setString("source_kind", nullToEmpty(source == null ? null : source.kind()));
+        writer.setValue("source_player_id", source == null ? null : source.playerId());
+        writer.setValue("source_player_name", source == null ? null : source.playerName());
+        writer.setValue("source_entity_id", source == null ? null : source.entityId());
+        writer.setValue("source_entity_type", source == null ? null : source.entityType());
+        writer.setValue("source_plugin_name", source == null ? null : source.pluginName());
+        BlockLocation cmdLoc = source == null ? null : source.commandBlockLocation();
+        writer.setValue("source_command_block_world_id", cmdLoc == null ? null : cmdLoc.worldId());
+        writer.setValue("source_command_block_world_name", cmdLoc == null ? null : cmdLoc.worldName());
+        writer.setValue("source_command_block_x", cmdLoc == null ? null : cmdLoc.x());
+        writer.setValue("source_command_block_y", cmdLoc == null ? null : cmdLoc.y());
+        writer.setValue("source_command_block_z", cmdLoc == null ? null : cmdLoc.z());
+        writer.setValue("source_description", source == null ? null : source.description());
+        writer.setValue("location_world_id", location.worldId());
+        writer.setString("location_world_name", nullToEmpty(location.worldName()));
+        writer.setInteger("location_x", location.x());
+        writer.setInteger("location_y", location.y());
+        writer.setInteger("location_z", location.z());
+        writer.setValue("target", record.target());
+    }
+
+    private void writeBlockColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        BlockSnapshot original = null;
+        BlockSnapshot replacement = null;
+        if (record instanceof BlockBreakRecord br) {
+            original = br.originalBlock();
+            replacement = br.newBlock();
+        } else if (record instanceof BlockPlaceRecord pl) {
+            original = pl.originalBlock();
+            replacement = pl.newBlock();
+        }
+        writer.setValue("original_block", BsonBlobs.encodeBlockSnapshot(original));
+        writer.setValue("new_block", BsonBlobs.encodeBlockSnapshot(replacement));
+    }
+
+    private void writeContainerColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        String containerType = null;
+        Integer slot = null;
+        Integer amount = null;
+        StoredItem before = null;
+        StoredItem after = null;
+        if (record instanceof ContainerDepositRecord d) {
+            containerType = d.containerType();
+            slot = d.slot();
+            amount = d.amount();
+            before = d.beforeItem();
+            after = d.afterItem();
+        } else if (record instanceof ContainerWithdrawRecord w) {
+            containerType = w.containerType();
+            slot = w.slot();
+            amount = w.amount();
+            before = w.beforeItem();
+            after = w.afterItem();
+        } else if (record instanceof ItemDropRecord d) {
+            amount = d.amount();
+        } else if (record instanceof ItemPickupRecord p) {
+            amount = p.amount();
+        }
+        writer.setValue("container_type", containerType);
+        writer.setValue("slot", slot);
+        writer.setValue("amount", amount);
+        writer.setValue("before_item", BsonBlobs.encodeStoredItem(before));
+        writer.setValue("after_item", BsonBlobs.encodeStoredItem(after));
+    }
+
+    private void writeItemColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        StoredItem item = null;
+        if (record instanceof ItemDropRecord d) {
+            item = d.item();
+        } else if (record instanceof ItemPickupRecord p) {
+            item = p.item();
+        }
+        writer.setValue("item", BsonBlobs.encodeStoredItem(item));
+    }
+
+    private void writeChatCommandColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        String message = null;
+        List<UUID> recipients = List.of();
+        String commandLine = null;
+        if (record instanceof ChatRecord c) {
+            message = c.message();
+            recipients = c.recipients();
+        } else if (record instanceof CommandRecord c) {
+            commandLine = c.commandLine();
+        }
+        writer.setValue("message", message);
+        writer.setList("recipients", recipients);
+        writer.setValue("command_line", commandLine);
+    }
+
+    private void writeJoinColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        String address = null;
+        if (record instanceof JoinRecord j) {
+            address = j.address();
+        }
+        writer.setValue("address", address);
+    }
+
+    private void writeTeleportColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        BlockLocation from = null;
+        BlockLocation to = null;
+        String cause = null;
+        if (record instanceof TeleportRecord t) {
+            from = t.from();
+            to = t.to();
+            cause = t.cause();
+        }
+        writeOptionalLocationColumns(writer, "teleport_from_", from);
+        writeOptionalLocationColumns(writer, "teleport_to_", to);
+        writer.setValue("teleport_cause", cause);
+    }
+
+    private void writeOptionalLocationColumns(RowBinaryFormatWriter writer, String prefix, BlockLocation location)
+            throws IOException {
+        writer.setValue(prefix + "world_id", location == null ? null : location.worldId());
+        writer.setValue(prefix + "world_name", location == null ? null : location.worldName());
+        writer.setValue(prefix + "x", location == null ? null : location.x());
+        writer.setValue(prefix + "y", location == null ? null : location.y());
+        writer.setValue(prefix + "z", location == null ? null : location.z());
+    }
+
+    private void writeEntityColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        String entityType = null;
+        UUID entityId = null;
+        String killerType = null;
+        String damageCause = null;
+        String entityNbt = null;
+        Double damage = null;
+        Byte projectile = null;
+        String projectileType = null;
+        Byte dismount = null;
+        String oldName = null;
+        String newName = null;
+        if (record instanceof EntityDeathRecord d) {
+            entityType = d.entityType();
+            entityId = d.entityId();
+            killerType = d.killerType();
+            damageCause = d.damageCause();
+            entityNbt = d.entityNbt();
+        } else if (record instanceof EntityHitRecord h) {
+            entityType = h.victimType();
+            entityId = h.victimId();
+            damage = h.damage();
+            projectile = (byte) (h.projectile() ? 1 : 0);
+            projectileType = h.projectileType();
+        } else if (record instanceof EntityMountRecord m) {
+            entityType = m.mountType();
+            entityId = m.mountId();
+            dismount = (byte) (m.dismount() ? 1 : 0);
+        } else if (record instanceof EntityNameRecord n) {
+            entityType = n.entityType();
+            entityId = n.entityId();
+            oldName = n.oldName();
+            newName = n.newName();
+        }
+        writer.setValue("entity_type", entityType);
+        writer.setValue("entity_id", entityId);
+        writer.setValue("entity_killer_type", killerType);
+        writer.setValue("entity_damage_cause", damageCause);
+        writer.setValue("entity_nbt", entityNbt);
+        writer.setValue("entity_damage", damage);
+        writer.setValue("entity_projectile", projectile);
+        writer.setValue("entity_projectile_type", projectileType);
+        writer.setValue("entity_dismount", dismount);
+        writer.setValue("entity_old_name", oldName);
+        writer.setValue("entity_new_name", newName);
+    }
+
+    // ===== Query ================================================
+
+    @Override
+    public QueryResult query(QueryRequest request) {
+        return runQuery(request, true);
+    }
+
+    @Override
+    public QueryResult querySummary(QueryRequest request) {
+        return runQuery(request, false);
+    }
+
+    private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
+        StringBuilder sql = new StringBuilder("SELECT ")
+                .append(includeHeavy ? fullSelect : summarySelect)
+                .append(" FROM ").append(qualifiedTable);
+
+        List<QueryPredicate> predicates = new ArrayList<>(request.predicates());
+        if (request.flags().contains(Flag.NO_CHAT)) {
+            predicates.add(new QueryPredicate.Exists(RecordFields.MESSAGE, false));
+        }
+        String where = predicateToSql.translate(predicates);
+        if (!where.isEmpty()) {
+            sql.append(" WHERE ").append(where);
+        }
+        sql.append(" ORDER BY occurred ")
+                .append(request.sort() == Sort.OLDEST_FIRST ? "ASC" : "DESC");
+        sql.append(" LIMIT ").append(request.limit());
+
+        List<GenericRecord> rows;
+        try {
+            rows = client.queryAll(sql.toString());
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("ClickHouse query failed: " + ex.getMessage(), ex);
+        }
+        List<EventRecord> records = new ArrayList<>(rows.size());
+        for (GenericRecord row : rows) {
+            EventRecord record = decodeRow(row, includeHeavy);
+            if (record != null) {
+                records.add(record);
+            }
+        }
+        List<QueryResult.RecordAggregation> aggregations =
+                request.grouping() && !request.flags().contains(Flag.NO_GROUP)
+                        ? aggregate(records)
+                        : List.of();
+        return new QueryResult(records, aggregations);
+    }
+
+    private EventRecord decodeRow(GenericRecord row, boolean includeHeavy) {
+        String event = row.getString("event");
+        Class<? extends EventRecord> clazz = EventCatalog.recordClassOf(event);
+        if (clazz == null) {
+            return null;
+        }
+        UUID id = row.getUUID("id");
+        Instant occurred = row.getInstant("occurred");
+        Instant expiresAt = row.getInstant("expires_at");
+        Origin origin = readOrigin(row);
+        Source source = readSource(row);
+        BlockLocation location = readLocation(row);
+        String target = row.getString("target");
+
+        if (clazz == BlockBreakRecord.class) {
+            return new BlockBreakRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("original_block")) : null,
+                    includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("new_block")) : null);
+        }
+        if (clazz == BlockPlaceRecord.class) {
+            return new BlockPlaceRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("original_block")) : null,
+                    includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("new_block")) : null);
+        }
+        if (clazz == BlockUseRecord.class) {
+            return new BlockUseRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target);
+        }
+        if (clazz == ChatRecord.class) {
+            return new ChatRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("message"),
+                    readUuidList(row, "recipients"));
+        }
+        if (clazz == CommandRecord.class) {
+            return new CommandRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("command_line"));
+        }
+        if (clazz == JoinRecord.class) {
+            return new JoinRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("address"));
+        }
+        if (clazz == QuitRecord.class) {
+            return new QuitRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target);
+        }
+        if (clazz == ContainerDepositRecord.class) {
+            return new ContainerDepositRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("container_type"),
+                    row.getInteger("slot"),
+                    row.getInteger("amount"),
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("before_item")) : null,
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("after_item")) : null);
+        }
+        if (clazz == ContainerWithdrawRecord.class) {
+            return new ContainerWithdrawRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("container_type"),
+                    row.getInteger("slot"),
+                    row.getInteger("amount"),
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("before_item")) : null,
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("after_item")) : null);
+        }
+        if (clazz == ContainerInteractRecord.class) {
+            return new ContainerInteractRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target);
+        }
+        if (clazz == ItemDropRecord.class) {
+            return new ItemDropRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getInteger("amount"),
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
+        }
+        if (clazz == ItemPickupRecord.class) {
+            return new ItemPickupRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getInteger("amount"),
+                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
+        }
+        if (clazz == TeleportRecord.class) {
+            BlockLocation from = readOptionalLocation(row, "teleport_from_");
+            BlockLocation to = readOptionalLocation(row, "teleport_to_");
+            return new TeleportRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    from, to,
+                    row.getString("teleport_cause"));
+        }
+        if (clazz == EntityDeathRecord.class) {
+            return new EntityDeathRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("entity_type"),
+                    row.getUUID("entity_id"),
+                    row.getString("entity_killer_type"),
+                    row.getString("entity_damage_cause"),
+                    includeHeavy ? row.getString("entity_nbt") : null);
+        }
+        if (clazz == EntityHitRecord.class) {
+            return new EntityHitRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("entity_type"),
+                    row.getUUID("entity_id"),
+                    row.getDouble("entity_damage"),
+                    row.getByte("entity_projectile") != 0,
+                    row.getString("entity_projectile_type"));
+        }
+        if (clazz == EntityMountRecord.class) {
+            return new EntityMountRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("entity_type"),
+                    row.getUUID("entity_id"),
+                    row.getByte("entity_dismount") != 0);
+        }
+        if (clazz == EntityNameRecord.class) {
+            return new EntityNameRecord(id, event, occurred, expiresAt,
+                    origin, source, location, target,
+                    row.getString("entity_type"),
+                    row.getUUID("entity_id"),
+                    row.getString("entity_old_name"),
+                    row.getString("entity_new_name"));
+        }
+        return null;
+    }
+
+    private Origin readOrigin(GenericRecord row) {
+        return new Origin(row.getString("origin_kind"), row.getString("origin_detail"));
+    }
+
+    private Source readSource(GenericRecord row) {
+        BlockLocation cmdBlock = readOptionalLocation(row, "source_command_block_");
+        return new Source(
+                row.getString("source_kind"),
+                row.getUUID("source_player_id"),
+                row.getString("source_player_name"),
+                row.getUUID("source_entity_id"),
+                row.getString("source_entity_type"),
+                row.getString("source_plugin_name"),
+                cmdBlock,
+                row.getString("source_description"));
+    }
+
+    private BlockLocation readLocation(GenericRecord row) {
+        return new BlockLocation(
+                row.getUUID("location_world_id"),
+                row.getString("location_world_name"),
+                row.getInteger("location_x"),
+                row.getInteger("location_y"),
+                row.getInteger("location_z"));
+    }
+
+    private BlockLocation readOptionalLocation(GenericRecord row, String prefix) {
+        UUID worldId = row.getUUID(prefix + "world_id");
+        if (worldId == null) {
+            return null;
+        }
+        return new BlockLocation(
+                worldId,
+                row.getString(prefix + "world_name"),
+                row.getInteger(prefix + "x"),
+                row.getInteger(prefix + "y"),
+                row.getInteger(prefix + "z"));
+    }
+
+    private List<UUID> readUuidList(GenericRecord row, String column) {
+        List<?> raw = row.getList(column);
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> out = new ArrayList<>(raw.size());
+        for (Object element : raw) {
+            if (element instanceof UUID uuid) {
+                out.add(uuid);
+            } else if (element != null) {
+                out.add(UUID.fromString(element.toString()));
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public void close() {
+        try {
+            client.close();
+        } catch (Exception ignored) {
+            // shutdown best-effort
+        }
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static LocalDateTime toLocalDateTime(Instant instant) {
+        return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+    }
+
+    @SafeVarargs
+    private static List<String> concat(List<String>... lists) {
+        List<String> out = new ArrayList<>();
+        for (List<String> list : lists) {
+            out.addAll(list);
+        }
+        return out;
+    }
+
+    private List<QueryResult.RecordAggregation> aggregate(List<EventRecord> records) {
+        Map<String, Long> counts = new HashMap<>();
+        Map<String, EventRecord> sample = new HashMap<>();
+        for (EventRecord record : records) {
+            String key = record.event() + "|" + record.sourceName() + "|" + record.target() + "|"
+                    + record.occurred().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            counts.merge(key, 1L, Long::sum);
+            sample.putIfAbsent(key, record);
+        }
+        return counts.entrySet().stream()
+                .map(entry -> new QueryResult.RecordAggregation(sample.get(entry.getKey()), entry.getValue()))
+                .sorted(Comparator.comparing((QueryResult.RecordAggregation aggregation)
+                        -> aggregation.sample().occurred()).reversed())
+                .toList();
+    }
+
+    // ===== Test / bench helpers ================================
+
+    public long count() {
+        List<GenericRecord> rows = client.queryAll("SELECT count() AS c FROM " + qualifiedTable);
+        return rows.isEmpty() ? 0L : rows.get(0).getLong("c");
+    }
+
+    public long compressedBytes() {
+        return systemPartsSum("bytes_on_disk");
+    }
+
+    public long uncompressedBytes() {
+        return systemPartsSum("data_uncompressed_bytes");
+    }
+
+    private long systemPartsSum(String column) {
+        // {@code database}/{@code table} come from config, but we still
+        // refuse anything outside ClickHouse's identifier alphabet here:
+        // a misconfigured YAML with a stray quote would otherwise become
+        // a self-inflicted SQL-injection in this helper.
+        requireIdentifier(database);
+        requireIdentifier(table);
+        String sql = "SELECT sum(" + column + ") AS c FROM system.parts "
+                + "WHERE active AND database = '" + database + "' AND table = '" + table + "'";
+        List<GenericRecord> rows = client.queryAll(sql);
+        return rows.isEmpty() ? 0L : rows.get(0).getLong("c");
+    }
+
+    private static void requireIdentifier(String value) {
+        if (value == null || value.isEmpty()) {
+            throw new IllegalStateException("ClickHouse identifier is blank");
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean ok = (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_';
+            if (!ok) {
+                throw new IllegalStateException(
+                        "ClickHouse identifier contains illegal character: " + value);
+            }
+        }
+    }
+
+    public void optimize() {
+        try (CommandResponse ignored = client.execute(
+                "OPTIMIZE TABLE " + qualifiedTable + " FINAL").get(120, TimeUnit.SECONDS)) {
+            // ack
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ex) {
+            throw new RuntimeException("OPTIMIZE failed: " + ex.getMessage(), ex);
+        }
+    }
+}

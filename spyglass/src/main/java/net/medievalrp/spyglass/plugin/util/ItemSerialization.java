@@ -8,6 +8,7 @@ import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.StoredItem;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
@@ -52,7 +53,7 @@ public final class ItemSerialization {
             if (meta.hasDisplayName()) {
                 Component displayName = meta.displayName();
                 if (displayName != null) {
-                    name = PLAIN.serialize(displayName);
+                    name = RecordingSupport.safeText(PLAIN.serialize(displayName));
                 }
             }
             if (meta.hasLore()) {
@@ -60,7 +61,7 @@ public final class ItemSerialization {
                 if (metaLore != null && !metaLore.isEmpty()) {
                     List<String> out = new ArrayList<>(metaLore.size());
                     for (Component line : metaLore) {
-                        out.add(PLAIN.serialize(line));
+                        out.add(RecordingSupport.safeText(PLAIN.serialize(line)));
                     }
                     lore = out;
                 }

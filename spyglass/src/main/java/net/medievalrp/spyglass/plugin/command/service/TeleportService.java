@@ -23,6 +23,12 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class TeleportService {
 
+    /** Bukkit world border max — coords beyond this aren't loadable. */
+    private static final double MAX_COORD = 30_000_000D;
+    /** Generous Y-axis bounds covering vanilla overworld + nether + end. */
+    private static final double MIN_Y = -2048D;
+    private static final double MAX_Y = 2048D;
+
     public void execute(CommandSender sender, String worldArg, String xArg, String yArg, String zArg) {
         if (!(sender instanceof Player player)) {
             sender.sendMessage(Feedback.error("This command can only be run by players."));
@@ -42,6 +48,15 @@ public final class TeleportService {
             z = Double.parseDouble(zArg) + 0.5D;
         } catch (NumberFormatException ex) {
             sender.sendMessage(Feedback.error("Invalid teleport coordinates."));
+            return;
+        }
+        // {@code Double.parseDouble} accepts "Infinity" and "NaN"; teleporting
+        // to either soft-locks the client. The Bukkit world coordinate range
+        // is roughly ±30 000 000 — anything past that is also a no-go.
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
+                || Math.abs(x) > MAX_COORD || Math.abs(z) > MAX_COORD
+                || y < MIN_Y || y > MAX_Y) {
+            sender.sendMessage(Feedback.error("Teleport coordinates out of range."));
             return;
         }
         player.teleport(new Location(world, x, y, z));
