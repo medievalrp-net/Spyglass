@@ -153,7 +153,7 @@ tasks.register<Test>("clickhouseBench") {
 // bulkWrite with v1 doc shape) — see IngestThroughputBench.java. Gated
 // on Docker. Not part of `check`; run explicitly for metrics.
 tasks.register<Test>("ingestBench") {
-    description = "Runs the v1-vs-v2 ingest throughput benchmark (requires Docker)."
+    description = "Runs the Spyglass vs v1 ingest throughput benchmark (requires Docker)."
     group = "verification"
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath

@@ -6,7 +6,7 @@ Successor to the MPL-licensed [v1](../v1). Built clean-room from the architectur
 
 ## Status
 
-`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/omni2 tool` inspection wand, and an automated regression harness.
+`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/spyglass tool` inspection wand, and an automated regression harness.
 
 ## Requirements
 

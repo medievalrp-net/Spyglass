@@ -45,7 +45,7 @@ Implications:
 - For a strict-dedup query, append `FINAL`: `SELECT count() FROM event_records FINAL WHERE …`. Slow on large ranges; use sparingly.
 - To force dedup synchronously after a known replay event:
   ```sql
-  OPTIMIZE TABLE omni2.event_records FINAL DEDUPLICATE;
+  OPTIMIZE TABLE spyglass.event_records FINAL DEDUPLICATE;
   ```
   Acceptable as a one-off; expensive on big tables.
 
@@ -63,7 +63,7 @@ If you're seeing first-crossing warnings during normal play, raise the threshold
 
 `config.conf` has per-event toggles under `events.<name>`. Disabling an event:
 - Skips listener registration entirely (no overhead).
-- Hides the event from `/omni2 search` results (it's not in the store).
+- Hides the event from `/spyglass search` results (it's not in the store).
 - Does **not** retroactively delete already-recorded rows; lower `storage.retention` if you want them to age out.
 
 ## Things NOT to do

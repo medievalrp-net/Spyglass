@@ -112,7 +112,7 @@ public final class ResultRenderer {
         if (grouped) {
             // Grouped result: click drills down into the per-player,
             // per-event stream. Matches v1's buildDetailCommand shape.
-            builder.clickEvent(ClickEvent.runCommand("/omni2 search "
+            builder.clickEvent(ClickEvent.runCommand("/spyglass search "
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
                     + " -ng"));
@@ -139,7 +139,7 @@ public final class ResultRenderer {
     }
 
     private static ClickEvent teleportClick(BlockLocation loc) {
-        return ClickEvent.runCommand("/omni2 tele "
+        return ClickEvent.runCommand("/spyglass tele "
                 + loc.worldId() + " " + loc.x() + " " + loc.y() + " " + loc.z());
     }
 
@@ -154,7 +154,7 @@ public final class ResultRenderer {
         // Single-page results show no arrows at all.
         net.kyori.adventure.text.TextComponent.Builder builder = Component.text()
                 .append(Component.text("«", NamedTextColor.GREEN))
-                .append(Component.text("v1", NamedTextColor.AQUA))
+                .append(Component.text("Spyglass", NamedTextColor.AQUA))
                 .append(Component.text("»", NamedTextColor.GREEN))
                 .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(
@@ -178,7 +178,7 @@ public final class ResultRenderer {
                 .append(Component.text("]", NamedTextColor.RED))
                 .build();
         return label
-                .clickEvent(ClickEvent.runCommand("/omni2 page " + targetPage))
+                .clickEvent(ClickEvent.runCommand("/spyglass page " + targetPage))
                 .hoverEvent(HoverEvent.showText(
                         Component.text("Page " + targetPage, NamedTextColor.RED)));
     }

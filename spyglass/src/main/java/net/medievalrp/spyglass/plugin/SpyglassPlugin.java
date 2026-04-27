@@ -7,12 +7,12 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
-import net.medievalrp.spyglass.api.v1Limits;
+import net.medievalrp.spyglass.api.SpyglassLimits;
 import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
-import net.medievalrp.spyglass.plugin.command.OmniCommands;
-import net.medievalrp.spyglass.plugin.command.OmniSuggestions;
+import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
+import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
 import net.medievalrp.spyglass.plugin.command.param.CauseParam;
@@ -255,7 +255,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass: CraftBook detected, useSign logging enabled.");
         }
 
-        v1Limits apiLimits = new v1Limits(
+        SpyglassLimits apiLimits = new SpyglassLimits(
                 config.limits().maxRadius(),
                 config.defaults().radius(),
                 config.defaults().time(),
@@ -299,9 +299,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
         TeleportService teleportService = new TeleportService();
-        OmniSuggestions suggestions = new OmniSuggestions(apiImpl);
+        SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
-        OmniCommands commands = new OmniCommands(
+        SpyglassCommands commands = new SpyglassCommands(
                 this,
                 apiImpl,
                 helpService,

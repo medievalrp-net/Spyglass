@@ -86,7 +86,7 @@ class ToolServiceTest {
         verify(handout).give(player, Material.REDSTONE_LAMP);
         verify(store, never()).disable(id);
         assertThat(ServiceTestSupport.plainTexts(captured))
-                .anyMatch(line -> line.contains("Added the v1 data tool"));
+                .anyMatch(line -> line.contains("Added the Spyglass data tool"));
     }
 
     @Test

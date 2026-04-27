@@ -17,19 +17,19 @@ All permissions default to **op**:
 
 | Command | Permission | Syntax | Description |
 |---------|-----------|--------|-------------|
-| `/omni2 help` | `spyglass.use` | `/omni2 help` | Display command help |
-| `/omni2 events` | `spyglass.use` | `/omni2 events` | List enabled event types |
-| `/omni2 search` | `spyglass.search` | `/omni2 search <params> [flags]` | Search forensics database |
-| `/omni2 rollback` | `spyglass.rollback` | `/omni2 rollback <params> [flags]` | Revert changes |
-| `/omni2 restore` | `spyglass.rollback` | `/omni2 restore <params> [flags]` | Reapply changes |
-| `/omni2 undo` | `spyglass.rollback` | `/omni2 undo` | Undo last rollback/restore (players only) |
-| `/omni2 page` | `spyglass.use` | `/omni2 page <number>` | Navigate result pages |
-| `/omni2 tool` | `spyglass.tool` | `/omni2 tool` | Toggle inspection wand (players only) |
-| `/omni2 tele` | `spyglass.tele` | `/omni2 tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
+| `/spyglass help` | `spyglass.use` | `/spyglass help` | Display command help |
+| `/spyglass events` | `spyglass.use` | `/spyglass events` | List enabled event types |
+| `/spyglass search` | `spyglass.search` | `/spyglass search <params> [flags]` | Search forensics database |
+| `/spyglass rollback` | `spyglass.rollback` | `/spyglass rollback <params> [flags]` | Revert changes |
+| `/spyglass restore` | `spyglass.rollback` | `/spyglass restore <params> [flags]` | Reapply changes |
+| `/spyglass undo` | `spyglass.rollback` | `/spyglass undo` | Undo last rollback/restore (players only) |
+| `/spyglass page` | `spyglass.use` | `/spyglass page <number>` | Navigate result pages |
+| `/spyglass tool` | `spyglass.tool` | `/spyglass tool` | Toggle inspection wand (players only) |
+| `/spyglass tele` | `spyglass.tele` | `/spyglass tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
 
 ## Event names
 
-`/omni2 events` lists the active set. The names below are stable: queries
+`/spyglass events` lists the active set. The names below are stable: queries
 use them as values for `a:` (action) parameters and they appear as the
 event column in search results.
 
