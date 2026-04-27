@@ -23,7 +23,8 @@ public final class ItemNameParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("iname requires a value.");
         }
-        return ItemFieldParams.anyItemField("name", ItemFieldParams.substringPattern(value.trim()));
+        String safe = ItemFieldParams.requireSafeTerm(alias, value.trim());
+        return ItemFieldParams.anyItemField("name", ItemFieldParams.substringPattern(safe));
     }
 
     @Override

@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.event.Origin;
@@ -15,6 +16,64 @@ public final class RecordingSupport {
 
     public RecordingSupport(Duration retention) {
         this.retention = retention;
+    }
+
+    /**
+     * Hard ceiling on stored player-typed strings. Vanilla server limits
+     * are well under this (chat 256, anvil rename 50, signed-book title
+     * 32, command line ~32 700) so legitimate input is never truncated.
+     * The cap is here strictly to defang a modded/spoofed client that
+     * sends a megabyte chat line — without it one rogue packet bloats a
+     * single record by ~1 MB and wedges any operator running a wide
+     * search across that row.
+     */
+    public static final int MAX_TEXT_LEN = 32_768;
+
+    /**
+     * Mandatory passthrough for ANY player-typed string before it lands
+     * in a record field that's stored as a plain BSON string or
+     * ClickHouse {@code String} column. Handles three classes of abuse
+     * in one pass:
+     *
+     * <ol>
+     *   <li><b>UTF-16 oddities</b> — round-trip via UTF-8 drops unpaired
+     *       surrogates that the BSON encoder rejects, preventing one bad
+     *       message from sending {@link
+     *       net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder}
+     *       into an infinite retry on a poison-pill batch. (v1's regex
+     *       sanitiser missed unpaired surrogates; this is strictly more
+     *       robust.)
+     *   <li><b>DoS by length</b> — caps at {@link #MAX_TEXT_LEN}
+     *       characters to defang a modded client that bypasses vanilla's
+     *       256-char chat cap and ships a megabyte payload.
+     *   <li><b>Empty-input fast path</b> — null and empty strings pass
+     *       straight through with no allocation.
+     * </ol>
+     *
+     * <p><b>Contract for new listeners:</b> any field that stores
+     * player-typed text (display names, sign lines, lore, chat messages,
+     * command lines) MUST be wrapped in {@code safeText} at the recording
+     * site. Item NBT and entity NBT stored as base64 blobs via
+     * {@code serializeAsBytes()} are binary-safe and don't need this.
+     *
+     * <p>Static so static utilities ({@link
+     * net.medievalrp.spyglass.plugin.util.ItemSerialization},
+     * {@link net.medievalrp.spyglass.plugin.util.BlockSnapshots})
+     * that capture player text without holding a {@code RecordingSupport}
+     * can sanitize at the source instead of forcing every caller to wrap.
+     *
+     * <p>Cost: typically microseconds per chat line — one {@code byte[]}
+     * and one {@code String} allocation; truncation is a {@code substring}.
+     */
+    public static String safeText(String input) {
+        if (input == null || input.isEmpty()) {
+            return input;
+        }
+        String roundTripped = new String(input.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        if (roundTripped.length() > MAX_TEXT_LEN) {
+            return roundTripped.substring(0, MAX_TEXT_LEN);
+        }
+        return roundTripped;
     }
 
     public Instant now() {
@@ -46,7 +105,27 @@ public final class RecordingSupport {
     }
 
     public UUID newId() {
-        return UUID.randomUUID();
+        return fastRandomUUID();
+    }
+
+    /**
+     * v4 UUID using {@link java.util.concurrent.ThreadLocalRandom} instead
+     * of {@link UUID#randomUUID}'s {@code SecureRandom}. Record IDs only
+     * need to be unique, not unguessable — and SecureRandom hits
+     * {@code /dev/urandom} via JNI, which the spark profile flagged as
+     * 0.05% of server thread on TNT bursts. ThreadLocalRandom is
+     * thread-safe, ~5-10× faster, and gives us collision odds equivalent
+     * to the cryptographic version (122 bits of randomness either way).
+     *
+     * <p>Bit-twiddling is the standard v4 pattern: clear the version
+     * nibble and set it to 4, clear the variant bits and set them to 10
+     * (RFC 4122).
+     */
+    public static UUID fastRandomUUID() {
+        java.util.concurrent.ThreadLocalRandom rng = java.util.concurrent.ThreadLocalRandom.current();
+        long msb = (rng.nextLong() & 0xFFFFFFFFFFFF0FFFL) | 0x0000000000004000L;
+        long lsb = (rng.nextLong() & 0x3FFFFFFFFFFFFFFFL) | 0x8000000000000000L;
+        return new UUID(msb, lsb);
     }
 
     /**

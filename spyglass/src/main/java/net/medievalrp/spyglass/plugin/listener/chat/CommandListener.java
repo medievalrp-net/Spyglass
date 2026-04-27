@@ -40,7 +40,7 @@ public final class CommandListener implements RecordingListener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
-        String line = event.getMessage();
+        String line = RecordingSupport.safeText(event.getMessage());
         BlockLocation location = BlockLocations.fromLocation(event.getPlayer().getLocation());
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
         String head = extractHead(line);
@@ -54,7 +54,7 @@ public final class CommandListener implements RecordingListener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onServerCommand(ServerCommandEvent event) {
         CommandSender sender = event.getSender();
-        String line = event.getCommand();
+        String line = RecordingSupport.safeText(event.getCommand());
         String head = extractHead(line);
 
         Origin origin;

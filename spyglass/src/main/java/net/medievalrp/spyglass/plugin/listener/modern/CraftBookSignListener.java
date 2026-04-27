@@ -103,7 +103,7 @@ public final class CraftBookSignListener implements RecordingListener {
         if (line == null) {
             return null;
         }
-        String plain = PLAIN.serialize(line).trim();
+        String plain = RecordingSupport.safeText(PLAIN.serialize(line)).trim();
         if (plain.length() < 3) {
             return null;
         }
