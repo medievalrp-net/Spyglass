@@ -20,9 +20,9 @@ import org.incendo.cloud.paper.LegacyPaperCommandManager;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
-public final class OmniCommands {
+public final class SpyglassCommands {
 
-    private static final List<String> ROOT_ALIASES = List.of("omni2", "omniv2", "o2", "spyglass");
+    private static final List<String> ROOT_ALIASES = List.of("spyglass");
 
     private final JavaPlugin plugin;
     private final SpyglassApi api;
@@ -33,9 +33,9 @@ public final class OmniCommands {
     private final PageCache pageCache;
     private final ToolService tool;
     private final TeleportService teleport;
-    private final OmniSuggestions suggestions;
+    private final SpyglassSuggestions suggestions;
 
-    public OmniCommands(JavaPlugin plugin,
+    public SpyglassCommands(JavaPlugin plugin,
                         SpyglassApi api,
                         HelpService help,
                         SearchService search,
@@ -44,7 +44,7 @@ public final class OmniCommands {
                         PageCache pageCache,
                         ToolService tool,
                         TeleportService teleport,
-                        OmniSuggestions suggestions) {
+                        SpyglassSuggestions suggestions) {
         this.plugin = plugin;
         this.api = api;
         this.help = help;
@@ -58,7 +58,7 @@ public final class OmniCommands {
     }
 
     // v1-compat subcommand aliases. Operators have years of muscle memory
-    // around {@code /omni l} and {@code /omni rb}; v2 originally exposed
+    // around {@code /spyglass l} and {@code /spyglass rb}; v2 originally exposed
     // only the long names. Each list is shipped to {@link #subcommand}
     // which registers the same handler under every alias.
     private static final List<String> SEARCH_ALIASES = List.of("search", "s", "sc", "lookup", "l");
@@ -130,7 +130,7 @@ public final class OmniCommands {
                         .handler(ctx -> tool.toggle(ctx.sender())));
             }
 
-            // /omni2 tele <world> <x> <y> <z> — wired to search-result click
+            // /spyglass tele <world> <x> <y> <z> — wired to search-result click
             // events so staff can jump to the scene of an incident.
             manager.command(manager.commandBuilder(root).literal("tele")
                     .required("world", StringParser.stringParser())

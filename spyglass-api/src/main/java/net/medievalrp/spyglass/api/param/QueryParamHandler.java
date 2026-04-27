@@ -6,7 +6,7 @@ import org.bukkit.command.CommandSender;
 
 /**
  * Extension point for adding custom search parameters to {@code
- * /omni2 search}, {@code /omni2 rollback}, etc. Register via {@link
+ * /spyglass search}, {@code /spyglass rollback}, etc. Register via {@link
  * net.medievalrp.spyglass.api.SpyglassApi#registerQueryParamHandler}.
  *
  * <p>A handler claims one or more aliases (e.g. {@code "faction"} so
@@ -65,7 +65,7 @@ public interface QueryParamHandler {
 
     /**
      * Whether this alias should suppress the implicit
-     * {@code radius=N} that {@code /omni2 search} normally injects
+     * {@code radius=N} that {@code /spyglass search} normally injects
      * when no spatial constraint is present. Override to return
      * {@code true} for aliases that already constrain the search
      * spatially or globally (e.g. a faction-territory param).

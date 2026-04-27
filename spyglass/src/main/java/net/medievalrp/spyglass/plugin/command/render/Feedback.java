@@ -7,16 +7,16 @@ import org.jetbrains.annotations.ApiStatus;
 
 /**
  * Prefixed Adventure components for the common sender feedback categories,
- * matching v1's {@code «v1» (Error) ...} house style so an operator
+ * matching v1's {@code «Spyglass» (Error) ...} house style so an operator
  * moving between plugins sees consistent chat framing.
  */
 @ApiStatus.Internal
 public final class Feedback {
 
-    /** «v1» — green brackets, aqua name, reused across every message. */
+    /** «Spyglass» — green brackets, aqua name, reused across every message. */
     public static final Component PREFIX = Component.text()
             .append(Component.text("«", NamedTextColor.GREEN))
-            .append(Component.text("v1", NamedTextColor.AQUA))
+            .append(Component.text("Spyglass", NamedTextColor.AQUA))
             .append(Component.text("»", NamedTextColor.GREEN))
             .build();
 
@@ -47,7 +47,7 @@ public final class Feedback {
                 .build();
     }
 
-    /** `«v1»<green>message</green>` — matches v1's Formatter.success. */
+    /** `«Spyglass»<green>message</green>` — matches v1's Formatter.success. */
     public static Component success(String message) {
         return Component.text()
                 .append(PREFIX)
@@ -70,7 +70,7 @@ public final class Feedback {
         return Component.text(message, NamedTextColor.GREEN);
     }
 
-    /** `«v1» --- TARGET at x y z ---` — used by the wand before a lookup. */
+    /** `«Spyglass» --- TARGET at x y z ---` — used by the wand before a lookup. */
     public static Component inspectHeader(String target, BlockLocation location) {
         return Component.text()
                 .append(PREFIX)

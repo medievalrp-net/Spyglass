@@ -10,7 +10,7 @@ Decision record + verification log for the AsyncRecorder no-drop fix landed 2026
 
 This was v1's behaviour, has been for as long as v1 has run on MedievalRP, and is the behaviour operators expect from an audit-logging plugin. v2 inherits the same contract verbatim. If `record()` returns, the event is durable — modulo two narrow remaining loss paths described below, both of which v1 has the same exposure to.
 
-The contract is non-negotiable. An audit log that silently drops events under load can't be trusted: if `/omni rollback` returns "no events here" or `/omni inspect` shows a clean block, the operator has no way to tell whether nothing happened or the plugin lost the record. That ambiguity destroys the tool's value, and there is no useful UX that reintroduces it.
+The contract is non-negotiable. An audit log that silently drops events under load can't be trusted: if `/spyglass rollback` returns "no events here" or `/spyglass inspect` shows a clean block, the operator has no way to tell whether nothing happened or the plugin lost the record. That ambiguity destroys the tool's value, and there is no useful UX that reintroduces it.
 
 ## What changed and why
 
@@ -93,7 +93,7 @@ Three signals surface backlog problems in the plugin log, designed to give opera
 
 3. **Shutdown flush failure.** `SEVERE: Recorder shutdown flush gave up within deadline; N records could not be persisted and are lost. Mongo was unreachable through the full flush-timeout. Consider spill-to-disk if zero-loss across Mongo outages is required.` This is the catastrophic case — operators should investigate Mongo availability and consider whether `flush-timeout` needs to be longer or whether spill-to-disk is needed.
 
-`ShutdownReport.dropped()` is the programmatic counterpart to signal #3. The plugin's `onDisable` logs the report; future versions could expose it via a `/omni stats` command.
+`ShutdownReport.dropped()` is the programmatic counterpart to signal #3. The plugin's `onDisable` logs the report; future versions could expose it via a `/spyglass stats` command.
 
 ## Configuration
 
@@ -127,4 +127,4 @@ The contract holds today. Re-evaluate these in priority order if the conditions 
 
 1. **Spill-to-disk.** If a missing-event incident is ever traced to JVM crash or to flush-deadline exhaustion, this becomes the right answer. Existing API surface (`Recorder.record()`, `Recorder.shutdown()`) doesn't change; only the implementation under it.
 2. **Backpressure signalling to listeners.** If queue depth ever sustainedly exceeds operator tolerance (the warn line is firing for hours rather than minutes), the listeners could read a `Recorder.depth()` signal and shed expensive optional captures (block-state extraction, container-NBT scrapes) ahead of recording. Lossy by design at the listener layer, but the lossy decision is observable and configurable rather than buried in a queue.
-3. **`/omni stats` command.** Surface `drained` / `dropped` / `remaining` and queue high-water from the running recorder without needing to grep the log. Cheap to add when there's a concrete operator ask.
+3. **`/spyglass stats` command.** Surface `drained` / `dropped` / `remaining` and queue high-water from the running recorder without needing to grep the log. Cheap to add when there's a concrete operator ask.
