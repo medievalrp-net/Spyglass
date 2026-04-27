@@ -77,7 +77,8 @@ class ItemLoreParamTest {
 
     @Test
     void aliasesCoverBothShortAndLong() {
-        assertThat(new ItemLoreParam().aliases()).containsExactly("ilore", "itemlore");
+        // {@code d} is restored from v1's {@code ItemDescParameter}.
+        assertThat(new ItemLoreParam().aliases()).containsExactly("ilore", "itemlore", "d");
     }
 
     private static ParamContext ctx() {

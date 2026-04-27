@@ -5,6 +5,7 @@ import java.util.List;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
+import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import org.bukkit.Material;
 import org.bukkit.block.Banner;
 import org.bukkit.block.BlockState;
@@ -105,6 +106,7 @@ public final class BlockSnapshots {
     private static List<String> lines(Sign sign, Side side) {
         return sign.getSide(side).lines().stream()
                 .map(PlainTextComponentSerializer.plainText()::serialize)
+                .map(RecordingSupport::safeText)
                 .toList();
     }
 }

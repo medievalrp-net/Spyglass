@@ -18,6 +18,7 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ContainerContents;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.plugin.util.MultiBlockPartners;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.event.EventHandler;
@@ -58,6 +59,15 @@ public final class EntityExplodeListener implements RecordingListener {
         }
         for (Block dependent : BlockDependents.collectDependentsBeyond(event.blockList())) {
             emitBreak(dependent, occurred, origin, source);
+        }
+        // Bed pairs, door halves, tall flowers, and cactus/sugar-cane/
+        // kelp/bamboo stacks vanilla removes silently when the host is
+        // destroyed — none of these surface as their own break events,
+        // and they aren't dependents in the {@link BlockDependents}
+        // taxonomy. v1 captured them via {@code saveMultiBreak}; this
+        // restores parity for explosions.
+        for (Block partner : MultiBlockPartners.partnersBeyond(event.blockList())) {
+            emitBreak(partner, occurred, origin, source);
         }
     }
 
