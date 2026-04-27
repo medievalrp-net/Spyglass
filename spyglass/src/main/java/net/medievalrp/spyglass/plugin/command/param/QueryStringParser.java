@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import net.medievalrp.spyglass.api.SpyglassApi;
+import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
 import net.medievalrp.spyglass.api.query.Flag;
@@ -37,13 +38,7 @@ public final class QueryStringParser {
         BlockLocation senderLocation = senderLocation(sender);
         QueryParamHandler.ParamContext context = new QueryParamHandler.ParamContext(sender, senderLocation, config.limits().maxRadius());
 
-        List<QueryPredicate> predicates = new ArrayList<>();
-        EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
-        Sort sort = Sort.NEWEST_FIRST;
-        Set<String> usedHandlerAliases = new LinkedHashSet<>();
-        boolean defaultRadiusSuppressed = false;
-        boolean sawTime = false;
-        boolean global = false;
+        ParseState state = new ParseState();
 
         if (raw != null && !raw.isBlank()) {
             for (String token : raw.trim().split("\\s+")) {
@@ -58,67 +53,7 @@ public final class QueryStringParser {
                         flagValue = name.substring(eq + 1);
                         name = name.substring(0, eq);
                     }
-                    switch (name) {
-                        case "ng", "nogroup" -> flags.add(Flag.NO_GROUP);
-                        case "g", "global" -> {
-                            flags.add(Flag.GLOBAL);
-                            global = true;
-                            defaultRadiusSuppressed = true;
-                        }
-                        case "nc", "nochat" -> flags.add(Flag.NO_CHAT);
-                        case "ex", "extended" -> flags.add(Flag.EXTENDED);
-                        case "we", "worldedit" -> {
-                            if (!(sender instanceof Player player)) {
-                                throw new ParamParseException("Flag -we requires a player with a WorldEdit selection.");
-                            }
-                            if (!sender.hasPermission("spyglass.worldedit")) {
-                                throw new ParamParseException("Missing permission spyglass.worldedit.");
-                            }
-                            if (!isWorldEditLoaded()) {
-                                throw new ParamParseException("WorldEdit is not installed.");
-                            }
-                            WorldEditSelection.Box box = WorldEditSelection.currentBox(player);
-                            if (box == null) {
-                                throw new ParamParseException("No active WorldEdit selection.");
-                            }
-                            predicates.add(cuboid(box));
-                            defaultRadiusSuppressed = true;
-                        }
-                        case "ord", "order" -> {
-                            if (flagValue == null) {
-                                throw new ParamParseException("Flag -ord requires a value (asc/desc).");
-                            }
-                            sort = switch (flagValue) {
-                                case "asc", "old", "oldest" -> Sort.OLDEST_FIRST;
-                                case "desc", "new", "newest" -> Sort.NEWEST_FIRST;
-                                default -> throw new ParamParseException("Unknown order: " + flagValue);
-                            };
-                        }
-                        case "nod", "nodefault" -> {
-                            // `-nod=r,t` suppresses the per-param defaults
-                            // for the given aliases. v1 used this so
-                            // operators could skip the default radius
-                            // OR default time without disabling the
-                            // config-level `defaults.enabled` switch.
-                            if (flagValue == null || flagValue.isBlank()) {
-                                throw new ParamParseException(
-                                        "Flag -nod requires a value (comma-separated param aliases).");
-                            }
-                            for (String aliasRaw : flagValue.split(",")) {
-                                String paramAlias = aliasRaw.trim();
-                                if (paramAlias.isEmpty()) {
-                                    continue;
-                                }
-                                switch (paramAlias) {
-                                    case "r", "radius" -> defaultRadiusSuppressed = true;
-                                    case "t", "since", "time" -> sawTime = true;
-                                    default -> throw new ParamParseException(
-                                            "Flag -nod: unknown default-bearing alias: " + paramAlias);
-                                }
-                            }
-                        }
-                        default -> throw new ParamParseException("Unknown flag: -" + name);
-                    }
+                    applyFlag(name, flagValue, sender, context, state);
                     continue;
                 }
 
@@ -133,25 +68,39 @@ public final class QueryStringParser {
                     value = token.substring(colon + 1);
                 }
 
+                // v1-compat: {@code we:1}, {@code ord:asc}, {@code nod:r}
+                // were flags-by-colon in v1. Route them through the same
+                // flag handler so muscle memory keeps working.
+                if (isFlagAlias(alias)) {
+                    applyFlag(alias, value, sender, context, state);
+                    continue;
+                }
+
                 Optional<QueryParamHandler> handler = api.queryParam(alias);
                 if (handler.isEmpty()) {
                     throw new ParamParseException("Unknown parameter: " + alias);
                 }
                 QueryParamHandler h = handler.get();
-                if (usedHandlerAliases.contains(canonicalAlias(h))) {
+                if (state.usedHandlerAliases.contains(canonicalAlias(h))) {
                     throw new ParamParseException("Duplicate parameter: " + alias);
                 }
                 QueryPredicate predicate = h.parse(alias, value, context);
-                predicates.add(predicate);
-                usedHandlerAliases.add(canonicalAlias(h));
+                state.predicates.add(predicate);
+                state.usedHandlerAliases.add(canonicalAlias(h));
                 if (h.suppressesDefaultRadius(alias)) {
-                    defaultRadiusSuppressed = true;
+                    state.defaultRadiusSuppressed = true;
                 }
                 if (h instanceof TimeParam) {
-                    sawTime = true;
+                    state.sawTime = true;
                 }
             }
         }
+        List<QueryPredicate> predicates = state.predicates;
+        EnumSet<Flag> flags = state.flags;
+        Sort sort = state.sort;
+        boolean defaultRadiusSuppressed = state.defaultRadiusSuppressed;
+        boolean sawTime = state.sawTime;
+        boolean global = state.global;
 
         if (config.defaults().enabled()) {
             if (!defaultRadiusSuppressed && !global && senderLocation != null) {
@@ -167,6 +116,136 @@ public final class QueryStringParser {
         int limit = overrideLimit > 0 ? overrideLimit : config.limits().searchResult();
         boolean grouping = !flags.contains(Flag.NO_GROUP);
         return new QueryRequest(predicates, sort, limit, flags, grouping);
+    }
+
+    private static boolean isFlagAlias(String alias) {
+        return switch (alias) {
+            case "we", "worldedit",
+                 "ord", "order",
+                 "nod", "nodefault",
+                 "ng", "nogroup",
+                 "g", "global",
+                 "nc", "nochat",
+                 "ex", "extended" -> true;
+            default -> false;
+        };
+    }
+
+    /** Reserved flag aliases — {@link #applyFlag} handles these
+     *  directly and a custom {@link FlagHandler} cannot shadow them. */
+    private static boolean isBuiltinFlag(String alias) {
+        return switch (alias) {
+            case "ng", "nogroup",
+                 "g", "global",
+                 "nc", "nochat",
+                 "ex", "extended",
+                 "we", "worldedit",
+                 "ord", "order",
+                 "nod", "nodefault" -> true;
+            default -> false;
+        };
+    }
+
+    private void applyFlag(String name, String flagValue, CommandSender sender,
+                           QueryParamHandler.ParamContext context, ParseState state)
+            throws ParamParseException {
+        // Built-ins win over custom flags. A third-party plugin can't
+        // shadow `-g` by registering a `g` FlagHandler — the parser
+        // checks the switch below first and the lookup never runs.
+        if (!isBuiltinFlag(name)) {
+            Optional<FlagHandler> handler = api.flag(name);
+            if (handler.isPresent()) {
+                FlagHandler h = handler.get();
+                QueryPredicate predicate = h.parse(name, flagValue, context);
+                state.predicates.add(predicate);
+                if (h.suppressesDefaultRadius(name)) {
+                    state.defaultRadiusSuppressed = true;
+                }
+                return;
+            }
+        }
+        switch (name) {
+            case "ng", "nogroup" -> state.flags.add(Flag.NO_GROUP);
+            case "g", "global" -> {
+                state.flags.add(Flag.GLOBAL);
+                state.global = true;
+                state.defaultRadiusSuppressed = true;
+            }
+            case "nc", "nochat" -> state.flags.add(Flag.NO_CHAT);
+            case "ex", "extended" -> state.flags.add(Flag.EXTENDED);
+            case "we", "worldedit" -> {
+                if (!(sender instanceof Player player)) {
+                    throw new ParamParseException("Flag we requires a player with a WorldEdit selection.");
+                }
+                if (!sender.hasPermission("spyglass.worldedit")) {
+                    throw new ParamParseException("Missing permission spyglass.worldedit.");
+                }
+                if (!isWorldEditLoaded()) {
+                    throw new ParamParseException("WorldEdit is not installed.");
+                }
+                WorldEditSelection.Box box = WorldEditSelection.currentBox(player);
+                if (box == null) {
+                    throw new ParamParseException("No active WorldEdit selection.");
+                }
+                // Cap per-axis span at {@code 2 * maxRadius}: a cuboid that
+                // exceeds the same bounding box as the largest legitimate
+                // {@code r:N} sphere would do unbounded work in the DB.
+                // Without this, a player who selects from -30M to +30M
+                // dispatches a 60M-block range query that wedges Mongo /
+                // ClickHouse for minutes.
+                int maxAxis = config.limits().maxRadius() * 2;
+                long spanX = (long) box.max().x() - box.min().x();
+                long spanY = (long) box.max().y() - box.min().y();
+                long spanZ = (long) box.max().z() - box.min().z();
+                if (spanX > maxAxis || spanY > maxAxis || spanZ > maxAxis) {
+                    throw new ParamParseException(
+                            "WorldEdit selection too large (max " + maxAxis
+                                    + " blocks per axis; got " + spanX + "x" + spanY + "x" + spanZ + ").");
+                }
+                state.predicates.add(cuboid(box));
+                state.defaultRadiusSuppressed = true;
+            }
+            case "ord", "order" -> {
+                if (flagValue == null) {
+                    throw new ParamParseException("Flag ord requires a value (asc/desc).");
+                }
+                state.sort = switch (flagValue) {
+                    case "asc", "old", "oldest" -> Sort.OLDEST_FIRST;
+                    case "desc", "new", "newest" -> Sort.NEWEST_FIRST;
+                    default -> throw new ParamParseException("Unknown order: " + flagValue);
+                };
+            }
+            case "nod", "nodefault" -> {
+                if (flagValue == null || flagValue.isBlank()) {
+                    throw new ParamParseException(
+                            "Flag nod requires a value (comma-separated param aliases).");
+                }
+                for (String aliasRaw : flagValue.split(",")) {
+                    String paramAlias = aliasRaw.trim();
+                    if (paramAlias.isEmpty()) {
+                        continue;
+                    }
+                    switch (paramAlias) {
+                        case "r", "radius" -> state.defaultRadiusSuppressed = true;
+                        case "t", "since", "time" -> state.sawTime = true;
+                        default -> throw new ParamParseException(
+                                "Flag nod: unknown default-bearing alias: " + paramAlias);
+                    }
+                }
+            }
+            default -> throw new ParamParseException("Unknown flag: " + name);
+        }
+    }
+
+    /** Mutable box of state threaded through {@link #applyFlag}. */
+    private static final class ParseState {
+        final List<QueryPredicate> predicates = new ArrayList<>();
+        final EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
+        final Set<String> usedHandlerAliases = new LinkedHashSet<>();
+        Sort sort = Sort.NEWEST_FIRST;
+        boolean defaultRadiusSuppressed = false;
+        boolean sawTime = false;
+        boolean global = false;
     }
 
     public static BlockLocation senderLocation(CommandSender sender) {

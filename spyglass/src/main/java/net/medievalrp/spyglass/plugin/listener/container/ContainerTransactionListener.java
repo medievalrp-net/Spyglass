@@ -13,10 +13,14 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.InventoryActions;
 import net.medievalrp.spyglass.plugin.util.InventoryActions.Direction;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Container;
 import org.bukkit.block.ShulkerBox;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.minecart.HopperMinecart;
+import org.bukkit.entity.minecart.StorageMinecart;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.inventory.InventoryAction;
@@ -25,6 +29,7 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
 
 @ApiStatus.Internal
 public final class ContainerTransactionListener implements RecordingListener {
@@ -65,10 +70,11 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
 
         InventoryHolder holder = clicked.getHolder();
-        if (!(holder instanceof Container container)) {
+        if (holder instanceof ShulkerBox) {
             return;
         }
-        if (holder instanceof ShulkerBox) {
+        ContainerTarget containerTarget = resolveTarget(holder);
+        if (containerTarget == null) {
             return;
         }
 
@@ -77,12 +83,12 @@ public final class ContainerTransactionListener implements RecordingListener {
         ItemStack cursor = event.getCursor();
 
         if (action == InventoryAction.SWAP_WITH_CURSOR) {
-            handleSwap(container, player, slot, slotItem, cursor, occurred);
+            handleSwap(containerTarget, player, slot, slotItem, cursor, occurred);
             return;
         }
 
         if (action == InventoryAction.HOTBAR_SWAP || action == InventoryAction.HOTBAR_MOVE_AND_READD) {
-            handleHotbarSwap(event, container, player, slot, slotItem, occurred);
+            handleHotbarSwap(event, containerTarget, player, slot, slotItem, occurred);
             return;
         }
 
@@ -95,8 +101,8 @@ public final class ContainerTransactionListener implements RecordingListener {
             return;
         }
 
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String containerType = container.getBlock().getType().name();
+        BlockLocation location = containerTarget.location();
+        String containerType = containerTarget.type();
         StoredItem before = ItemSerialization.storedItem(slot, slotItem);
 
         switch (direction) {
@@ -126,10 +132,11 @@ public final class ContainerTransactionListener implements RecordingListener {
         boolean clickedIsTop = clicked.equals(top);
 
         InventoryHolder topHolder = top.getHolder();
-        if (!(topHolder instanceof Container container)) {
+        if (topHolder instanceof ShulkerBox) {
             return;
         }
-        if (topHolder instanceof ShulkerBox) {
+        ContainerTarget containerTarget = resolveTarget(topHolder);
+        if (containerTarget == null) {
             return;
         }
 
@@ -138,8 +145,8 @@ public final class ContainerTransactionListener implements RecordingListener {
             return;
         }
         int amount = moved.getAmount();
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String containerType = container.getBlock().getType().name();
+        BlockLocation location = containerTarget.location();
+        String containerType = containerTarget.type();
         StoredItem before = ItemSerialization.storedItem(event.getSlot(), moved);
 
         if (clickedIsTop) {
@@ -162,7 +169,7 @@ public final class ContainerTransactionListener implements RecordingListener {
                 location, moved.getType().name(), containerType, -1, amount, null, before));
     }
 
-    private void handleHotbarSwap(InventoryClickEvent event, Container container, Player player,
+    private void handleHotbarSwap(InventoryClickEvent event, ContainerTarget containerTarget, Player player,
                                   int slot, ItemStack slotItem, Instant occurred) {
         int hotbarButton = event.getHotbarButton();
         if (hotbarButton < 0) {
@@ -174,8 +181,8 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (!slotHadItem && !hotbarHadItem) {
             return;
         }
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String containerType = container.getBlock().getType().name();
+        BlockLocation location = containerTarget.location();
+        String containerType = containerTarget.type();
         if (slotHadItem) {
             StoredItem stored = ItemSerialization.storedItem(slot, slotItem);
             recorder.record(new ContainerWithdrawRecord(
@@ -196,10 +203,10 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
     }
 
-    private void handleSwap(Container container, Player player, int slot,
+    private void handleSwap(ContainerTarget containerTarget, Player player, int slot,
                             ItemStack slotItem, ItemStack cursor, Instant occurred) {
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String containerType = container.getBlock().getType().name();
+        BlockLocation location = containerTarget.location();
+        String containerType = containerTarget.type();
         boolean hadSlotItem = slotItem != null && slotItem.getType() != Material.AIR;
         boolean hadCursorItem = cursor != null && cursor.getType() != Material.AIR;
         if (!hadSlotItem && !hadCursorItem) {
@@ -223,5 +230,39 @@ public final class ContainerTransactionListener implements RecordingListener {
                     hadSlotItem ? ItemSerialization.storedItem(slot, slotItem) : null,
                     ItemSerialization.storedItem(slot, cursor)));
         }
+    }
+
+    /**
+     * Resolve any inventory holder we care about into a uniform
+     * (BlockLocation, type-name) pair so the deposit / withdraw flow
+     * doesn't have to special-case minecart inventories vs block
+     * containers all over the place. Returns null for holders we
+     * don't track (player inventory, anvils, brewing stands, etc.).
+     */
+    private static @Nullable ContainerTarget resolveTarget(@Nullable InventoryHolder holder) {
+        if (holder instanceof Container blockContainer) {
+            Location loc = blockContainer.getBlock().getLocation();
+            return new ContainerTarget(BlockLocations.fromLocation(loc),
+                    blockContainer.getBlock().getType().name());
+        }
+        // Storage / hopper minecarts use the entity's current location
+        // — they're moving inventories, so the recorded location is a
+        // snapshot at deposit/withdraw time.
+        if (holder instanceof StorageMinecart cart) {
+            return entityTarget(cart);
+        }
+        if (holder instanceof HopperMinecart cart) {
+            return entityTarget(cart);
+        }
+        return null;
+    }
+
+    private static ContainerTarget entityTarget(Entity entity) {
+        return new ContainerTarget(
+                BlockLocations.fromLocation(entity.getLocation()),
+                entity.getType().name());
+    }
+
+    private record ContainerTarget(BlockLocation location, String type) {
     }
 }

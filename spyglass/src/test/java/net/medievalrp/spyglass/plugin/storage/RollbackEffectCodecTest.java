@@ -97,6 +97,23 @@ class RollbackEffectCodecTest {
     }
 
     @Test
+    void roundTripsCustom() {
+        byte[] payload = new byte[]{1, 2, 3, 4, 5};
+        RollbackEffect.Custom original = new RollbackEffect.Custom(
+                "faction-territory",
+                new BlockLocation(WORLD, "world", 9, 70, -3),
+                payload);
+
+        RollbackEffect decoded = decode(encode(original));
+
+        assertThat(decoded).isInstanceOf(RollbackEffect.Custom.class);
+        RollbackEffect.Custom roundTripped = (RollbackEffect.Custom) decoded;
+        assertThat(roundTripped.type()).isEqualTo("faction-territory");
+        assertThat(roundTripped.location()).isEqualTo(original.location());
+        assertThat(roundTripped.payload()).containsExactly(1, 2, 3, 4, 5);
+    }
+
+    @Test
     void roundTripsEntitySpawnAndRemove() {
         RollbackEffect.EntitySpawn spawn = new RollbackEffect.EntitySpawn(
                 new BlockLocation(WORLD, "world", 5, 64, 5), "ZOMBIE", "<nbt-bytes>");

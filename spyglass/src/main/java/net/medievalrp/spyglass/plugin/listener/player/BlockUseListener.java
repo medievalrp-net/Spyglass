@@ -42,11 +42,18 @@ public final class BlockUseListener implements RecordingListener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND) {
-            return;
-        }
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK
-                && event.getAction() != Action.LEFT_CLICK_BLOCK) {
+        Action action = event.getAction();
+        // Pressure plates fire PHYSICAL on player step. Ignore the
+        // hand check for PHYSICAL — Bukkit reports that with no
+        // EquipmentSlot. Skip the off-hand PHYSICAL spam from
+        // RIGHT/LEFT click cases.
+        if (action == Action.PHYSICAL) {
+            // pass through
+        } else if (action == Action.RIGHT_CLICK_BLOCK || action == Action.LEFT_CLICK_BLOCK) {
+            if (event.getHand() != EquipmentSlot.HAND) {
+                return;
+            }
+        } else {
             return;
         }
         Block block = event.getClickedBlock();
@@ -66,6 +73,19 @@ public final class BlockUseListener implements RecordingListener {
         if (Tag.BUTTONS.isTagged(type)) {
             return true;
         }
+        if (Tag.PRESSURE_PLATES.isTagged(type)) {
+            return true;
+        }
+        // v1's {@code EventUseListener} matched the {@code Openable}
+        // {@link org.bukkit.block.data.BlockData} interface, which covers
+        // doors / trapdoors / fence gates uniformly. Tag.* gives us the
+        // same coverage without per-material enumeration that breaks each
+        // time a wood type is added.
+        if (Tag.DOORS.isTagged(type)
+                || Tag.TRAPDOORS.isTagged(type)
+                || Tag.FENCE_GATES.isTagged(type)) {
+            return true;
+        }
         return switch (type) {
             case LEVER,
                  NOTE_BLOCK,
@@ -73,7 +93,10 @@ public final class BlockUseListener implements RecordingListener {
                  REPEATER,
                  COMPARATOR,
                  SCULK_SENSOR,
-                 CALIBRATED_SCULK_SENSOR -> true;
+                 CALIBRATED_SCULK_SENSOR,
+                 // {@code CAKE} — v1 logged each bite. Useful to spot
+                 // a player eating someone else's birthday cake.
+                 CAKE -> true;
             default -> false;
         };
     }

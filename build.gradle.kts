@@ -4,6 +4,7 @@ plugins {
 
 val paperApiVersion = "1.21.8-R0.1-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
+val clickhouseClientVersion = "0.9.8"
 val configurateVersion = "4.2.0"
 val cloudMinecraftVersion = "2.0.0-beta.15"
 val cloudCoreVersion = "2.0.0"
@@ -40,16 +41,18 @@ subprojects {
                 element = "BUNDLE"
                 limit {
                     counter = "LINE"
-                    // Current coverage floor. Raised incrementally as
-                    // tests accumulate — 0.05 at Phase 0, 0.10 after
-                    // Phase 2, 0.15 after Phase 3. Phase 3 hits
-                    // api=17.4% / plugin=16.4% in practice; 0.15 is a
-                    // regression-prevention floor, not a target. True
-                    // targets per the v1.0.0 plan are 0.90 api / 0.80
-                    // plugin; see docs/report/gap/plan/plan.md §6.0.
+                    // Regression-prevention floor, sized just below the
+                    // current measured coverage so normal code growth
+                    // doesn't trip it but a deletion of a tested area
+                    // does. Trajectory: 0.05 (Phase 0) → 0.10 (Phase 2)
+                    // → 0.15 (Phase 3) → current values after the
+                    // listener / WAL-recovery / rollback-chaos suites
+                    // landed (api 16.6% LINE, plugin 29.4% LINE).
+                    // Final targets per the v1.0.0 plan remain 0.90 api
+                    // / 0.80 plugin (docs/report/gap/plan/plan.md §6.0).
                     minimum = when (project.name) {
-                        "spyglass-api" -> 0.15.toBigDecimal()
-                        "spyglass" -> 0.15.toBigDecimal()
+                        "spyglass-api" -> 0.16.toBigDecimal()
+                        "spyglass" -> 0.28.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
@@ -90,6 +93,7 @@ tasks.register("deployToRpServer") {
 extra.apply {
     set("paperApiVersion", paperApiVersion)
     set("mongoDriverVersion", mongoDriverVersion)
+    set("clickhouseClientVersion", clickhouseClientVersion)
     set("configurateVersion", configurateVersion)
     set("cloudMinecraftVersion", cloudMinecraftVersion)
     set("cloudCoreVersion", cloudCoreVersion)

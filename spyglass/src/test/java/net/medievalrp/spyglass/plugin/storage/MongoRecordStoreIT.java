@@ -54,8 +54,15 @@ class MongoRecordStoreIT {
         container.start();
         String uri = container.getReplicaSetUrl();
         rawClient = MongoClients.create(uri);
-        SpyglassConfig.Database config = new SpyglassConfig.Database(uri, "IT", "EventRecords");
+        SpyglassConfig.Database config = new SpyglassConfig.Database(
+                SpyglassConfig.Backend.MONGO, uri, "IT", "EventRecords",
+                stubClickHouse());
         store = new MongoRecordStore(config, new IndexManager());
+    }
+
+    private static SpyglassConfig.ClickHouse stubClickHouse() {
+        return new SpyglassConfig.ClickHouse(
+                "localhost", 8123, "x", "x", "default", "", false);
     }
 
     @AfterAll

@@ -69,13 +69,15 @@ public final class EntityNamingListener implements RecordingListener {
         if (meta == null || !meta.hasDisplayName()) {
             return;
         }
-        String newName = PLAIN.serialize(Objects.requireNonNullElse(
-                meta.displayName(), Component.empty()));
+        String newName = RecordingSupport.safeText(PLAIN.serialize(Objects.requireNonNullElse(
+                meta.displayName(), Component.empty())));
         if (newName.isBlank()) {
             return;
         }
         Component currentCustomName = living.customName();
-        String oldName = currentCustomName == null ? null : PLAIN.serialize(currentCustomName);
+        String oldName = currentCustomName == null
+                ? null
+                : RecordingSupport.safeText(PLAIN.serialize(currentCustomName));
         if (newName.equals(oldName)) {
             return;
         }

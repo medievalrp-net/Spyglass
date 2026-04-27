@@ -18,6 +18,7 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ContainerContents;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.plugin.util.MultiBlockPartners;
 import net.medievalrp.spyglass.plugin.util.PlayerSourceMetadata;
 import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
@@ -70,6 +71,9 @@ public final class BlockExplodeListener implements RecordingListener {
         // missing it until this pass.
         for (Block dependent : BlockDependents.collectDependentsBeyond(event.blockList())) {
             emitBreak(dependent, occurred, origin, source);
+        }
+        for (Block partner : MultiBlockPartners.partnersBeyond(event.blockList())) {
+            emitBreak(partner, occurred, origin, source);
         }
     }
 
