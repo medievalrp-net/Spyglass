@@ -1,4 +1,4 @@
-# Omniscience2
+# Spyglass
 
 A Paper 1.21.8 forensic logging + rollback plugin for MedievalRP, and the API library plugins integrate against.
 
@@ -6,7 +6,7 @@ Successor to the MPL-licensed [Omniscience](../Omniscience). Built clean-room fr
 
 ## Status
 
-`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/omni2 tool` inspection wand, and an automated regression harness.
+`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/spyglass tool` inspection wand, and an automated regression harness.
 
 ## Requirements
 
@@ -17,10 +17,10 @@ Successor to the MPL-licensed [Omniscience](../Omniscience). Built clean-room fr
 
 ## Install (fresh)
 
-1. Drop `Omniscience2-1.0.0.jar` into `plugins/`.
-2. Start the server once to generate `plugins/Omniscience2/config.conf`.
+1. Drop `Spyglass-1.0.0.jar` into `plugins/`.
+2. Start the server once to generate `plugins/Spyglass/config.conf`.
 3. Edit `config.conf` to point `database.uri` at your Mongo. Restart.
-4. Grant `omniscience2.use`, `omniscience2.search`, `omniscience2.rollback`, `omniscience2.tool` to trusted roles.
+4. Grant `spyglass.use`, `spyglass.search`, `spyglass.rollback`, `spyglass.tool` to trusted roles.
 
 ## Relationship to the legacy MPL Omniscience
 
@@ -33,16 +33,16 @@ This plugin is a fresh install with no migration path from the legacy MPL Omnisc
 ./gradlew :plugin:shadowJar      # just the shaded plugin jar
 ./gradlew deployToRpServer       # jar + copy to ../RP_Server/plugins/
 ./gradlew regression             # live regression against ../RP_Server
-./gradlew :api:publishApiPublicationToLocalRepository  # publish omniscience2-api:1.0.0
+./gradlew :api:publishApiPublicationToLocalRepository  # publish spyglass-api:1.0.0
 ```
 
 ## Running the regression harness
 
-Requires Python 3.9+, `pip install --user mcrcon pymongo`, Mongo at `localhost:27017`, and `../RP_Server` with Paper + both `Omniscience.jar` (v1) and `Omniscience2.jar` (v2) in `plugins/`. See [`regression/README.md`](regression/README.md).
+Requires Python 3.9+, `pip install --user mcrcon pymongo`, Mongo at `localhost:27017`, and `../RP_Server` with Paper + both `Omniscience.jar` (v1) and `Spyglass.jar` (v2) in `plugins/`. See [`regression/README.md`](regression/README.md).
 
 ## Modules
 
-- **`api/`** — public contract: typed event records, query predicates, rollback interfaces, extension points. Published separately so external plugins depend only on this (`net.medievalrp:omniscience2-api:1.0.0`).
+- **`api/`** — public contract: typed event records, query predicates, rollback interfaces, extension points. Published separately so external plugins depend only on this (`net.medievalrp:spyglass-api:1.0.0`).
 - **`plugin/`** — the Paper plugin: storage, listeners, commands, rendering, WorldEdit/FAWE integration. All internals marked `@ApiStatus.Internal`.
 
 ## Stack

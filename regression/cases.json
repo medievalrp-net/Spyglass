@@ -53,7 +53,7 @@
     "id": "help-loads",
     "description": "omniv2 help must print the title line",
     "v2": "omniv2 help",
-    "expected_output_contains": "Omniscience2",
+    "expected_output_contains": "Spyglass",
     "compare": "contains"
   },
   {

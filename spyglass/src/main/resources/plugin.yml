@@ -1,0 +1,23 @@
+name: Spyglass
+version: ${version}
+main: net.medievalrp.spyglass.plugin.SpyglassPlugin
+api-version: "1.21"
+authors:
+  - MedievalRP
+softdepend:
+  - WorldEdit
+  - FastAsyncWorldEdit
+  - CraftBook
+permissions:
+  spyglass.use:
+    default: op
+  spyglass.search:
+    default: op
+  spyglass.rollback:
+    default: op
+  spyglass.tool:
+    default: op
+  spyglass.worldedit:
+    default: op
+  spyglass.tele:
+    default: op

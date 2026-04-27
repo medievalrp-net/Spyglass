@@ -1,20 +1,20 @@
-# Omniscience2 API
+# Spyglass API
 
-Build plugins that record forensic events into Omniscience2, query
+Build plugins that record forensic events into Spyglass, query
 the event log, or extend its search and rendering. Compile against
-the `omniscience2-api` jar; the running Omniscience2 plugin provides
+the `spyglass-api` jar; the running Spyglass plugin provides
 the implementation at runtime via Bukkit's services manager.
 
 This document is the entire surface area you need. You don't need
-access to the Omniscience2 plugin source.
+access to the Spyglass plugin source.
 
 ---
 
 ## 1. Adding the dependency
 
-The API artifact is `net.medievalrp:omniscience2-api:1.0.0`. Mark it
+The API artifact is `net.medievalrp:spyglass-api:1.0.0`. Mark it
 `compileOnly` (Gradle) or `provided` (Maven) — at runtime the
-Omniscience2 plugin supplies the classes. Bundling them into your
+Spyglass plugin supplies the classes. Bundling them into your
 shaded jar will cause classloader conflicts.
 
 ### Gradle (Kotlin DSL)
@@ -25,7 +25,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("net.medievalrp:omniscience2-api:1.0.0")
+    compileOnly("net.medievalrp:spyglass-api:1.0.0")
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
 }
 ```
@@ -34,7 +34,7 @@ dependencies {
 
 ```groovy
 dependencies {
-    compileOnly 'net.medievalrp:omniscience2-api:1.0.0'
+    compileOnly 'net.medievalrp:spyglass-api:1.0.0'
     compileOnly 'io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT'
 }
 ```
@@ -44,7 +44,7 @@ dependencies {
 ```xml
 <dependency>
     <groupId>net.medievalrp</groupId>
-    <artifactId>omniscience2-api</artifactId>
+    <artifactId>spyglass-api</artifactId>
     <version>1.0.0</version>
     <scope>provided</scope>
 </dependency>
@@ -52,17 +52,17 @@ dependencies {
 
 ### Local jar (for prototyping)
 
-Drop `omniscience2-api-1.0.0.jar` into a `libs/` folder and:
+Drop `spyglass-api-1.0.0.jar` into a `libs/` folder and:
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/omniscience2-api-1.0.0.jar"))
+    compileOnly(files("libs/spyglass-api-1.0.0.jar"))
 }
 ```
 
 ### plugin.yml
 
-Declare a soft dependency so your plugin loads after Omniscience2 and
+Declare a soft dependency so your plugin loads after Spyglass and
 can degrade gracefully when it's absent:
 
 ```yaml
@@ -70,10 +70,10 @@ name: YourPlugin
 main: com.example.YourPlugin
 version: 1.0.0
 api-version: '1.21'
-softdepend: [Omniscience2]
+softdepend: [Spyglass]
 ```
 
-Use `depend` instead if Omniscience2 is mandatory for your plugin.
+Use `depend` instead if Spyglass is mandatory for your plugin.
 
 ---
 
@@ -84,19 +84,19 @@ during its own `onEnable()`. Your plugin obtains the singleton with a
 single call:
 
 ```java
-import net.medievalrp.omniscience2.api.Omniscience2Api;
+import net.medievalrp.spyglass.api.SpyglassApi;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class YourPlugin extends JavaPlugin {
 
-    private Omniscience2Api omni;
+    private SpyglassApi omni;
 
     @Override
     public void onEnable() {
-        omni = Bukkit.getServicesManager().load(Omniscience2Api.class);
+        omni = Bukkit.getServicesManager().load(SpyglassApi.class);
         if (omni == null) {
-            getLogger().warning("Omniscience2 not present; "
+            getLogger().warning("Spyglass not present; "
                     + "forensic integrations disabled.");
             return;
         }
@@ -105,7 +105,7 @@ public final class YourPlugin extends JavaPlugin {
 }
 ```
 
-`load()` returns `null` when Omniscience2 isn't installed. Always
+`load()` returns `null` when Spyglass isn't installed. Always
 null-check; never assume the API is there.
 
 ---
@@ -117,8 +117,8 @@ plugin does something the built-in listeners don't cover (a
 faction territory claim, a custom shop transaction, etc.).
 
 ```java
-import net.medievalrp.omniscience2.api.event.*;
-import net.medievalrp.omniscience2.api.util.BlockLocation;
+import net.medievalrp.spyglass.api.event.*;
+import net.medievalrp.spyglass.api.util.BlockLocation;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -206,7 +206,7 @@ a worker pool; chain with `thenAcceptAsync` (or hop back to the main
 thread with Bukkit's scheduler) before touching world state.
 
 ```java
-import net.medievalrp.omniscience2.api.query.*;
+import net.medievalrp.spyglass.api.query.*;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
@@ -302,12 +302,12 @@ per `(event, target)` tuple plus a count). Read them via
 
 ## 5. Adding a custom search parameter
 
-Want users to type `/omni2 search faction=red` and have your plugin
+Want users to type `/spyglass search faction=red` and have your plugin
 translate that into a predicate? Implement `QueryParamHandler`:
 
 ```java
-import net.medievalrp.omniscience2.api.param.*;
-import net.medievalrp.omniscience2.api.query.QueryPredicate;
+import net.medievalrp.spyglass.api.param.*;
+import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.bukkit.command.CommandSender;
 import java.util.List;
 
@@ -359,10 +359,10 @@ Where parameters use `alias=value`, flags use the dash form
 that read more naturally as toggles than as `key=value`:
 
 ```java
-import net.medievalrp.omniscience2.api.extension.FlagHandler;
-import net.medievalrp.omniscience2.api.param.ParamParseException;
-import net.medievalrp.omniscience2.api.param.QueryParamHandler.ParamContext;
-import net.medievalrp.omniscience2.api.query.QueryPredicate;
+import net.medievalrp.spyglass.api.extension.FlagHandler;
+import net.medievalrp.spyglass.api.param.ParamParseException;
+import net.medievalrp.spyglass.api.param.QueryParamHandler.ParamContext;
+import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.bukkit.command.CommandSender;
 import java.util.List;
 
@@ -398,13 +398,13 @@ cannot be shadowed — the parser checks built-ins first.
 
 ## 6. Customising display
 
-Override how a specific event renders in `/omni2 search` output and
+Override how a specific event renders in `/spyglass search` output and
 inspection-wand hovers:
 
 ```java
-import net.medievalrp.omniscience2.api.extension.DisplayRenderer;
-import net.medievalrp.omniscience2.api.event.EventRecord;
-import net.medievalrp.omniscience2.api.query.Flag;
+import net.medievalrp.spyglass.api.extension.DisplayRenderer;
+import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.query.Flag;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import java.util.EnumSet;
@@ -441,7 +441,7 @@ other plugins that schedule sync work. Build and return Adventure
 components from already-fetched record fields.
 
 **Error handling**: if either method throws or returns null,
-Omniscience2 silently falls back to the default rendering for that
+Spyglass silently falls back to the default rendering for that
 line. Your custom output is dropped for that one record; subsequent
 records still render through your renderer.
 
@@ -454,7 +454,7 @@ auto-alerts) subscribe to `RecordCommittedEvent` like any Bukkit
 event:
 
 ```java
-import net.medievalrp.omniscience2.api.event.RecordCommittedEvent;
+import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -476,7 +476,7 @@ public final class CommitListener implements Listener {
 
 Register the listener with Bukkit (`getServer().getPluginManager()
 .registerEvents(new CommitListener(), this)`) — there is no
-Omniscience2-specific registration step.
+Spyglass-specific registration step.
 
 The event auto-detects sync vs async based on the calling thread.
 Cancellation is intentionally not supported: the record is already
@@ -487,13 +487,13 @@ your own listeners if you want to suppress events.
 
 ## 6c. Custom rollback effects
 
-For state your plugin owns that Omniscience2's built-in rollback
+For state your plugin owns that Spyglass's built-in rollback
 can't model (faction territory, custom-block bridges, plugin-managed
 NPCs), pair a `RollbackEffect.Custom` payload with a
 `RollbackEffectHandler`:
 
 ```java
-import net.medievalrp.omniscience2.api.rollback.*;
+import net.medievalrp.spyglass.api.rollback.*;
 
 public final class FactionTerritoryHandler implements RollbackEffectHandler {
 
@@ -513,7 +513,7 @@ public final class FactionTerritoryHandler implements RollbackEffectHandler {
                     new RollbackReason.Error("Faction service rejected restore"));
         }
 
-        // Build the inverse so /omni2 undo can re-apply this rollback.
+        // Build the inverse so /spyglass undo can re-apply this rollback.
         RollbackEffect.Custom inverse = new RollbackEffect.Custom(
                 "faction-territory",
                 effect.location(),
@@ -534,7 +534,7 @@ RollbackEffect.Custom effect = new RollbackEffect.Custom(
         location,
         change.encode());
 // (Persist `effect` alongside your event record via your own storage,
-//  or push into Omniscience2's undo ledger via /omni2 rollback when
+//  or push into Spyglass's undo ledger via /spyglass rollback when
 //  the operator runs a rollback that includes faction-claim events.)
 ```
 
@@ -558,16 +558,16 @@ if (!enabled.contains("break")) {
 ```
 
 The set is immutable and reflects the active configuration at the
-time Omniscience2 enabled. It does not update if the operator
+time Spyglass enabled. It does not update if the operator
 reloads config; re-fetch the API singleton if you need the latest.
 
 ### Operator limits
 
-Align your own bounds with Omniscience2's by reading
+Align your own bounds with Spyglass's by reading
 `omni.limits()`:
 
 ```java
-OmniscienceLimits limits = omni.limits();
+SpyglassLimits limits = omni.limits();
 int maxRadius = limits.maxRadius();         // hard cap on radius params
 int defaultRadius = limits.defaultRadius(); // default when user omits one
 Duration window = limits.defaultTimeWindow(); // default time= window
@@ -579,9 +579,9 @@ clamping a custom radius parameter.
 
 ### Plugin logger
 
-`omni.logger()` returns the Omniscience2 plugin's `java.util.logging.Logger`.
+`omni.logger()` returns the Spyglass plugin's `java.util.logging.Logger`.
 Most plugins should prefer their own logger; reach for this only
-when you want a diagnostic to surface under the Omniscience2 log
+when you want a diagnostic to surface under the Spyglass log
 scope (e.g. inside an extension that's flagging malformed
 extension config during startup).
 
@@ -662,11 +662,11 @@ version (`1.+` in Gradle) and stay forward-compatible.
 
 ## 11. Reference
 
-- **Javadoc**: published as `omniscience2-api-<version>-javadoc.jar`
+- **Javadoc**: published as `spyglass-api-<version>-javadoc.jar`
   alongside the main artifact.
 - **License**: see [LICENSE](LICENSE) — this API jar is shipped under
   the same terms as the plugin.
-- **Issues / PRs**: https://github.com/medievalrp-net/Omniscience2
+- **Issues / PRs**: https://github.com/medievalrp-net/Spyglass
 
 For operator-side documentation (config, log lines, durability
 modes, dedup), see [docs/operations.md](docs/operations.md).

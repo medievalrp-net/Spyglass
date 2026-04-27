@@ -1,15 +1,15 @@
 # Regression harness
 
-Automated regression for Omniscience2, side-by-side with the original Omniscience v1.
+Automated regression for Spyglass, side-by-side with the original Omniscience v1.
 
 ## What it does
 
 1. Confirms the dev server at `../RP_Server` is running (or starts it).
 2. Seeds deterministic test records into both Mongo databases:
    - `Omniscience.DataEntry` (v1's shape)
-   - `Omniscience2.EventRecords` (v2's shape)
+   - `Spyglass.EventRecords` (v2's shape)
 3. Runs a query matrix (defined in `cases.json`) through RCON:
-   - Each case has a `v2` command (`/omniv2 search ...`) and, where applicable, a `v1` command (`/omni search ...`).
+   - Each case has a `v2` command (`/omniv2 search ...`) and, where applicable, a `v1` command (`/spyglass search ...`).
    - Expected result counts per case.
 4. Asserts the observed counts match the expectations; if `v1` is present, also asserts v2's count meets-or-exceeds v1's count (v2 must not regress relative to v1).
 5. Writes a report at `plugin/build/reports/regression/report.json`.
@@ -20,14 +20,14 @@ Automated regression for Omniscience2, side-by-side with the original Omniscienc
 ./gradlew regression
 ```
 
-Which expands to: `./gradlew deployToRpServer` (builds + drops `Omniscience2.jar` into `../RP_Server/plugins/`) → `python3 regression/run.py`.
+Which expands to: `./gradlew deployToRpServer` (builds + drops `Spyglass.jar` into `../RP_Server/plugins/`) → `python3 regression/run.py`.
 
 ## Requirements
 
 - Python 3.9+
 - `pip install --user mcrcon pymongo`
 - Mongo running on `localhost:27017` (the dev server uses it).
-- `../RP_Server` with `paper.jar` and both `Omniscience.jar` + `Omniscience2.jar` in `plugins/`.
+- `../RP_Server` with `paper.jar` and both `Omniscience.jar` + `Spyglass.jar` in `plugins/`.
 - RCON enabled on port 25576 with password `test123` (matches `server.properties`).
 
 ## Adding a case

@@ -2,7 +2,7 @@
 """Omniscience v1 vs v2 query timing benchmark.
 
 Workflow:
-  1. Drop and re-seed Omniscience.DataEntry (v1) and Omniscience2.EventRecords
+  1. Drop and re-seed Omniscience.DataEntry (v1) and Spyglass.EventRecords
      (v2) with a matched synthetic dataset, plus recreate the indexes the
      plugins create at startup (the bench can't rely on the running plugin
      to index a collection it dropped).
@@ -42,7 +42,7 @@ from mcrcon import MCRcon
 from pymongo import MongoClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REPORT_PATH = REPO_ROOT / "omniscience2" / "build" / "reports" / "regression" / "bench.json"
+REPORT_PATH = REPO_ROOT / "spyglass" / "build" / "reports" / "regression" / "bench.json"
 
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25576
@@ -229,7 +229,7 @@ def seed(client, records, seed_value, batch_size=5000):
     rng = random.Random(seed_value)
     now = datetime.now(timezone.utc)
 
-    v2_db = client["Omniscience2"]
+    v2_db = client["Spyglass"]
     v1_db = client["Omniscience"]
     v2_db["EventRecords"].drop()
     v1_db["DataEntry"].drop()
@@ -278,10 +278,10 @@ def create_indexes(v2_coll, v1_coll):
 
 def collection_stats(client):
     """Return per-collection doc counts + avg doc size for context."""
-    v2 = client["Omniscience2"]["EventRecords"]
+    v2 = client["Spyglass"]["EventRecords"]
     v1 = client["Omniscience"]["DataEntry"]
     try:
-        v2_stats = client["Omniscience2"].command("collStats", "EventRecords")
+        v2_stats = client["Spyglass"].command("collStats", "EventRecords")
         v1_stats = client["Omniscience"].command("collStats", "DataEntry")
     except Exception:
         return {}
@@ -367,7 +367,7 @@ def bench_ingest(client, docs_total, batch_size, seed_value):
     rng = random.Random(seed_value)
     now = datetime.now(timezone.utc)
 
-    v2_coll = client["Omniscience2"]["EventRecords"]
+    v2_coll = client["Spyglass"]["EventRecords"]
     v1_coll = client["Omniscience"]["DataEntry"]
     v2_coll.drop()
     v1_coll.drop()

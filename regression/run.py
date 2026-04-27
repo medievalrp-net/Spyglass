@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Omniscience2 regression runner.
+"""Spyglass regression runner.
 
 Seeds Mongo with deterministic test data, issues RCON queries against
 `../RP_Server`, and verifies counts match the expectations in cases.json.
@@ -88,7 +88,7 @@ def find_mongo_client():
 def ensure_seed(*, preserve_existing=False):
     """Seed regression fixtures.
 
-    Defaults to a destructive drop of Omniscience2.EventRecords and
+    Defaults to a destructive drop of Spyglass.EventRecords and
     Omniscience.DataEntry so exact-count cases aren't skewed by records
     from prior dev sessions or live gameplay. Pass preserve_existing=True
     to fall back to the legacy tag-scoped delete.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed deterministic test records into both Omniscience (v1) and Omniscience2 (v2)."""
+"""Seed deterministic test records into both Omniscience (v1) and Spyglass (v2)."""
 import argparse
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -166,7 +166,7 @@ def clear_existing(db, collection, tag, *, drop_all=False):
 def seed_v2(client, *, skip=False, drop_all=False):
     if skip:
         return 0, 0
-    db = client["Omniscience2"]
+    db = client["Spyglass"]
     removed = clear_existing(db, "EventRecords", TEST_TAG, drop_all=drop_all)
     docs = [
         v2_record("break", "STONE", ALICE, "Alice", 10, 64, 10, original_material="STONE"),

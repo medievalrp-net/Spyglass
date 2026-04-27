@@ -1,3 +1,3 @@
-rootProject.name = "Omniscience2"
+rootProject.name = "Spyglass"
 
-include("omniscience2-api", "omniscience2")
+include("spyglass-api", "spyglass")

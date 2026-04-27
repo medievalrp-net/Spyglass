@@ -51,8 +51,8 @@ subprojects {
                     // Final targets per the v1.0.0 plan remain 0.90 api
                     // / 0.80 plugin (docs/report/gap/plan/plan.md §6.0).
                     minimum = when (project.name) {
-                        "omniscience2-api" -> 0.16.toBigDecimal()
-                        "omniscience2" -> 0.28.toBigDecimal()
+                        "spyglass-api" -> 0.15.toBigDecimal()
+                        "spyglass" -> 0.28.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
@@ -66,7 +66,7 @@ subprojects {
 
 tasks.register<Exec>("regression") {
     group = "verification"
-    description = "Runs the Omniscience2 regression harness (requires ../RP_Server up)."
+    description = "Runs the Spyglass regression harness (requires ../RP_Server up)."
     dependsOn("deployToRpServer")
     workingDir = rootProject.rootDir
     commandLine = listOf("python3", "regression/run.py")
@@ -74,16 +74,16 @@ tasks.register<Exec>("regression") {
 
 tasks.register("deployToRpServer") {
     group = "deployment"
-    description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Omniscience2.jar."
-    dependsOn(":omniscience2:shadowJar")
+    description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Spyglass.jar."
+    dependsOn(":spyglass:shadowJar")
     doLast {
-        val pluginProject = project(":omniscience2")
+        val pluginProject = project(":spyglass")
         val candidate = pluginProject.layout.buildDirectory
-            .file("libs/Omniscience2-${pluginProject.version}.jar")
+            .file("libs/Spyglass-${pluginProject.version}.jar")
             .get().asFile
         require(candidate.exists()) { "Expected built jar at $candidate but did not find one." }
         val destination = rootProject.layout.projectDirectory
-            .dir("../RP_Server/plugins").file("Omniscience2.jar").asFile
+            .dir("../RP_Server/plugins").file("Spyglass.jar").asFile
         destination.parentFile.mkdirs()
         candidate.copyTo(destination, overwrite = true)
         println("Deployed ${candidate.name} -> $destination")

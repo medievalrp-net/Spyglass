@@ -1,4 +1,4 @@
-# Omniscience2 Commands & Permissions
+# Spyglass Commands & Permissions
 
 ## Permissions
 
@@ -6,30 +6,30 @@ All permissions default to **op**:
 
 | Permission | Description |
 |---|---|
-| `omniscience2.use` | Basic commands (help, events, page) |
-| `omniscience2.search` | Search forensics data |
-| `omniscience2.rollback` | Rollback/restore/undo commands |
-| `omniscience2.tool` | Inspection wand tool |
-| `omniscience2.tele` | Teleport to event locations |
-| `omniscience2.worldedit` | WorldEdit selection in searches |
+| `spyglass.use` | Basic commands (help, events, page) |
+| `spyglass.search` | Search forensics data |
+| `spyglass.rollback` | Rollback/restore/undo commands |
+| `spyglass.tool` | Inspection wand tool |
+| `spyglass.tele` | Teleport to event locations |
+| `spyglass.worldedit` | WorldEdit selection in searches |
 
 ## Commands
 
 | Command | Permission | Syntax | Description |
 |---------|-----------|--------|-------------|
-| `/omni2 help` | `omniscience2.use` | `/omni2 help` | Display command help |
-| `/omni2 events` | `omniscience2.use` | `/omni2 events` | List enabled event types |
-| `/omni2 search` | `omniscience2.search` | `/omni2 search <params> [flags]` | Search forensics database |
-| `/omni2 rollback` | `omniscience2.rollback` | `/omni2 rollback <params> [flags]` | Revert changes |
-| `/omni2 restore` | `omniscience2.rollback` | `/omni2 restore <params> [flags]` | Reapply changes |
-| `/omni2 undo` | `omniscience2.rollback` | `/omni2 undo` | Undo last rollback/restore (players only) |
-| `/omni2 page` | `omniscience2.use` | `/omni2 page <number>` | Navigate result pages |
-| `/omni2 tool` | `omniscience2.tool` | `/omni2 tool` | Toggle inspection wand (players only) |
-| `/omni2 tele` | `omniscience2.tele` | `/omni2 tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
+| `/spyglass help` | `spyglass.use` | `/spyglass help` | Display command help |
+| `/spyglass events` | `spyglass.use` | `/spyglass events` | List enabled event types |
+| `/spyglass search` | `spyglass.search` | `/spyglass search <params> [flags]` | Search forensics database |
+| `/spyglass rollback` | `spyglass.rollback` | `/spyglass rollback <params> [flags]` | Revert changes |
+| `/spyglass restore` | `spyglass.rollback` | `/spyglass restore <params> [flags]` | Reapply changes |
+| `/spyglass undo` | `spyglass.rollback` | `/spyglass undo` | Undo last rollback/restore (players only) |
+| `/spyglass page` | `spyglass.use` | `/spyglass page <number>` | Navigate result pages |
+| `/spyglass tool` | `spyglass.tool` | `/spyglass tool` | Toggle inspection wand (players only) |
+| `/spyglass tele` | `spyglass.tele` | `/spyglass tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
 
 ## Event names
 
-`/omni2 events` lists the active set. The names below are stable: queries
+`/spyglass events` lists the active set. The names below are stable: queries
 use them as values for `a:` (action) parameters and they appear as the
 event column in search results.
 
