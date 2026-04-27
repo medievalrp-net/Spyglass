@@ -8,15 +8,15 @@ the per-class Javadoc; this file covers the **what to look for** and
 
 Search the server log for `Spyglass`. Lines that warrant a look:
 
-| Severity | Substring | Meaning |
+| Severity | Substring                         | Meaning |
 |----------|-----------------------------------|---------|
-| WARNING | `recorder queue depth … (warn threshold N)` | Drain is falling behind. Records still queued (no drops). Check DB reachability and disk I/O. Warnings double in cadence as the depth doubles. |
-| WARNING | `recorder save failed (Nx, retry in …ms)` | DB write failed; AsyncRecorder is retrying with exponential backoff. Single occurrences are usually network blips. Sustained 10x+ means the DB is down. |
-| WARNING | `WAL write failed (…); proceeding with DB save anyway` | Disk-side WAL write threw. Rare. Records still durable iff the DB save succeeds; otherwise lost on crash. Investigate filesystem health. |
-| INFO | `WAL recovery: replayed N records from K pending file(s)` | Normal after a hard restart. Confirms crash-recovery path landed records back in the store. |
-| WARNING | `Skipping corrupt WAL file …` | A WAL file failed to decode. Either disk corruption or an interrupted partial write. The file is deleted so recovery doesn't stall; records inside are lost. |
-| SEVERE | `Recorder shutdown flush gave up within deadline; N records left on the WAL …` | DB was unreachable through the full `storage.flush-timeout` window. With WAL enabled, records replay on next startup. |
-| SEVERE | `Recorder shutdown flush gave up within deadline; N records could not be persisted and are lost` | Same scenario as above but with WAL disabled — **records lost**. Set `storage.durability = "wal-batched"` to make this recoverable. |
+| WARNING  | `recorder queue depth … (warn threshold N)` | Drain is falling behind. Records still queued (no drops). Check DB reachability and disk I/O. Warnings double in cadence as the depth doubles. |
+| WARNING  | `recorder save failed (Nx, retry in …ms)` | DB write failed; AsyncRecorder is retrying with exponential backoff. Single occurrences are usually network blips. Sustained 10x+ means the DB is down. |
+| WARNING  | `WAL write failed (…); proceeding with DB save anyway` | Disk-side WAL write threw. Rare. Records still durable iff the DB save succeeds; otherwise lost on crash. Investigate filesystem health. |
+| INFO     | `WAL recovery: replayed N records from K pending file(s)` | Normal after a hard restart. Confirms crash-recovery path landed records back in the store. |
+| WARNING  | `Skipping corrupt WAL file …`     | A WAL file failed to decode. Either disk corruption or an interrupted partial write. The file is deleted so recovery doesn't stall; records inside are lost. |
+| SEVERE   | `Recorder shutdown flush gave up within deadline; N records left on the WAL …` | DB was unreachable through the full `storage.flush-timeout` window. With WAL enabled, records replay on next startup. |
+| SEVERE   | `Recorder shutdown flush gave up within deadline; N records could not be persisted and are lost` | Same scenario as above but with WAL disabled — **records lost**. Set `storage.durability = "wal-batched"` to make this recoverable. |
 
 ## Storage durability modes
 
@@ -45,7 +45,7 @@ Implications:
 - For a strict-dedup query, append `FINAL`: `SELECT count() FROM event_records FINAL WHERE …`. Slow on large ranges; use sparingly.
 - To force dedup synchronously after a known replay event:
   ```sql
-  OPTIMIZE TABLE sg.event_records FINAL DEDUPLICATE;
+  OPTIMIZE TABLE spyglass.event_records FINAL DEDUPLICATE;
   ```
   Acceptable as a one-off; expensive on big tables.
 
@@ -63,7 +63,7 @@ If you're seeing first-crossing warnings during normal play, raise the threshold
 
 `config.conf` has per-event toggles under `events.<name>`. Disabling an event:
 - Skips listener registration entirely (no overhead).
-- Hides the event from `/sg search` results (it's not in the store).
+- Hides the event from `/spyglass search` results (it's not in the store).
 - Does **not** retroactively delete already-recorded rows; lower `storage.retention` if you want them to age out.
 
 ## Things NOT to do

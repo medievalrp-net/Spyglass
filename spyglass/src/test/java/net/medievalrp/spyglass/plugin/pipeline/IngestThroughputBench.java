@@ -59,7 +59,7 @@ import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.MongoDBContainer;
 
 /**
- * Ingest throughput benchmark: v1 v2 vs synthetic v1-equivalent.
+ * Ingest throughput benchmark: Spyglass vs synthetic v1-equivalent.
  *
  * <p>Runs under the {@code bench} JUnit tag. The default {@code test}
  * task excludes {@code bench}; run this explicitly with {@code ./gradlew
@@ -628,7 +628,7 @@ class IngestThroughputBench {
          */
         static Harness v1(MongoClient shared) {
             Harness h = new Harness("v1");
-            String db = "v1Bench_" + System.nanoTime();
+            String db = "SpyglassBench_" + System.nanoTime();
             MongoDatabase database = shared.getDatabase(db);
             MongoCollection<Document> coll = database.getCollection("DataEntry");
             coll.createIndex(Indexes.compoundIndex(

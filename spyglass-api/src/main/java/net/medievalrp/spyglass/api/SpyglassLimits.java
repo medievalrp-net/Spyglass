@@ -21,7 +21,7 @@ import net.medievalrp.spyglass.api.util.Duration;
  *     when computing {@code expiresAt} on records you push via
  *     {@link SpyglassApi#record}
  */
-public record v1Limits(
+public record SpyglassLimits(
         int maxRadius,
         int defaultRadius,
         Duration defaultTimeWindow,

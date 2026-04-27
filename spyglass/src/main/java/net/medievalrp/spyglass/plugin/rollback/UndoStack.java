@@ -13,7 +13,7 @@ import org.jetbrains.annotations.ApiStatus;
  *
  * <p>The plugin invokes {@link #push} every time a rollback / restore
  * operation lands successfully, recording the inverse effects so the
- * player can issue {@code /sg undo} and walk one step back. {@link
+ * player can issue {@code /spyglass undo} and walk one step back. {@link
  * #pop} returns the most recent operation for that player and removes
  * it from the ledger. Implementations choose their own retention
  * window (24 h for the default Mongo and ClickHouse backends).
@@ -31,9 +31,9 @@ public interface UndoStack {
     Optional<UndoOperation> pop(UUID playerId);
 
     /** {@code @BsonProperty} stays on the type-safe record because the
-     * Mongo backend's POJO codec uses it. The ClickHouse backend
-     * builds the record directly from columns and ignores the
-     * annotation. */
+     *  Mongo backend's POJO codec uses it. The ClickHouse backend
+     *  builds the record directly from columns and ignores the
+     *  annotation. */
     record UndoOperation(
             @BsonProperty("_id") UUID id,
             UUID playerId,

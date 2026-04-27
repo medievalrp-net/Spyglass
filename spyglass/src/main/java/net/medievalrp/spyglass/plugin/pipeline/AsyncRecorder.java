@@ -42,15 +42,15 @@ import org.jetbrains.annotations.ApiStatus;
  * has the same exposure:
  *
  * <ol>
- * <li><b>Hard JVM death</b> — server crash, SIGKILL, OOM, power loss.
- * The queue is RAM-resident; anything not yet saved is lost with
- * the process.</li>
- * <li><b>Shutdown flush deadline exhaustion</b> —
- * {@link #flushRemaining} retries with backoff for the full
- * configured {@code flush-timeout}. If Mongo is still unreachable
- * when the deadline expires, undrained records are counted into
- * {@link ShutdownReport#dropped} and logged at SEVERE. Under
- * normal Mongo availability this code path is unreachable.</li>
+ *   <li><b>Hard JVM death</b> — server crash, SIGKILL, OOM, power loss.
+ *       The queue is RAM-resident; anything not yet saved is lost with
+ *       the process.</li>
+ *   <li><b>Shutdown flush deadline exhaustion</b> —
+ *       {@link #flushRemaining} retries with backoff for the full
+ *       configured {@code flush-timeout}. If Mongo is still unreachable
+ *       when the deadline expires, undrained records are counted into
+ *       {@link ShutdownReport#dropped} and logged at SEVERE. Under
+ *       normal Mongo availability this code path is unreachable.</li>
  * </ol>
  *
  * <p>Aside from those, records are durable once {@link #record} returns.
@@ -72,15 +72,15 @@ public final class AsyncRecorder implements Recorder {
 
     /**
      * @param warnThreshold queue depth at which we start warning the operator.
-     * <b>Not a ceiling</b> — records past this depth are
-     * still accepted. Sized for early warning: recommend
-     * 10× your steady-state peak so a warning precedes
-     * any real backpressure problem by a long margin.
-     * For MedievalRP's peak ~600 events/sec, a 100 000
-     * threshold gives ~160 s of slack before the first
-     * warning.
-     * @param store downstream sink — typically {@code MongoRecordStore}.
-     * @param logger plugin logger for warnings + retry diagnostics.
+     *                      <b>Not a ceiling</b> — records past this depth are
+     *                      still accepted. Sized for early warning: recommend
+     *                      10× your steady-state peak so a warning precedes
+     *                      any real backpressure problem by a long margin.
+     *                      For MedievalRP's peak ~600 events/sec, a 100 000
+     *                      threshold gives ~160 s of slack before the first
+     *                      warning.
+     * @param store         downstream sink — typically {@code MongoRecordStore}.
+     * @param logger        plugin logger for warnings + retry diagnostics.
      */
     public AsyncRecorder(long warnThreshold, RecordStore store, Logger logger) {
         this(warnThreshold, store, new WalDurability(null, false, logger), logger);
@@ -99,7 +99,7 @@ public final class AsyncRecorder implements Recorder {
         this.wal = wal;
         this.logger = logger;
         Thread.ofVirtual()
-                .name("sg-drain")
+                .name("spyglass-drain")
                 .start(this::drainLoop);
     }
 

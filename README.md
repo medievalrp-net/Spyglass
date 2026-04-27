@@ -6,7 +6,7 @@ Successor to the MPL-licensed [v1](../v1). Built clean-room from the architectur
 
 ## Status
 
-`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/sg tool` inspection wand, and an automated regression harness.
+`v1.0.0` — feature-complete release. Ships 38 event types, block + container + entity-NBT rollback (experimental), vanilla and FAWE WorldEdit capture, the `/spyglass tool` inspection wand, and an automated regression harness.
 
 ## Requirements
 
@@ -29,11 +29,11 @@ This plugin is a fresh install with no migration path from the legacy MPL v1. Se
 ## Build
 
 ```
-./gradlew build # api + plugin jars, tests, coverage gates
-./gradlew :plugin:shadowJar # just the shaded plugin jar
-./gradlew deployToRpServer # jar + copy to ../RP_Server/plugins/
-./gradlew regression # live regression against ../RP_Server
-./gradlew :api:publishApiPublicationToLocalRepository # publish spyglass-api:1.0.0
+./gradlew build                  # api + plugin jars, tests, coverage gates
+./gradlew :plugin:shadowJar      # just the shaded plugin jar
+./gradlew deployToRpServer       # jar + copy to ../RP_Server/plugins/
+./gradlew regression             # live regression against ../RP_Server
+./gradlew :api:publishApiPublicationToLocalRepository  # publish spyglass-api:1.0.0
 ```
 
 ## Running the regression harness

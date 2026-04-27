@@ -23,7 +23,7 @@ package net.medievalrp.spyglass.api.rollback;
  *
  * <p>Custom effects round-trip through Spyglass's undo ledger:
  * the {@link RollbackResult.Applied#inverseEffect()} you return is
- * persisted and replayed when the operator runs {@code /sg undo}.
+ * persisted and replayed when the operator runs {@code /spyglass undo}.
  * Build the inverse from the state you just changed; it must be
  * applicable in turn (the engine will hand it back to your handler).
  *
@@ -48,11 +48,11 @@ public interface RollbackEffectHandler {
      * Apply a custom effect.
      *
      * @param effect the effect to apply; {@code effect.type()}
-     * equals {@link #type()} (the engine routed by type)
+     *     equals {@link #type()} (the engine routed by type)
      * @return {@link RollbackResult.Applied} on success (carrying
-     * the inverse effect for the undo ledger), or
-     * {@link RollbackResult.Skipped} with a reason on failure;
-     * never {@code null}
+     *     the inverse effect for the undo ledger), or
+     *     {@link RollbackResult.Skipped} with a reason on failure;
+     *     never {@code null}
      */
     RollbackResult apply(RollbackEffect.Custom effect);
 }

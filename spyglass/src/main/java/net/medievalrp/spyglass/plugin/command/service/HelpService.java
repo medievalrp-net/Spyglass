@@ -28,7 +28,7 @@ public final class HelpService {
                 .decoration(TextDecoration.ITALIC, true));
         for (Entry entry : ENTRIES) {
             Component line = Component.text()
-                    .append(Component.text("/sg ", NamedTextColor.AQUA))
+                    .append(Component.text("/spyglass ", NamedTextColor.AQUA))
                     .append(Component.text(entry.name() + " ", NamedTextColor.GREEN))
                     .append(Component.text(entry.usage(), NamedTextColor.GREEN))
                     .append(Component.text(": ", NamedTextColor.AQUA))

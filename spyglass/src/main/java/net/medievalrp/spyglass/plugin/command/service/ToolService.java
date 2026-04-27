@@ -20,13 +20,13 @@ import org.jetbrains.annotations.ApiStatus;
 
 /**
  * Wand toggle service. Mirrors v1's three-state cycle so repeated
- * {@code /sg tool} calls follow the same UX muscle memory:
+ * {@code /spyglass tool} calls follow the same UX muscle memory:
  * <ol>
- * <li>Inactive → activate + give/move the wand, say "Activated".</li>
- * <li>Active but wand missing from inventory → add it, say "Added".</li>
- * <li>Active with wand in inventory but not in main hand → swap to hand,
- * say "Moved".</li>
- * <li>Active with wand already in main hand → deactivate, say "Deactivated".</li>
+ *   <li>Inactive → activate + give/move the wand, say "Activated".</li>
+ *   <li>Active but wand missing from inventory → add it, say "Added".</li>
+ *   <li>Active with wand in inventory but not in main hand → swap to hand,
+ *       say "Moved".</li>
+ *   <li>Active with wand already in main hand → deactivate, say "Deactivated".</li>
  * </ol>
  *
  * <p>Unlike v1, wand identity is checked via a PersistentDataContainer marker
@@ -67,7 +67,7 @@ public final class ToolService {
         if (active.contains(id)) {
             if (slot == -1) {
                 handout.give(player, wandMaterial);
-                player.sendMessage(Feedback.toolOk("Added the v1 data tool to your inventory."));
+                player.sendMessage(Feedback.toolOk("Added the Spyglass data tool to your inventory."));
                 return;
             }
             if (!inHand) {
@@ -77,7 +77,7 @@ public final class ToolService {
             }
             active.remove(id);
             store.disable(id);
-            player.sendMessage(Feedback.toolOk("Deactivated the v1 Data Tool"));
+            player.sendMessage(Feedback.toolOk("Deactivated the Spyglass Data Tool"));
             return;
         }
 
@@ -88,14 +88,14 @@ public final class ToolService {
         store.enable(id);
         if (slot == -1) {
             handout.give(player, wandMaterial);
-            player.sendMessage(Feedback.toolOk("Added the v1 data tool to your inventory."));
+            player.sendMessage(Feedback.toolOk("Added the Spyglass data tool to your inventory."));
             return;
         }
         if (!inHand) {
             swapToMainHand(inv, slot);
         }
         player.sendMessage(Component.text()
-                .append(Component.text("Activated the v1 Data Tool ", NamedTextColor.GREEN))
+                .append(Component.text("Activated the Spyglass Data Tool ", NamedTextColor.GREEN))
                 .append(Component.text("(" + wandMaterial.name() + ")", NamedTextColor.GRAY))
                 .build());
     }
@@ -144,7 +144,7 @@ public final class ToolService {
                     ItemMeta meta = stack.getItemMeta();
                     if (meta != null) {
                         meta.getPersistentDataContainer().set(WAND_KEY, PersistentDataType.BYTE, (byte) 1);
-                        meta.displayName(Component.text("v1 Wand", NamedTextColor.GOLD));
+                        meta.displayName(Component.text("Spyglass Wand", NamedTextColor.GOLD));
                         stack.setItemMeta(meta);
                     }
                     if (player.getInventory().firstEmpty() >= 0) {

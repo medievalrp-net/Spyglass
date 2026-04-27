@@ -100,8 +100,8 @@ class ResultRendererTest {
         Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
 
         assertThat(findRunCommand(rendered))
-                .as("click event on a single result should be /sg tele")
-                .startsWith("/sg tele " + WORLD_ID);
+                .as("click event on a single result should be /spyglass tele")
+                .startsWith("/spyglass tele " + WORLD_ID);
     }
 
     private static String findRunCommand(Component component) {

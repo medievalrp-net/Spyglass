@@ -12,7 +12,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.SpyglassApi;
-import net.medievalrp.spyglass.api.v1Limits;
+import net.medievalrp.spyglass.api.SpyglassLimits;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
@@ -35,14 +35,14 @@ public final class SpyglassApiImpl implements SpyglassApi {
     private final Map<String, DisplayRenderer> renderers = new LinkedHashMap<>();
     private final Map<String, RollbackEffectHandler> effectHandlers = new LinkedHashMap<>();
     private final Set<String> enabledEvents;
-    private final v1Limits limits;
+    private final SpyglassLimits limits;
     private final Logger logger;
 
     public SpyglassApiImpl(Recorder recorder,
                                RecordStore recordStore,
                                Executor queryExecutor,
                                Set<String> enabledEvents,
-                               v1Limits limits,
+                               SpyglassLimits limits,
                                Logger logger) {
         this.recorder = recorder;
         this.recordStore = recordStore;
@@ -133,7 +133,7 @@ public final class SpyglassApiImpl implements SpyglassApi {
     }
 
     @Override
-    public v1Limits limits() {
+    public SpyglassLimits limits() {
         return limits;
     }
 
