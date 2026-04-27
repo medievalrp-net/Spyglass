@@ -17,19 +17,19 @@ All permissions default to **op**:
 
 | Command | Permission | Syntax | Description |
 |---------|-----------|--------|-------------|
-| `/sg help` | `spyglass.use` | `/sg help` | Display command help |
-| `/sg events` | `spyglass.use` | `/sg events` | List enabled event types |
-| `/sg search` | `spyglass.search` | `/sg search <params> [flags]` | Search forensics database |
-| `/sg rollback` | `spyglass.rollback` | `/sg rollback <params> [flags]` | Revert changes |
-| `/sg restore` | `spyglass.rollback` | `/sg restore <params> [flags]` | Reapply changes |
-| `/sg undo` | `spyglass.rollback` | `/sg undo` | Undo last rollback/restore (players only) |
-| `/sg page` | `spyglass.use` | `/sg page <number>` | Navigate result pages |
-| `/sg tool` | `spyglass.tool` | `/sg tool` | Toggle inspection wand (players only) |
-| `/sg tele` | `spyglass.tele` | `/sg tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
+| `/spyglass help` | `spyglass.use` | `/spyglass help` | Display command help |
+| `/spyglass events` | `spyglass.use` | `/spyglass events` | List enabled event types |
+| `/spyglass search` | `spyglass.search` | `/spyglass search <params> [flags]` | Search forensics database |
+| `/spyglass rollback` | `spyglass.rollback` | `/spyglass rollback <params> [flags]` | Revert changes |
+| `/spyglass restore` | `spyglass.rollback` | `/spyglass restore <params> [flags]` | Reapply changes |
+| `/spyglass undo` | `spyglass.rollback` | `/spyglass undo` | Undo last rollback/restore (players only) |
+| `/spyglass page` | `spyglass.use` | `/spyglass page <number>` | Navigate result pages |
+| `/spyglass tool` | `spyglass.tool` | `/spyglass tool` | Toggle inspection wand (players only) |
+| `/spyglass tele` | `spyglass.tele` | `/spyglass tele <world> <x> <y> <z>` | Teleport to coordinates (players only) |
 
 ## Event names
 
-`/sg events` lists the active set. The names below are stable: queries
+`/spyglass events` lists the active set. The names below are stable: queries
 use them as values for `a:` (action) parameters and they appear as the
 event column in search results.
 

@@ -22,7 +22,7 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class SpyglassCommands {
 
-    private static final List<String> ROOT_ALIASES = List.of("sg", "sg", "o2", "spyglass");
+    private static final List<String> ROOT_ALIASES = List.of("spyglass");
 
     private final JavaPlugin plugin;
     private final SpyglassApi api;
@@ -58,7 +58,7 @@ public final class SpyglassCommands {
     }
 
     // v1-compat subcommand aliases. Operators have years of muscle memory
-    // around {@code /sg l} and {@code /sg rb}; v2 originally exposed
+    // around {@code /spyglass l} and {@code /spyglass rb}; v2 originally exposed
     // only the long names. Each list is shipped to {@link #subcommand}
     // which registers the same handler under every alias.
     private static final List<String> SEARCH_ALIASES = List.of("search", "s", "sc", "lookup", "l");
@@ -130,7 +130,7 @@ public final class SpyglassCommands {
                         .handler(ctx -> tool.toggle(ctx.sender())));
             }
 
-            // /sg tele <world> <x> <y> <z> — wired to search-result click
+            // /spyglass tele <world> <x> <y> <z> — wired to search-result click
             // events so staff can jump to the scene of an incident.
             manager.command(manager.commandBuilder(root).literal("tele")
                     .required("world", StringParser.stringParser())

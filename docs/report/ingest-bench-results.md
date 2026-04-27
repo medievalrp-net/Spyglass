@@ -6,7 +6,7 @@ Raw data: [`spyglass/build/reports/ingest-bench.json`](../../spyglass/build/repo
 
 ## The contract v2 must honour
 
-**Every event that fires a listener reaches the store.** This was v1's behaviour and has been for as long as v1 has run on MedievalRP. It is not negotiable for v2. If an audit-log plugin silently drops events under load, operators cannot trust `/sg rollback` or `/sg inspect` — if the data isn't there, did the event not happen, or did the plugin lose it? That ambiguity breaks the tool.
+**Every event that fires a listener reaches the store.** This was v1's behaviour and has been for as long as v1 has run on MedievalRP. It is not negotiable for v2. If an audit-log plugin silently drops events under load, operators cannot trust `/spyglass rollback` or `/spyglass inspect` — if the data isn't there, did the event not happen, or did the plugin lose it? That ambiguity breaks the tool.
 
 So v2's `AsyncRecorder` queue is **unbounded**. `record()` never rejects. The configurable `queue-capacity` is a **warn threshold** — crossing it logs an operator warning so a Mongo backlog is visible before it matures into a real problem, but the queue keeps accepting records. See [`AsyncRecorder`](../../spyglass/src/main/java/net/medievalrp/spyglass/plugin/pipeline/AsyncRecorder.java)'s no-drop Javadoc for the full invariant and the two remaining loss scenarios (hard JVM death, shutdown flush deadline exhaustion — both same exposure as v1).
 
@@ -31,7 +31,7 @@ Every test and scenario below exists to either prove or measure behaviour *under
 
 ## Methodology
 
-Both pipelines are measured inside the same JVM, writing to the same Mongo 7.0 container on different databases (`SpyglassBench_<nanos>` for v2, `v1Bench_<nanos>` for v1), so storage / network / OS factors cancel. The producer side is identical: synthetic `BlockBreakRecord` instances with the same material distribution, same world UUID, same 30-day expiry.
+Both pipelines are measured inside the same JVM, writing to the same Mongo 7.0 container on different databases (`SpyglassBench_<nanos>` for v2, `SpyglassBench_<nanos>` for v1), so storage / network / OS factors cancel. The producer side is identical: synthetic `BlockBreakRecord` instances with the same material distribution, same world UUID, same 30-day expiry.
 
 **v2 path** wires the real production classes:
 - `AsyncRecorder` (unbounded `LinkedBlockingDeque`, warn threshold = 10 000 for the bench) with the real virtual-thread continuous drain.

@@ -21,7 +21,7 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffectHandler;
  * <p>Obtain the singleton via Bukkit's services manager:
  * <pre>{@code
  * SpyglassApi api = Bukkit.getServicesManager()
- * .load(SpyglassApi.class);
+ *         .load(SpyglassApi.class);
  * }</pre>
  *
  * <h2>Threading</h2>
@@ -72,7 +72,7 @@ public interface SpyglassApi {
     CompletionStage<QueryResult> query(QueryRequest request);
 
     /**
-     * Register a custom query-parameter handler so {@code /sg
+     * Register a custom query-parameter handler so {@code /spyglass
      * search yourparam=foo} parses your alias.
      *
      * <p>Call from {@code onEnable()} on the main thread. Aliases are
@@ -95,7 +95,7 @@ public interface SpyglassApi {
     List<QueryParamHandler> queryParams();
 
     /**
-     * Register a custom flag handler so {@code /sg search
+     * Register a custom flag handler so {@code /spyglass search
      * -yourflag} or {@code -yourflag=value} parses your alias.
      *
      * <p>Built-in flag aliases ({@code ng}, {@code g}, {@code nc},
@@ -138,7 +138,7 @@ public interface SpyglassApi {
      * Register a rollback effect handler so
      * {@link net.medievalrp.spyglass.api.rollback.RollbackEffect.Custom}
      * payloads with a matching {@code type} are routed to your code
-     * during {@code /sg rollback} and {@code /sg undo}.
+     * during {@code /spyglass rollback} and {@code /spyglass undo}.
      *
      * <p>Call from {@code onEnable()} on the main thread. Types are
      * lowercased on registration.
@@ -163,7 +163,7 @@ public interface SpyglassApi {
      * extensions that need to align their own bounds with the
      * configured maxRadius, retention, etc.
      */
-    v1Limits limits();
+    SpyglassLimits limits();
 
     /**
      * The Spyglass plugin's logger. Use this for diagnostics that

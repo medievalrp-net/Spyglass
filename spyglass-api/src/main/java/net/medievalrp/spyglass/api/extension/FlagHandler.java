@@ -60,20 +60,20 @@ public interface FlagHandler {
      * a predicate.
      *
      * @param alias the alias the user typed (lowercased); always one
-     * of {@link #aliases()}
+     *     of {@link #aliases()}
      * @param value the literal text after {@code =}, or {@code null}
-     * when the user wrote a bare {@code -alias}
+     *     when the user wrote a bare {@code -alias}
      * @param context parse-time environment (sender, sender
-     * location, configured max radius)
+     *     location, configured max radius)
      * @return a non-null predicate
      * @throws ParamParseException when {@code value} is malformed or
-     * missing when required
+     *     missing when required
      */
     QueryPredicate parse(String alias, String value, ParamContext context) throws ParamParseException;
 
     /**
      * Whether this flag should suppress the implicit
-     * {@code radius=N} that {@code /sg search} injects when no
+     * {@code radius=N} that {@code /spyglass search} injects when no
      * spatial constraint is present. Override to {@code true} for
      * flags that already constrain spatially or globally.
      */

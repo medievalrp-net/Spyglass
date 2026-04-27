@@ -7,7 +7,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
-import net.medievalrp.spyglass.api.v1Limits;
+import net.medievalrp.spyglass.api.SpyglassLimits;
 import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
@@ -255,7 +255,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass: CraftBook detected, useSign logging enabled.");
         }
 
-        v1Limits apiLimits = new v1Limits(
+        SpyglassLimits apiLimits = new SpyglassLimits(
                 config.limits().maxRadius(),
                 config.defaults().radius(),
                 config.defaults().time(),

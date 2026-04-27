@@ -112,7 +112,7 @@ public final class ResultRenderer {
         if (grouped) {
             // Grouped result: click drills down into the per-player,
             // per-event stream. Matches v1's buildDetailCommand shape.
-            builder.clickEvent(ClickEvent.runCommand("/sg search "
+            builder.clickEvent(ClickEvent.runCommand("/spyglass search "
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
                     + " -ng"));
@@ -139,7 +139,7 @@ public final class ResultRenderer {
     }
 
     private static ClickEvent teleportClick(BlockLocation loc) {
-        return ClickEvent.runCommand("/sg tele "
+        return ClickEvent.runCommand("/spyglass tele "
                 + loc.worldId() + " " + loc.x() + " " + loc.y() + " " + loc.z());
     }
 
@@ -154,7 +154,7 @@ public final class ResultRenderer {
         // Single-page results show no arrows at all.
         net.kyori.adventure.text.TextComponent.Builder builder = Component.text()
                 .append(Component.text("«", NamedTextColor.GREEN))
-                .append(Component.text("v1", NamedTextColor.AQUA))
+                .append(Component.text("Spyglass", NamedTextColor.AQUA))
                 .append(Component.text("»", NamedTextColor.GREEN))
                 .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(
@@ -178,7 +178,7 @@ public final class ResultRenderer {
                 .append(Component.text("]", NamedTextColor.RED))
                 .build();
         return label
-                .clickEvent(ClickEvent.runCommand("/sg page " + targetPage))
+                .clickEvent(ClickEvent.runCommand("/spyglass page " + targetPage))
                 .hoverEvent(HoverEvent.showText(
                         Component.text("Page " + targetPage, NamedTextColor.RED)));
     }
@@ -262,16 +262,16 @@ public final class ResultRenderer {
     }
 
     /** Defensive uppercase for entity-type / target tokens that are
-     * conventionally uppercase but might come back lowercase from
-     * legacy data. */
+     *  conventionally uppercase but might come back lowercase from
+     *  legacy data. */
     private static String upperOrEmpty(String value) {
         return value == null ? "" : value.toUpperCase(Locale.ROOT);
     }
 
     /** "ITEM IN CONTAINER" — appends the container type to the
-     * deposit / withdraw target so the line reads like
-     * "itdontmatta deposited ACTIVATOR_RAIL IN HOPPER". Falls
-     * back to just the item if container type is unknown. */
+     *  deposit / withdraw target so the line reads like
+     *  "itdontmatta deposited ACTIVATOR_RAIL IN HOPPER". Falls
+     *  back to just the item if container type is unknown. */
     private static String withContainer(String item, String containerType) {
         if (containerType == null || containerType.isBlank()) {
             return item;

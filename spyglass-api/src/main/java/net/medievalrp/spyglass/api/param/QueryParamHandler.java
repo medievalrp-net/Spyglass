@@ -6,7 +6,7 @@ import org.bukkit.command.CommandSender;
 
 /**
  * Extension point for adding custom search parameters to {@code
- * /sg search}, {@code /sg rollback}, etc. Register via {@link
+ * /spyglass search}, {@code /spyglass rollback}, etc. Register via {@link
  * net.medievalrp.spyglass.api.SpyglassApi#registerQueryParamHandler}.
  *
  * <p>A handler claims one or more aliases (e.g. {@code "faction"} so
@@ -50,22 +50,22 @@ public interface QueryParamHandler {
      * Parse a single {@code alias=value} pair into a predicate.
      *
      * @param alias the alias the user typed (lowercased); always one
-     * of {@link #aliases()}
+     *     of {@link #aliases()}
      * @param value the literal text after the {@code =}; trim and
-     * validate as needed
+     *     validate as needed
      * @param context the parse-time environment (sender, sender
-     * location, configured max radius)
+     *     location, configured max radius)
      * @return a non-null predicate; for "no constraint", return a
-     * trivially-true predicate (e.g. an {@link
-     * QueryPredicate.Exists} on a guaranteed field)
+     *     trivially-true predicate (e.g. an {@link
+     *     QueryPredicate.Exists} on a guaranteed field)
      * @throws ParamParseException with a user-facing message when
-     * {@code value} is malformed
+     *     {@code value} is malformed
      */
     QueryPredicate parse(String alias, String value, ParamContext context) throws ParamParseException;
 
     /**
      * Whether this alias should suppress the implicit
-     * {@code radius=N} that {@code /sg search} normally injects
+     * {@code radius=N} that {@code /spyglass search} normally injects
      * when no spatial constraint is present. Override to return
      * {@code true} for aliases that already constrain the search
      * spatially or globally (e.g. a faction-territory param).
@@ -88,12 +88,12 @@ public interface QueryParamHandler {
      * Parse-time environment passed into {@link #parse}.
      *
      * @param sender the command sender; may be a console, player, or
-     * command block
+     *     command block
      * @param senderLocation the sender's location for spatial
-     * defaulting; {@code null} when the sender has no location
-     * (console)
+     *     defaulting; {@code null} when the sender has no location
+     *     (console)
      * @param maxRadius the configured upper bound for radius-style
-     * params; clamp values to this
+     *     params; clamp values to this
      */
     record ParamContext(
             CommandSender sender,

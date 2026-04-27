@@ -30,8 +30,8 @@ public record Origin(String kind, String detail) {
     }
 
     /**
-     * Origin for synthesized records created by {@code /sg rollback},
-     * {@code /sg restore}, or {@code /sg undo}. The detail string is
+     * Origin for synthesized records created by {@code /spyglass rollback},
+     * {@code /spyglass restore}, or {@code /spyglass undo}. The detail string is
      * the operator's name so a wand-hover on a rolled-back block reads
      * "ROLLBACK (by Joe)" rather than just "ROLLBACK".
      */
