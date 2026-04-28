@@ -45,7 +45,6 @@ import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
@@ -555,14 +554,8 @@ class IngestThroughputBench {
             String db = "SpyglassBench_" + System.nanoTime();
             // The MongoRecordStore builds its own MongoClient internally;
             // the URI carries uuidRepresentation + all connection state.
-            SpyglassConfig.Database cfg = new SpyglassConfig.Database(
-                    SpyglassConfig.Backend.MONGO,
-                    mongoUri,
-                    db,
-                    "EventRecords",
-                    new SpyglassConfig.ClickHouse(
-                            "localhost", 8123, "x", "x", "default", "", false));
-            MongoRecordStore realStore = new MongoRecordStore(cfg, new IndexManager());
+            MongoRecordStore realStore = new MongoRecordStore(
+                    mongoUri, db, "EventRecords", new IndexManager());
 
             ConcurrentHashMap<UUID, Long> submitMap = new ConcurrentHashMap<>();
             AtomicLong savedCount = new AtomicLong();

@@ -23,7 +23,6 @@ import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +48,7 @@ class ClickHouseRecordStoreIT {
         container = new ClickHouseContainer("clickhouse/clickhouse-server:24.8-alpine");
         container.start();
 
-        SpyglassConfig.ClickHouse config = new SpyglassConfig.ClickHouse(
+        store = new ClickHouseRecordStore(
                 container.getHost(),
                 container.getMappedPort(8123),
                 "spyglass_it",
@@ -57,7 +56,6 @@ class ClickHouseRecordStoreIT {
                 container.getUsername(),
                 container.getPassword(),
                 false);
-        store = new ClickHouseRecordStore(config);
     }
 
     @AfterAll
