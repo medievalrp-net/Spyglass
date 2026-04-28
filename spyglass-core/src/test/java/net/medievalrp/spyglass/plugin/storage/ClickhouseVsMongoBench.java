@@ -27,7 +27,6 @@ import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -103,15 +102,11 @@ class ClickhouseVsMongoBench {
 
         String mongoUri = mongoContainer.getReplicaSetUrl();
         rawMongoClient = MongoClients.create(mongoUri);
-        SpyglassConfig.Database mongoConfig = new SpyglassConfig.Database(
-                SpyglassConfig.Backend.MONGO,
-                mongoUri,
-                "SpyglassBench_" + System.nanoTime(),
-                "EventRecords",
-                stubClickHouseConfig());
-        mongoStore = new MongoRecordStore(mongoConfig, new IndexManager());
+        mongoStore = new MongoRecordStore(
+                mongoUri, "SpyglassBench_" + System.nanoTime(), "EventRecords",
+                new IndexManager());
 
-        SpyglassConfig.ClickHouse chConfig = new SpyglassConfig.ClickHouse(
+        clickHouseStore = new ClickHouseRecordStore(
                 clickHouseContainer.getHost(),
                 clickHouseContainer.getMappedPort(8123),
                 "spyglass_bench",
@@ -119,7 +114,6 @@ class ClickhouseVsMongoBench {
                 clickHouseContainer.getUsername(),
                 clickHouseContainer.getPassword(),
                 false);
-        clickHouseStore = new ClickHouseRecordStore(chConfig);
 
         int recordCount = Integer.parseInt(System.getProperty("SG_BENCH_RECORDS",
                 String.valueOf(DEFAULT_RECORDS)));
@@ -304,11 +298,6 @@ class ClickhouseVsMongoBench {
         long size = ((Number) stats.getOrDefault("size", 0L)).longValue();
         long indexSize = ((Number) stats.getOrDefault("totalIndexSize", 0L)).longValue();
         return size + indexSize;
-    }
-
-    private static SpyglassConfig.ClickHouse stubClickHouseConfig() {
-        return new SpyglassConfig.ClickHouse(
-                "localhost", 8123, "x", "x", "default", "", false);
     }
 
     private static String[] pickWeighted() {

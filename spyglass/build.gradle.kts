@@ -39,7 +39,12 @@ configurations.all {
 }
 
 dependencies {
-    implementation(project(":spyglass-api"))
+    // spyglass-core re-exports spyglass-api, mongodb-driver-sync,
+    // bson-record-codec, clickhouse-jdbc, client-v2,
+    // clickhouse-http-client, and clickhouse-data via `api(...)` —
+    // anything that used to import them directly from this module still
+    // works without the per-dep declaration.
+    implementation(project(":spyglass-core"))
 
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
@@ -48,17 +53,6 @@ dependencies {
     if (faweJar.exists()) {
         compileOnly(files(faweJar))
     }
-    implementation("org.mongodb:mongodb-driver-sync:$mongoDriverVersion")
-    implementation("org.mongodb:bson-record-codec:$mongoDriverVersion")
-    // ClickHouse Java client v2 — RowBinary streaming inserts via
-    // `client-v2`, JDBC façade for the read path. v0.9.x routes JDBC
-    // onto client-v2 internally so both share the same HTTP transport
-    // and connection pool.
-    implementation("com.clickhouse:clickhouse-jdbc:$clickhouseClientVersion")
-    implementation("com.clickhouse:client-v2:$clickhouseClientVersion")
-    implementation("com.clickhouse:clickhouse-http-client:$clickhouseClientVersion")
-    implementation("com.clickhouse:clickhouse-data:$clickhouseClientVersion")
-    runtimeOnly("org.apache.httpcomponents.client5:httpclient5:5.3.1")
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
     implementation("org.incendo:cloud-paper:$cloudMinecraftVersion")
     implementation("org.incendo:cloud-annotations:$cloudCoreVersion")
@@ -79,7 +73,6 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:$mockitoVersion")
     testImplementation("org.testcontainers:junit-jupiter:$testcontainersVersion")
     testImplementation("org.testcontainers:mongodb:$testcontainersVersion")
-    testImplementation("org.testcontainers:clickhouse:$testcontainersVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -116,36 +109,6 @@ tasks.test {
         excludeTags("bench", "ch-bench")
     }
     finalizedBy(tasks.named("jacocoTestReport"))
-}
-
-// Benchmark of the same RecordStore contract against MongoDB and
-// ClickHouse on identical record streams. Tag = "ch-bench"; not part
-// of the default test cycle. Requires Docker.
-tasks.register<Test>("clickhouseBench") {
-    description = "Runs the ClickHouse vs Mongo benchmark for Spyglass (requires Docker)."
-    group = "verification"
-    testClassesDirs = sourceSets["test"].output.classesDirs
-    classpath = sourceSets["test"].runtimeClasspath
-    useJUnitPlatform {
-        includeTags("ch-bench")
-    }
-    extensions.configure<JacocoTaskExtension> {
-        isEnabled = false
-    }
-    testLogging {
-        events("started", "passed", "failed", "standard_out")
-        showStandardStreams = true
-        showExceptions = true
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-    }
-    maxHeapSize = "2g"
-    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
-    for ((key, value) in System.getProperties()) {
-        val name = key.toString()
-        if (name.startsWith("SG_BENCH_")) {
-            systemProperty(name, value.toString())
-        }
-    }
 }
 
 // Ingest throughput benchmark: v2 AsyncRecorder + MongoRecordStore vs a

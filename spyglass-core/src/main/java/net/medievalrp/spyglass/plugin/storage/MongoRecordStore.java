@@ -18,7 +18,6 @@ import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.bson.BsonDocument;
 import org.bson.UuidRepresentation;
 import org.bson.codecs.configuration.CodecRegistries;
@@ -54,7 +53,8 @@ public final class MongoRecordStore implements RecordStore {
     private final MongoCollection<EventRecord> polymorphicCollection;
     private final CodecRegistry codecRegistry;
 
-    public MongoRecordStore(SpyglassConfig.Database config, IndexManager indexManager) {
+    public MongoRecordStore(String uri, String databaseName, String collectionName,
+                            IndexManager indexManager) {
         this.codecRegistry = CodecRegistries.fromRegistries(
                 MongoClientSettings.getDefaultCodecRegistry(),
                 CodecRegistries.fromProviders(
@@ -66,11 +66,10 @@ public final class MongoRecordStore implements RecordStore {
         MongoClientSettings settings = MongoClientSettings.builder()
                 .uuidRepresentation(UuidRepresentation.STANDARD)
                 .codecRegistry(codecRegistry)
-                .applyConnectionString(new com.mongodb.ConnectionString(config.uri()))
+                .applyConnectionString(new com.mongodb.ConnectionString(uri))
                 .build();
         this.client = MongoClients.create(settings);
-        this.database = client.getDatabase(config.name()).withCodecRegistry(codecRegistry);
-        String collectionName = config.collection();
+        this.database = client.getDatabase(databaseName).withCodecRegistry(codecRegistry);
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
         this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
         indexManager.ensureRecordIndexes(rawCollection);

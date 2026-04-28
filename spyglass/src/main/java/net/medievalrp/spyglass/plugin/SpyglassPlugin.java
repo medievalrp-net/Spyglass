@@ -132,8 +132,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         try {
             switch (config.database().backend()) {
                 case MONGO -> {
+                    SpyglassConfig.Database db = config.database();
                     MongoRecordStore mongoStore = new MongoRecordStore(
-                            config.database(), new IndexManager());
+                            db.uri(), db.name(), db.collection(), new IndexManager());
                     recordStore = mongoStore;
                     undoStack = new MongoUndoStack(
                             mongoStore.database(), mongoStore.codecRegistry());
@@ -141,13 +142,15 @@ public final class SpyglassPlugin extends JavaPlugin {
                             mongoStore.database(), getLogger());
                 }
                 case CLICKHOUSE -> {
-                    ClickHouseRecordStore chStore =
-                            new ClickHouseRecordStore(config.database().clickhouse());
+                    SpyglassConfig.ClickHouse ch = config.database().clickhouse();
+                    ClickHouseRecordStore chStore = new ClickHouseRecordStore(
+                            ch.host(), ch.port(), ch.database(), ch.table(),
+                            ch.user(), ch.password(), ch.ssl());
                     recordStore = chStore;
                     undoStack = new ClickHouseUndoStack(
-                            chStore.client(), config.database().clickhouse().database());
+                            chStore.client(), ch.database());
                     toolStateStore = new ClickHouseToolStateStore(
-                            chStore.client(), config.database().clickhouse().database());
+                            chStore.client(), ch.database());
                 }
             }
             getLogger().info("Spyglass: backend = " + config.database().backend());
