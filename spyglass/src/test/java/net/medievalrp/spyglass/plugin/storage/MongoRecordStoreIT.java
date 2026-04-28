@@ -94,15 +94,15 @@ class MongoRecordStoreIT {
 
         List<EventRecord> records = List.of(
                 new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
-                        origin, source, location, "STONE", stone, air),
+                        origin, source, location, "test", "STONE", stone, air),
                 new BlockPlaceRecord(UUID.randomUUID(), "place", now, now.plusSeconds(3600),
-                        origin, source, location, "STONE", air, stone),
+                        origin, source, location, "test", "STONE", air, stone),
                 new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
-                        origin, source, location, "Alice", "hello", List.of()),
+                        origin, source, location, "test", "Alice", "hello", List.of()),
                 new ContainerDepositRecord(UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
-                        origin, source, location, "DIAMOND", "CHEST", 3, 1, null, item),
+                        origin, source, location, "test", "DIAMOND", "CHEST", 3, 1, null, item),
                 new EntityDeathRecord(UUID.randomUUID(), "death", now, now.plusSeconds(3600),
-                        origin, source, location, "ZOMBIE", "ZOMBIE",
+                        origin, source, location, "test", "ZOMBIE", "ZOMBIE",
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null));
 
         store.save(records);
@@ -178,15 +178,15 @@ class MongoRecordStoreIT {
         List<EventRecord> records = List.of(
                 new ContainerDepositRecord(UUID.randomUUID(), "deposit",
                         now, now.plusSeconds(3600),
-                        origin, source, loc, "DIAMOND_SWORD", "CHEST",
+                        origin, source, loc, "test", "DIAMOND_SWORD", "CHEST",
                         0, 1, null, enchanted),
                 new net.medievalrp.spyglass.api.event.ItemDropRecord(
                         UUID.randomUUID(), "drop",
                         now, now.plusSeconds(3600),
-                        origin, source, loc, "DIAMOND_SWORD", 1, enchanted),
+                        origin, source, loc, "test", "DIAMOND_SWORD", 1, enchanted),
                 new BlockPlaceRecord(UUID.randomUUID(), "place",
                         now, now.plusSeconds(3600),
-                        origin, source, loc, "CHEST", air, chestWithItem));
+                        origin, source, loc, "test", "CHEST", air, chestWithItem));
         store.save(records);
 
         // iname:Excal — three paths, three records should match.
@@ -289,7 +289,7 @@ class MongoRecordStoreIT {
         BlockBreakRecord expired = new BlockBreakRecord(
                 UUID.randomUUID(), "break", past, past.minusSeconds(1),
                 Origin.player(), Source.player(ALICE, "Alice"),
-                location, "STONE", stone, air);
+                location, "test", "STONE", stone, air);
 
         store.save(List.of(expired));
 
@@ -359,7 +359,7 @@ class MongoRecordStoreIT {
                     store.save(List.of(new BlockBreakRecord(
                             UUID.randomUUID(), "break",
                             base.plusMillis(i), base.plusSeconds(3600),
-                            origin, source, loc, "STONE", stone, air)));
+                            origin, source, loc, "test", "STONE", stone, air)));
                 }
             } catch (Exception ex) {
                 writerErrors.incrementAndGet();
@@ -433,7 +433,7 @@ class MongoRecordStoreIT {
         for (int i = 0; i < 20; i++) {
             many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
                     now.plusSeconds(i), now.plusSeconds(3600),
-                    origin, source, loc, "STONE", stone, air));
+                    origin, source, loc, "test", "STONE", stone, air));
         }
         store.save(many);
         QueryRequest limited = new QueryRequest(

@@ -13,9 +13,15 @@ import org.bukkit.entity.Player;
 public final class RecordingSupport {
 
     private final Duration retention;
+    private final String serverName;
 
-    public RecordingSupport(Duration retention) {
+    public RecordingSupport(Duration retention, String serverName) {
         this.retention = retention;
+        this.serverName = serverName;
+    }
+
+    public String serverName() {
+        return serverName;
     }
 
     /**
@@ -144,7 +150,7 @@ public final class RecordingSupport {
      * emits, even though each record gets its own UUID.
      */
     public RecordContext context(Instant occurred, Origin origin, Source source, BlockLocation location) {
-        return RecordContext.fresh(occurred, retention.after(occurred), origin, source, location);
+        return RecordContext.fresh(occurred, retention.after(occurred), origin, source, location, serverName);
     }
 
     /** Shortcut: player-origin, player-source context for a located event. */

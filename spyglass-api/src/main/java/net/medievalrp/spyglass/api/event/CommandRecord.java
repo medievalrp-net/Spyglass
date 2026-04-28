@@ -14,13 +14,14 @@ public record CommandRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String commandLine) implements EventRecord {
 
     public static CommandRecord of(RecordContext ctx, String target, String commandLine) {
         return new CommandRecord(
                 ctx.id(), "command", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, commandLine);
     }
 }

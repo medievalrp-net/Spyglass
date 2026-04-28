@@ -21,6 +21,7 @@ public record EntityNameRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String entityType,
         UUID entityId,
@@ -36,7 +37,7 @@ public record EntityNameRecord(
         return new EntityNameRecord(
                 ctx.id(), "named",
                 ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, entityType, entityId, oldName, newName);
     }
 }

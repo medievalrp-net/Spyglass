@@ -21,6 +21,7 @@ public record EntityDeathRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String entityType,
         UUID entityId,
@@ -34,7 +35,7 @@ public record EntityDeathRecord(
                                        @Nullable String entityNbt) {
         return new EntityDeathRecord(
                 ctx.id(), "death", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, entityType, entityId, killerType, damageCause, entityNbt);
     }
 

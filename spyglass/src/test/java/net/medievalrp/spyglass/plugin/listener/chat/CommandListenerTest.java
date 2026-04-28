@@ -31,7 +31,7 @@ class CommandListenerTest {
     @BeforeEach
     void setUp() {
         recorder = new CapturingRecorder();
-        RecordingSupport support = new RecordingSupport(new Duration(3600));
+        RecordingSupport support = new RecordingSupport(new Duration(3600), "test");
         listener = new CommandListener(recorder, support);
     }
 

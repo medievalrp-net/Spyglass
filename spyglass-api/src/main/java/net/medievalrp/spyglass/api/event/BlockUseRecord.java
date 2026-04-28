@@ -18,11 +18,12 @@ public record BlockUseRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target) implements EventRecord {
 
     public static BlockUseRecord of(RecordContext ctx, String target) {
         return new BlockUseRecord(
                 ctx.id(), "use", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target);
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
     }
 }

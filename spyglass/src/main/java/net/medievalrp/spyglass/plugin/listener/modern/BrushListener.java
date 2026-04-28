@@ -75,7 +75,7 @@ public final class BrushListener implements RecordingListener {
                     support.expiresAt(occurred),
                     support.playerOrigin(),
                     support.playerSource(ctx.player()),
-                    location, start.name(), originalSnapshot, postSnapshot));
+                    location, support.serverName(), start.name(), originalSnapshot, postSnapshot));
         });
     }
 }
