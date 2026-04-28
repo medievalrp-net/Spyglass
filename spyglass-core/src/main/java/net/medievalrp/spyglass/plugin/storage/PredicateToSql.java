@@ -137,10 +137,25 @@ final class PredicateToSql {
     private String column(String fieldPath) {
         String column = ClickHouseFieldMapper.columnFor(fieldPath);
         if (column == null) {
+            // Two reasons a path can land here:
+            //   1. Nested snapshot paths (item.name, beforeItem.lore, etc.)
+            //      that genuinely live inside opaque BSON blobs on CH.
+            //   2. A flat column we forgot to register in
+            //      ClickHouseFieldMapper.COLUMN — caller-visible as
+            //      "field X cannot be filtered" even though the column
+            //      exists on disk. Spell out both so the operator can
+            //      tell which side of the line they're on.
+            boolean looksNested = fieldPath.contains(".")
+                    && (fieldPath.startsWith("item.")
+                            || fieldPath.startsWith("beforeItem.")
+                            || fieldPath.startsWith("afterItem.")
+                            || fieldPath.startsWith("originalBlock.")
+                            || fieldPath.startsWith("newBlock."));
+            String why = looksNested
+                    ? "nested-snapshot paths live inside opaque BSON blobs and aren't searchable server-side"
+                    : "no ClickHouse column is mapped for this path (add it to ClickHouseFieldMapper)";
             throw new UnsupportedPredicateException(
-                    "ClickHouse backend cannot filter on field '" + fieldPath
-                            + "': nested-snapshot paths live inside opaque BSON blobs "
-                            + "and aren't searchable server-side.");
+                    "ClickHouse backend cannot filter on field '" + fieldPath + "': " + why + ".");
         }
         return column;
     }
