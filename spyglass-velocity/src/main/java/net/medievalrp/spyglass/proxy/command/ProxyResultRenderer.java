@@ -145,7 +145,7 @@ public final class ProxyResultRenderer {
             // Drill-down: same trick as Paper's renderer. Click runs a
             // narrowed search restricted to this player + event + server,
             // bypassing aggregation so each row is visible.
-            String drillCmd = "/spyglass search "
+            String drillCmd = "/sgv search "
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
                     + " srv:" + safeServer(record.server())
@@ -369,7 +369,7 @@ public final class ProxyResultRenderer {
                 .append(Component.text(arrow, NamedTextColor.RED))
                 .append(Component.text("]", NamedTextColor.RED))
                 .build()
-                .clickEvent(ClickEvent.runCommand("/spyglass page " + targetPage))
+                .clickEvent(ClickEvent.runCommand("/sgv page " + targetPage))
                 .hoverEvent(HoverEvent.showText(
                         Component.text("Page " + targetPage, NamedTextColor.RED)));
     }

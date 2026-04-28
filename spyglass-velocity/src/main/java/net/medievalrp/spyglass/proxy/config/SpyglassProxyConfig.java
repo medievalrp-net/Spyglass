@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.proxy.config;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import net.medievalrp.spyglass.api.util.Duration;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.hocon.HoconConfigurationLoader;
 
@@ -14,6 +15,7 @@ import org.spongepowered.configurate.hocon.HoconConfigurationLoader;
  */
 public record SpyglassProxyConfig(
         Database database,
+        Defaults defaults,
         Limits limits) {
 
     public static SpyglassProxyConfig load(Path dataDirectory) throws IOException {
@@ -52,6 +54,8 @@ public record SpyglassProxyConfig(
                                 root.node("database", "clickhouse", "user").getString("default"),
                                 root.node("database", "clickhouse", "password").getString(""),
                                 root.node("database", "clickhouse", "ssl").getBoolean(false))),
+                new Defaults(
+                        Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
                         root.node("limits", "search-result").getInt(1_000),
                         root.node("limits", "page-size").getInt(8)));
@@ -78,6 +82,15 @@ public record SpyglassProxyConfig(
             String user,
             String password,
             boolean ssl) {
+    }
+
+    /**
+     * Default time window applied when no {@code t:} is on the command
+     * line. Always enforced - there's no 0-disable for time, since an
+     * unbounded query against a long-lived store can pull tens of
+     * millions of rows.
+     */
+    public record Defaults(Duration time) {
     }
 
     /**
@@ -111,6 +124,14 @@ public record SpyglassProxyConfig(
                     password = ""
                     ssl = false
                   }
+                }
+
+                defaults {
+                  # Default time window when t: is omitted. Always enforced;
+                  # the proxy has no global view of player locations, so an
+                  # unbounded /sgv search would pull every row in the store.
+                  # Override per-query with t:1d / t:30m / etc.
+                  time = "4h"
                 }
 
                 limits {
