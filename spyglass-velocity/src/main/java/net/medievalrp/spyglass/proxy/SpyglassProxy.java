@@ -67,9 +67,14 @@ public final class SpyglassProxy {
         }
         logger.info("Spyglass: backend = {}", config.database().backend());
 
+        // Register only /sgv on the proxy. Earlier revisions also bound
+        // /spyglass and /sg, but Velocity dispatches its own commands
+        // before forwarding to the backend, which silently shadowed the
+        // Paper-side /spyglass (wand, rollback, etc.) the moment a player
+        // joined a backend. /sgv is the cross-server-search namespace;
+        // /spyglass on a backend keeps its full command tree.
         CommandManager cm = server.getCommandManager();
-        CommandMeta meta = cm.metaBuilder("spyglass")
-                .aliases("sg")
+        CommandMeta meta = cm.metaBuilder("sgv")
                 .plugin(this)
                 .build();
         cm.register(meta, new SpyglassCommand(recordStore, config, logger));

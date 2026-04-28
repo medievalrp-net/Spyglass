@@ -22,7 +22,9 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class SpyglassCommands {
 
-    private static final List<String> ROOT_ALIASES = List.of("spyglass");
+    // /sg is the short backend alias; /sgv on the Velocity proxy stays
+    // namespace-distinct so the proxy never shadows the Paper command.
+    private static final List<String> ROOT_ALIASES = List.of("spyglass", "sg");
 
     private final JavaPlugin plugin;
     private final SpyglassApi api;

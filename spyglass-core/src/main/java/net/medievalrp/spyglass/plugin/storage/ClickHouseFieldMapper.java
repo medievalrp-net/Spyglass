@@ -42,7 +42,11 @@ final class ClickHouseFieldMapper {
             Map.entry("location.x", "location_x"),
             Map.entry("location.y", "location_y"),
             Map.entry("location.z", "location_z"),
-            Map.entry("server", "server"));
+            Map.entry("server", "server"),
+            // JoinRecord IP — a flat column on the events table; previously
+            // omitted so ip:1.2.3.4 raised UnsupportedPredicateException
+            // with a misleading "BSON blob" message.
+            Map.entry("address", "address"));
 
     private ClickHouseFieldMapper() {
     }

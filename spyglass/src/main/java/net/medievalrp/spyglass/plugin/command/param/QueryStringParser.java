@@ -103,8 +103,25 @@ public final class QueryStringParser {
         boolean global = state.global;
 
         if (config.defaults().enabled()) {
+            int defaultRadius = config.defaults().radius();
             if (!defaultRadiusSuppressed && !global && senderLocation != null) {
-                predicates.add(RadiusParam.groupAround(senderLocation, config.defaults().radius()));
+                if (defaultRadius > 0) {
+                    predicates.add(RadiusParam.groupAround(senderLocation, defaultRadius));
+                    // Hint, not an error: tell the player the default kicked in
+                    // and how to override. Operators upgrading from v1 muscle-
+                    // memory used to type bare /spyglass search expecting global
+                    // and got 5-block radius back; this nudge preempts the
+                    // "why are there no results" follow-up. Suppressed when
+                    // defaults.radius=0, which is the operator's "I want
+                    // global by default" opt-out.
+                    sender.sendMessage(net.kyori.adventure.text.Component.text(
+                            "(no range; defaulting to " + defaultRadius
+                                    + " blocks - add r:N or -g for global)",
+                            net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
+                }
+                // defaultRadius == 0 means "global default" — no predicate
+                // added, no reminder shown. The whole-DB scan is what the
+                // operator opted into.
             }
             if (!sawTime) {
                 Duration defaultTime = config.defaults().time();
