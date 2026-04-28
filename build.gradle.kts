@@ -3,6 +3,7 @@ plugins {
 }
 
 val paperApiVersion = "1.21.8-R0.1-SNAPSHOT"
+val velocityApiVersion = "3.4.0-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
 val clickhouseClientVersion = "0.9.8"
 val configurateVersion = "4.2.0"
@@ -61,6 +62,10 @@ subprojects {
                         // floor stabilises.
                         "spyglass-core" -> 0.20.toBigDecimal()
                         "spyglass" -> 0.20.toBigDecimal()
+                        // Proxy module is read-only and thin (just a
+                        // command + renderer + parser); no floor until
+                        // its test suite stabilises.
+                        "spyglass-velocity" -> 0.00.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }
                 }
@@ -100,6 +105,7 @@ tasks.register("deployToRpServer") {
 
 extra.apply {
     set("paperApiVersion", paperApiVersion)
+    set("velocityApiVersion", velocityApiVersion)
     set("mongoDriverVersion", mongoDriverVersion)
     set("clickhouseClientVersion", clickhouseClientVersion)
     set("configurateVersion", configurateVersion)
