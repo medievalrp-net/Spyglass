@@ -1,3 +1,3 @@
 rootProject.name = "Spyglass"
 
-include("spyglass-api", "spyglass-core", "spyglass")
+include("spyglass-api", "spyglass-core", "spyglass", "spyglass-velocity")
