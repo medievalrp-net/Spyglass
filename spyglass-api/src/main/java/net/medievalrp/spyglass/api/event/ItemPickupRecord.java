@@ -12,6 +12,7 @@ public record ItemPickupRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         int amount,
         StoredItem item) implements EventRecord {
@@ -19,6 +20,6 @@ public record ItemPickupRecord(
     public static ItemPickupRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
         return new ItemPickupRecord(
                 ctx.id(), "pickup", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target, amount, item);
     }
 }

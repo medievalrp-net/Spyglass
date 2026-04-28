@@ -14,11 +14,12 @@ public record QuitRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target) implements EventRecord {
 
     public static QuitRecord of(RecordContext ctx, String target) {
         return new QuitRecord(
                 ctx.id(), "quit", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target);
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
     }
 }

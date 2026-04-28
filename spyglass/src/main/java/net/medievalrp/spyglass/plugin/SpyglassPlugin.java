@@ -29,6 +29,7 @@ import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
 import net.medievalrp.spyglass.plugin.command.param.RecipientParam;
+import net.medievalrp.spyglass.plugin.command.param.ServerParam;
 import net.medievalrp.spyglass.plugin.command.param.TargetParam;
 import net.medievalrp.spyglass.plugin.command.param.TimeParam;
 import net.medievalrp.spyglass.plugin.command.param.WorldParam;
@@ -190,7 +191,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toUnmodifiableSet());
 
-        RecordingSupport support = new RecordingSupport(config.storage().retention());
+        RecordingSupport support = new RecordingSupport(config.storage().retention(), config.server().name());
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
 
         // Every recording listener in one list. `events()` declares the event
@@ -279,6 +280,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new TargetParam());
         apiImpl.registerQueryParamHandler(new IpParam());
         apiImpl.registerQueryParamHandler(new RecipientParam());
+        apiImpl.registerQueryParamHandler(new ServerParam(config.server().name()));
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 

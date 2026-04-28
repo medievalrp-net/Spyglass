@@ -81,7 +81,7 @@ class EventRecordCodecTest {
                 "break", WHEN, WHEN.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 new BlockLocation(WORLD, "world", 10, 64, 20),
-                "STONE", stone, air);
+                "test", "STONE", stone, air);
     }
 
     private static BsonDocument encode(EventRecord record) {
@@ -297,7 +297,7 @@ class EventRecordCodecTest {
             BlockBreakRecord original = new BlockBreakRecord(
                     UUID.randomUUID(), alias, WHEN, WHEN.plusSeconds(3600),
                     Origin.player(), Source.player(ALICE, "Alice"),
-                    loc, "STONE", stone, air);
+                    loc, "test", "STONE", stone, air);
 
             EventRecord decoded = decode(encode(original));
 
@@ -316,7 +316,7 @@ class EventRecordCodecTest {
                 UUID.randomUUID(), "say", WHEN, WHEN.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 new BlockLocation(WORLD, "world", 5, 64, 5),
-                "Alice", "hello world", List.of());
+                "test", "Alice", "hello world", List.of());
         BlockBreakRecord brk = sampleBreak();
 
         assertThat(decode(encode(chat))).isInstanceOf(ChatRecord.class).isEqualTo(chat);

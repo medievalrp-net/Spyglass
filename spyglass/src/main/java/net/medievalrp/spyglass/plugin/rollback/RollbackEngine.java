@@ -348,7 +348,7 @@ public final class RollbackEngine {
                 RecordingSupport.fastRandomUUID(),
                 occurred,
                 support.expiresAt(occurred),
-                origin, source, location);
+                origin, source, location, support.serverName());
         boolean toAir = after == null || after.material() == Material.AIR;
         // Lowercase + hyphenated names match {@code shulker-open} et al
         // and dodge the case-sensitivity quirk in {@link
@@ -358,7 +358,7 @@ public final class RollbackEngine {
         String target = (after == null ? Material.AIR : after.material()).name();
         recorder.record(new BlockUseRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target));
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target));
     }
 
     public RollbackResult apply(RollbackEffect effect) {
