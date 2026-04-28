@@ -482,7 +482,7 @@ class IngestThroughputBench {
                 new BlockLocation(worldId, "world",
                         rng.nextInt(2000) - 1000, rng.nextInt(256),
                         rng.nextInt(2000) - 1000),
-                "STONE", original, replaced);
+                "test", "STONE", original, replaced);
     }
 
     private static long envLong(String key, long fallback) {

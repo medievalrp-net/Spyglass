@@ -98,7 +98,7 @@ public final class ClickHouseRecordStore implements RecordStore {
             "source_description",
             "location_world_id", "location_world_name",
             "location_x", "location_y", "location_z",
-            "target");
+            "server", "target");
 
     private static final List<String> SUMMARY_EXTRAS = List.of(
             "container_type", "slot", "amount",
@@ -246,6 +246,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         writer.setInteger("location_x", location.x());
         writer.setInteger("location_y", location.y());
         writer.setInteger("location_z", location.z());
+        writer.setString("server", nullToEmpty(record.server()));
         writer.setValue("target", record.target());
     }
 
@@ -457,47 +458,48 @@ public final class ClickHouseRecordStore implements RecordStore {
         Origin origin = readOrigin(row);
         Source source = readSource(row);
         BlockLocation location = readLocation(row);
+        String server = row.getString("server");
         String target = row.getString("target");
 
         if (clazz == BlockBreakRecord.class) {
             return new BlockBreakRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("original_block")) : null,
                     includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("new_block")) : null);
         }
         if (clazz == BlockPlaceRecord.class) {
             return new BlockPlaceRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("original_block")) : null,
                     includeHeavy ? BsonBlobs.decodeBlockSnapshot(row.getString("new_block")) : null);
         }
         if (clazz == BlockUseRecord.class) {
             return new BlockUseRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target);
+                    origin, source, location, server, target);
         }
         if (clazz == ChatRecord.class) {
             return new ChatRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("message"),
                     readUuidList(row, "recipients"));
         }
         if (clazz == CommandRecord.class) {
             return new CommandRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("command_line"));
         }
         if (clazz == JoinRecord.class) {
             return new JoinRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("address"));
         }
         if (clazz == QuitRecord.class) {
             return new QuitRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target);
+                    origin, source, location, server, target);
         }
         if (clazz == ContainerDepositRecord.class) {
             return new ContainerDepositRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("container_type"),
                     row.getInteger("slot"),
                     row.getInteger("amount"),
@@ -506,7 +508,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         if (clazz == ContainerWithdrawRecord.class) {
             return new ContainerWithdrawRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("container_type"),
                     row.getInteger("slot"),
                     row.getInteger("amount"),
@@ -515,17 +517,17 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         if (clazz == ContainerInteractRecord.class) {
             return new ContainerInteractRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target);
+                    origin, source, location, server, target);
         }
         if (clazz == ItemDropRecord.class) {
             return new ItemDropRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getInteger("amount"),
                     includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
         }
         if (clazz == ItemPickupRecord.class) {
             return new ItemPickupRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getInteger("amount"),
                     includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
         }
@@ -533,13 +535,13 @@ public final class ClickHouseRecordStore implements RecordStore {
             BlockLocation from = readOptionalLocation(row, "teleport_from_");
             BlockLocation to = readOptionalLocation(row, "teleport_to_");
             return new TeleportRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     from, to,
                     row.getString("teleport_cause"));
         }
         if (clazz == EntityDeathRecord.class) {
             return new EntityDeathRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("entity_type"),
                     row.getUUID("entity_id"),
                     row.getString("entity_killer_type"),
@@ -548,7 +550,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         if (clazz == EntityHitRecord.class) {
             return new EntityHitRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("entity_type"),
                     row.getUUID("entity_id"),
                     row.getDouble("entity_damage"),
@@ -557,14 +559,14 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         if (clazz == EntityMountRecord.class) {
             return new EntityMountRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("entity_type"),
                     row.getUUID("entity_id"),
                     row.getByte("entity_dismount") != 0);
         }
         if (clazz == EntityNameRecord.class) {
             return new EntityNameRecord(id, event, occurred, expiresAt,
-                    origin, source, location, target,
+                    origin, source, location, server, target,
                     row.getString("entity_type"),
                     row.getUUID("entity_id"),
                     row.getString("entity_old_name"),

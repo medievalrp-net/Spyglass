@@ -14,6 +14,7 @@ public record ContainerWithdrawRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String containerType,
         int slot,
@@ -26,7 +27,7 @@ public record ContainerWithdrawRecord(
                                              StoredItem beforeItem, StoredItem afterItem) {
         return new ContainerWithdrawRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, containerType, slot, amount, beforeItem, afterItem);
     }
 

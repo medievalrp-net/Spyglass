@@ -6,9 +6,9 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 
 /**
  * The fields every {@link EventRecord} carries at the root: an id,
- * timestamps, origin, source, and location. Extractors build one per event
- * and hand it to the record's static {@code of(...)} factory along with
- * type-specific fields.
+ * timestamps, origin, source, location, and the recording server's
+ * identifier. Extractors build one per event and hand it to the record's
+ * static {@code of(...)} factory along with type-specific fields.
  */
 public record RecordContext(
         UUID id,
@@ -16,10 +16,12 @@ public record RecordContext(
         Instant expiresAt,
         Origin origin,
         Source source,
-        BlockLocation location) {
+        BlockLocation location,
+        String server) {
 
     public static RecordContext fresh(Instant occurred, Instant expiresAt,
-                                      Origin origin, Source source, BlockLocation location) {
-        return new RecordContext(UUID.randomUUID(), occurred, expiresAt, origin, source, location);
+                                      Origin origin, Source source, BlockLocation location,
+                                      String server) {
+        return new RecordContext(UUID.randomUUID(), occurred, expiresAt, origin, source, location, server);
     }
 }

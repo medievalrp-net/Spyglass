@@ -76,7 +76,7 @@ public final class VaultListener implements RecordingListener {
                     support.expiresAt(occurred),
                     support.playerOrigin(),
                     support.playerSource(ctx.player()),
-                    location, keyMaterial.name(), pre, post));
+                    location, support.serverName(), keyMaterial.name(), pre, post));
         });
     }
 }

@@ -117,15 +117,15 @@ class WalDurabilityTest {
                 List.of(), List.of(), List.of(), List.of(), null);
         return List.of(
                 new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
-                        origin, source, loc, "STONE", stone, air),
+                        origin, source, loc, "test", "STONE", stone, air),
                 new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
-                        origin, source, loc, "Tester", "hi", List.of()));
+                        origin, source, loc, "test", "Tester", "hi", List.of()));
     }
 
     private static ChatRecord chatAt(Instant occurred, String message) {
         BlockLocation loc = new BlockLocation(WORLD, "world", 0, 64, 0);
         return new ChatRecord(UUID.randomUUID(), "say", occurred, occurred.plusSeconds(3600),
                 Origin.player(), Source.player(PLAYER, "Tester"),
-                loc, "Tester", message, List.of());
+                loc, "test", "Tester", message, List.of());
     }
 }
