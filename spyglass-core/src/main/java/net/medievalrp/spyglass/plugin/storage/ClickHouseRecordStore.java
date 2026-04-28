@@ -52,7 +52,6 @@ import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
@@ -129,18 +128,18 @@ public final class ClickHouseRecordStore implements RecordStore {
     private final String summarySelect;
     private final String fullSelect;
 
-    public ClickHouseRecordStore(SpyglassConfig.ClickHouse config) {
-        this.database = config.database();
-        this.table = config.table();
+    public ClickHouseRecordStore(String host, int port, String database, String table,
+                                 String user, String password, boolean ssl) {
+        this.database = database;
+        this.table = table;
         this.qualifiedTable = ClickHouseSchema.qualifiedTable(database, table);
         this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS));
         this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, HEAVY_COLUMNS));
 
         this.client = new Client.Builder()
-                .addEndpoint((config.ssl() ? "https" : "http") + "://"
-                        + config.host() + ":" + config.port())
-                .setUsername(config.user())
-                .setPassword(config.password() == null ? "" : config.password())
+                .addEndpoint((ssl ? "https" : "http") + "://" + host + ":" + port)
+                .setUsername(user)
+                .setPassword(password == null ? "" : password)
                 .setDefaultDatabase("default")
                 // LZ4 on insert traffic only — request bodies are
                 // big and compress well, but small query responses
