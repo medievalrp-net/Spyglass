@@ -1,0 +1,102 @@
+package net.medievalrp.spyglass.proxy;
+
+import com.google.inject.Inject;
+import com.velocitypowered.api.command.CommandManager;
+import com.velocitypowered.api.command.CommandMeta;
+import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
+import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.plugin.annotation.DataDirectory;
+import com.velocitypowered.api.proxy.ProxyServer;
+import java.io.IOException;
+import java.nio.file.Path;
+import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
+import net.medievalrp.spyglass.plugin.storage.IndexManager;
+import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
+import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import net.medievalrp.spyglass.proxy.command.SpyglassCommand;
+import net.medievalrp.spyglass.proxy.config.SpyglassProxyConfig;
+import org.slf4j.Logger;
+
+/**
+ * Velocity-side companion to the Paper Spyglass plugin.
+ *
+ * <p>Reads the same Mongo / ClickHouse store the Paper plugins write to,
+ * lets operators run cross-backend searches from the proxy, and slices
+ * results by the {@code server} tag stamped at write-time. Read-only:
+ * the proxy never records events (no world / block context to record),
+ * never rolls back (rollback needs Bukkit), and never registers a wand.
+ */
+@Plugin(
+        id = "spyglass",
+        name = "Spyglass",
+        version = "1.0.0",
+        description = "Cross-server forensic log search for the Velocity proxy.",
+        authors = {"medievalrp-net"})
+public final class SpyglassProxy {
+
+    private final ProxyServer server;
+    private final Logger logger;
+    private final Path dataDirectory;
+
+    private SpyglassProxyConfig config;
+    private RecordStore recordStore;
+
+    @Inject
+    public SpyglassProxy(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
+        this.server = server;
+        this.logger = logger;
+        this.dataDirectory = dataDirectory;
+    }
+
+    @Subscribe
+    public void onProxyInitialize(ProxyInitializeEvent event) {
+        try {
+            this.config = SpyglassProxyConfig.load(dataDirectory);
+        } catch (IOException ex) {
+            logger.error("Failed to load Spyglass proxy config; plugin disabled.", ex);
+            return;
+        }
+
+        try {
+            this.recordStore = openStore(config);
+        } catch (RuntimeException ex) {
+            logger.error("Failed to open Spyglass record store; plugin disabled.", ex);
+            return;
+        }
+        logger.info("Spyglass: backend = {}", config.database().backend());
+
+        CommandManager cm = server.getCommandManager();
+        CommandMeta meta = cm.metaBuilder("spyglass")
+                .aliases("sg")
+                .plugin(this)
+                .build();
+        cm.register(meta, new SpyglassCommand(recordStore, config, logger));
+    }
+
+    @Subscribe
+    public void onProxyShutdown(ProxyShutdownEvent event) {
+        if (recordStore != null) {
+            try {
+                recordStore.close();
+            } catch (RuntimeException ex) {
+                logger.warn("Spyglass record store close failed.", ex);
+            }
+        }
+    }
+
+    private static RecordStore openStore(SpyglassProxyConfig cfg) {
+        SpyglassProxyConfig.Database db = cfg.database();
+        return switch (db.backend()) {
+            case MONGO -> new MongoRecordStore(
+                    db.uri(), db.name(), db.collection(), new IndexManager());
+            case CLICKHOUSE -> {
+                SpyglassProxyConfig.ClickHouse ch = db.clickhouse();
+                yield new ClickHouseRecordStore(
+                        ch.host(), ch.port(), ch.database(), ch.table(),
+                        ch.user(), ch.password(), ch.ssl());
+            }
+        };
+    }
+}
