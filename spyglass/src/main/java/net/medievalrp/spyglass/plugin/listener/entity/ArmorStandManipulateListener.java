@@ -58,7 +58,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
                     support.newId(), "entity-withdraw",
                     occurred, support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(event.getPlayer()),
-                    location, armorStandItem.getType().name(),
+                    location, support.serverName(), armorStandItem.getType().name(),
                     containerType, slot,
                     armorStandItem.getAmount(), beforeItem, afterItem));
             return;
@@ -68,7 +68,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
                     support.newId(), "entity-withdraw",
                     occurred, support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(event.getPlayer()),
-                    location, armorStandItem.getType().name(),
+                    location, support.serverName(), armorStandItem.getType().name(),
                     containerType, slot,
                     armorStandItem.getAmount(), beforeItem, null));
             return;
@@ -77,7 +77,7 @@ public final class ArmorStandManipulateListener implements RecordingListener {
                 support.newId(), "entity-deposit",
                 occurred, support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(event.getPlayer()),
-                location, playerItem.getType().name(),
+                location, support.serverName(), playerItem.getType().name(),
                 containerType, slot,
                 playerItem.getAmount(), null, afterItem));
     }

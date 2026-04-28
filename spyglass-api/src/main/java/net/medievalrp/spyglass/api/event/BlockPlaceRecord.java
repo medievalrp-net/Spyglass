@@ -16,6 +16,7 @@ public record BlockPlaceRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         BlockSnapshot originalBlock,
         BlockSnapshot newBlock) implements EventRecord, Rollbackable {
@@ -24,7 +25,7 @@ public record BlockPlaceRecord(
                                       BlockSnapshot originalBlock, BlockSnapshot newBlock) {
         return new BlockPlaceRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, originalBlock, newBlock);
     }
 

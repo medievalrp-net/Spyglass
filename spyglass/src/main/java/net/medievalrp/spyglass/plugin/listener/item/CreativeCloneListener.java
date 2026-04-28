@@ -77,6 +77,7 @@ public final class CreativeCloneListener implements RecordingListener {
                 ctx.origin(),
                 ctx.source(),
                 ctx.location(),
+                ctx.server(),
                 source.getType().name(),
                 source.getAmount(),
                 stored));

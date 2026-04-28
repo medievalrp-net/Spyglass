@@ -33,6 +33,7 @@ class AsyncRecorderTest {
                 Origin.player(),
                 Source.player(UUID.randomUUID(), "tester"),
                 new BlockLocation(UUID.randomUUID(), "world", 0, 64, 0),
+                "test",
                 "tester",
                 "127.0.0.1");
     }

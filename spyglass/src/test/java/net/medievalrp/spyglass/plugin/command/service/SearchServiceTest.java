@@ -47,6 +47,7 @@ class SearchServiceTest {
                 Origin.player(),
                 Source.player(UUID.randomUUID(), "Alice"),
                 new BlockLocation(UUID.randomUUID(), "world", 0, 64, 0),
+                "test",
                 "STONE",
                 stone,
                 air);

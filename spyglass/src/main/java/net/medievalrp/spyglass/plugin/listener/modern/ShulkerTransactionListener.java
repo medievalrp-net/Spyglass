@@ -95,13 +95,13 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, cursor == null ? "UNKNOWN" : cursor.getType().name(),
+                    location, support.serverName(), cursor == null ? "UNKNOWN" : cursor.getType().name(),
                     containerType, slot, amount, before, null));
             case WITHDRAW -> recorder.record(new ContainerWithdrawRecord(
                     support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, slotItem == null ? "UNKNOWN" : slotItem.getType().name(),
+                    location, support.serverName(), slotItem == null ? "UNKNOWN" : slotItem.getType().name(),
                     containerType, slot, amount, before, null));
         }
     }
@@ -141,7 +141,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, deposited.getType().name(), containerType,
+                    location, support.serverName(), deposited.getType().name(), containerType,
                     rawSlot, delta, storedBefore, storedAfter));
         }
     }
@@ -169,7 +169,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, moved.getType().name(), containerType,
+                    location, support.serverName(), moved.getType().name(), containerType,
                     event.getSlot(), amount, before, null));
             return;
         }
@@ -180,7 +180,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                 support.newId(), "shulker-deposit", occurred,
                 support.expiresAt(occurred),
                 support.playerOrigin(), support.playerSource(player),
-                location, moved.getType().name(), containerType,
+                location, support.serverName(), moved.getType().name(), containerType,
                 -1, amount, null, before));
     }
 
@@ -203,7 +203,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, slotItem.getType().name(), containerType, slot,
+                    location, support.serverName(), slotItem.getType().name(), containerType, slot,
                     slotItem.getAmount(), stored, null));
         }
         if (hotbarHadItem) {
@@ -212,7 +212,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, hotbarItem.getType().name(), containerType, slot,
+                    location, support.serverName(), hotbarItem.getType().name(), containerType, slot,
                     hotbarItem.getAmount(), null, stored));
         }
     }
@@ -230,7 +230,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
+                    location, support.serverName(), slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
                     ItemSerialization.storedItem(slot, slotItem),
                     hadCursorItem ? ItemSerialization.storedItem(slot, cursor) : null));
         }
@@ -239,7 +239,7 @@ public final class ShulkerTransactionListener implements RecordingListener {
                     support.newId(), "shulker-deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, cursor.getType().name(), containerType, slot, cursor.getAmount(),
+                    location, support.serverName(), cursor.getType().name(), containerType, slot, cursor.getAmount(),
                     hadSlotItem ? ItemSerialization.storedItem(slot, slotItem) : null,
                     ItemSerialization.storedItem(slot, cursor)));
         }

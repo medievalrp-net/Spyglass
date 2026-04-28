@@ -74,6 +74,7 @@ public final class EntityDamageListener implements RecordingListener {
                 origin,
                 source,
                 location,
+                support.serverName(),
                 victimType,
                 victimType,
                 victim.getUniqueId(),

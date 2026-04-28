@@ -15,6 +15,7 @@ public record ChatRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String message,
         List<UUID> recipients) implements EventRecord {
@@ -26,7 +27,7 @@ public record ChatRecord(
     public static ChatRecord of(RecordContext ctx, String target, String message, List<UUID> recipients) {
         return new ChatRecord(
                 ctx.id(), "say", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, message, recipients);
     }
 }
