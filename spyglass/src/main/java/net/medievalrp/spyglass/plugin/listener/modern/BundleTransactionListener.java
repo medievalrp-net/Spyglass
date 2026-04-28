@@ -132,13 +132,13 @@ public final class BundleTransactionListener implements RecordingListener {
                         support.newId(), "bundle-insert", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
-                        location, material.name(), bundleType, slot, d, null, stored));
+                        location, support.serverName(), material.name(), bundleType, slot, d, null, stored));
             } else {
                 recorder.record(new ContainerWithdrawRecord(
                         support.newId(), "bundle-extract", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
-                        location, material.name(), bundleType, slot, -d, stored, null));
+                        location, support.serverName(), material.name(), bundleType, slot, -d, stored, null));
             }
         }
     }

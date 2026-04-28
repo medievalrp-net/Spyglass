@@ -12,6 +12,7 @@ public record TeleportRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         BlockLocation from,
         BlockLocation to,
@@ -21,7 +22,7 @@ public record TeleportRecord(
                                     BlockLocation from, BlockLocation to, String cause) {
         return new TeleportRecord(
                 ctx.id(), "teleport", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, from, to, cause);
     }
 }

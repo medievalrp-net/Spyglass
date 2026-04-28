@@ -194,6 +194,9 @@ public final class ResultRenderer {
         lines.add(kv("When", fullTimestamp(record.occurred())));
         lines.add(kv("Origin", originText(record.origin())));
         lines.add(kv("Location", locationText(record.location())));
+        if (record.server() != null && !record.server().isBlank()) {
+            lines.add(kv("Server", record.server()));
+        }
         if (record instanceof ChatRecord chat && !chat.recipients().isEmpty()) {
             lines.add(kv("Recipients", recipientNames(chat.recipients())));
         }

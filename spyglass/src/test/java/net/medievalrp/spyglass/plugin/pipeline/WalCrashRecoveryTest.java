@@ -122,7 +122,7 @@ class WalCrashRecoveryTest {
         BlockLocation loc = new BlockLocation(WORLD, "world", 0, 64, 0);
         return new ChatRecord(UUID.randomUUID(), "say", occurred, occurred.plusSeconds(3600),
                 Origin.player(), Source.player(PLAYER, "Tester"),
-                loc, "Tester", message, List.of());
+                loc, "test", "Tester", message, List.of());
     }
 
     private static final class FlakyStore implements RecordStore {

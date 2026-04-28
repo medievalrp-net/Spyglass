@@ -17,11 +17,12 @@ public record ContainerInteractRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target) implements EventRecord {
 
     public static ContainerInteractRecord of(RecordContext ctx, String event, String target) {
         return new ContainerInteractRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target);
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
     }
 }

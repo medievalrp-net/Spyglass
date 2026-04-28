@@ -100,13 +100,13 @@ final class FaweBatchLogger implements IBatchProcessor {
                         if (!before.isAir()) {
                             recorder.record(new BlockBreakRecord(
                                     support.newId(), "break", occurred, expires,
-                                    origin, source, location,
+                                    origin, source, location, support.serverName(),
                                     before.material().name(), before, after));
                         }
                         if (!after.isAir()) {
                             recorder.record(new BlockPlaceRecord(
                                     support.newId(), "place", occurred, expires,
-                                    origin, source, location,
+                                    origin, source, location, support.serverName(),
                                     after.material().name(), before, after));
                         }
                     }

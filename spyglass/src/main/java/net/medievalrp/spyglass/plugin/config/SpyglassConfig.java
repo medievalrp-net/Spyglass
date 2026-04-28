@@ -17,7 +17,8 @@ public record SpyglassConfig(
         Defaults defaults,
         Limits limits,
         Map<String, EventSettings> events,
-        Tool tool) {
+        Tool tool,
+        Server server) {
 
     public static SpyglassConfig load(JavaPlugin plugin) throws IOException {
         Path path = plugin.getDataFolder().toPath().resolve("config.conf");
@@ -83,7 +84,8 @@ public record SpyglassConfig(
                         root.node("limits", "rollback-result").getInt(10_000),
                         root.node("limits", "chat-dump").getInt(50)),
                 Map.copyOf(events),
-                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)));
+                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
+                new Server(root.node("server", "name").getString("default")));
     }
 
     public boolean enabled(String eventName) {
@@ -206,6 +208,21 @@ public record SpyglassConfig(
     public record Tool(Material material) {
         public Tool {
             material = material == null ? Material.REDSTONE_LAMP : material;
+        }
+    }
+
+    /**
+     * Identifier for this Spyglass instance, stamped onto every recorded
+     * event so a shared backend can hold logs from many backend servers.
+     * Configured under {@code server.name} in {@code config.conf}; defaults
+     * to {@code "default"} for a single-server deployment.
+     */
+    public record Server(String name) {
+        public Server {
+            name = name == null ? "default" : name.trim();
+            if (name.isEmpty()) {
+                name = "default";
+            }
         }
     }
 

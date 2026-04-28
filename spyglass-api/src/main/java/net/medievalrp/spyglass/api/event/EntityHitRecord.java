@@ -12,6 +12,7 @@ public record EntityHitRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String victimType,
         UUID victimId,
@@ -24,7 +25,7 @@ public record EntityHitRecord(
                                      double damage, boolean projectile, String projectileType) {
         return new EntityHitRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, victimType, victimId, damage, projectile, projectileType);
     }
 }

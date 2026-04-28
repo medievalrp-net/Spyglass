@@ -12,6 +12,7 @@ public record ItemDropRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         int amount,
         StoredItem item) implements EventRecord {
@@ -19,6 +20,6 @@ public record ItemDropRecord(
     public static ItemDropRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
         return new ItemDropRecord(
                 ctx.id(), "drop", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), target, amount, item);
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target, amount, item);
     }
 }
