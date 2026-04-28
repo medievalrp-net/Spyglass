@@ -95,15 +95,15 @@ class ClickHouseRecordStoreIT {
 
         List<EventRecord> records = List.of(
                 new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
-                        origin, source, location, "STONE", stone, air),
+                        origin, source, location, "test", "STONE", stone, air),
                 new BlockPlaceRecord(UUID.randomUUID(), "place", now, now.plusSeconds(3600),
-                        origin, source, location, "STONE", air, stone),
+                        origin, source, location, "test", "STONE", air, stone),
                 new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
-                        origin, source, location, "Alice", "hello", List.of()),
+                        origin, source, location, "test", "Alice", "hello", List.of()),
                 new ContainerDepositRecord(UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
-                        origin, source, location, "DIAMOND", "CHEST", 3, 1, null, item),
+                        origin, source, location, "test", "DIAMOND", "CHEST", 3, 1, null, item),
                 new EntityDeathRecord(UUID.randomUUID(), "death", now, now.plusSeconds(3600),
-                        origin, source, location, "ZOMBIE", "ZOMBIE",
+                        origin, source, location, "test", "ZOMBIE", "ZOMBIE",
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null));
 
         store.save(records);
@@ -140,7 +140,7 @@ class ClickHouseRecordStoreIT {
 
         BlockBreakRecord saved = new BlockBreakRecord(
                 UUID.randomUUID(), "break", now, now.plusSeconds(3600),
-                origin, source, loc, "CHEST", stoneWithItem, air);
+                origin, source, loc, "test", "CHEST", stoneWithItem, air);
         store.save(List.of(saved));
 
         QueryRequest byEvent = new QueryRequest(
@@ -170,7 +170,7 @@ class ClickHouseRecordStoreIT {
         for (int i = 0; i < 25; i++) {
             many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
                     base.plusSeconds(i), base.plusSeconds(3600),
-                    origin, source, loc, "STONE", stone, air));
+                    origin, source, loc, "test", "STONE", stone, air));
         }
         store.save(many);
         QueryRequest limited = new QueryRequest(
@@ -198,7 +198,7 @@ class ClickHouseRecordStoreIT {
                     now.plusSeconds(3600),
                     origin, source,
                     new BlockLocation(WORLD, "world", 100 + i, 64, 200 + i),
-                    "STONE", stone, air)));
+                    "test", "STONE", stone, air)));
         }
 
         QueryRequest spatial = new QueryRequest(
@@ -224,7 +224,7 @@ class ClickHouseRecordStoreIT {
 
         store.save(List.of(new BlockBreakRecord(
                 UUID.randomUUID(), "break", now, now.plusSeconds(3600),
-                origin, source, loc, "CHEST", bigSnapshot, null)));
+                origin, source, loc, "test", "CHEST", bigSnapshot, null)));
 
         QueryRequest q = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),
@@ -258,7 +258,7 @@ class ClickHouseRecordStoreIT {
         BlockBreakRecord record = new BlockBreakRecord(
                 recordId, "break", now, now.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
-                loc, "STONE", stone, air);
+                loc, "test", "STONE", stone, air);
 
         store.save(List.of(record));
         store.save(List.of(record));

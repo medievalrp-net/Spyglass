@@ -33,7 +33,7 @@ class RecordingSupportTest {
 
     @Test
     void expiresAtAddsConfiguredRetentionToOccurredInstant() {
-        RecordingSupport support = new RecordingSupport(Duration.parse("30d"));
+        RecordingSupport support = new RecordingSupport(Duration.parse("30d"), "test");
         Instant occurred = Instant.parse("2026-04-23T12:00:00Z");
 
         Instant expires = support.expiresAt(occurred);
@@ -47,7 +47,7 @@ class RecordingSupportTest {
         // 1-hour retention is below the Duration parser's day boundary;
         // prove the plus/minus path stays precise at the second level so
         // retention = 1h doesn't get rounded to 0 days.
-        RecordingSupport support = new RecordingSupport(Duration.parse("1h"));
+        RecordingSupport support = new RecordingSupport(Duration.parse("1h"), "test");
         Instant occurred = Instant.parse("2026-04-23T12:00:00Z");
 
         Instant expires = support.expiresAt(occurred);
@@ -63,7 +63,7 @@ class RecordingSupportTest {
         // within the bracketed window + retention. Tolerates up to 2s
         // of wall-clock skew on the machine running the test.
         Duration retention = Duration.parse("7d");
-        RecordingSupport support = new RecordingSupport(retention);
+        RecordingSupport support = new RecordingSupport(retention, "test");
         Origin origin = Origin.player();
         Source source = Source.player(java.util.UUID.randomUUID(), "Alice");
 
@@ -87,7 +87,7 @@ class RecordingSupportTest {
         // consistent with each other at exactly the configured
         // retention.
         Duration retention = Duration.parse("30d");
-        RecordingSupport support = new RecordingSupport(retention);
+        RecordingSupport support = new RecordingSupport(retention, "test");
 
         RecordContext ctx = support.context(
                 Origin.player(),
@@ -106,8 +106,8 @@ class RecordingSupportTest {
         // occurred — the derived expiresAt must differ by the
         // retention delta exactly.
         Instant occurred = Instant.parse("2026-04-23T12:00:00Z");
-        RecordingSupport oneHour = new RecordingSupport(Duration.parse("1h"));
-        RecordingSupport thirtyDays = new RecordingSupport(Duration.parse("30d"));
+        RecordingSupport oneHour = new RecordingSupport(Duration.parse("1h"), "test");
+        RecordingSupport thirtyDays = new RecordingSupport(Duration.parse("30d"), "test");
 
         long delta = thirtyDays.expiresAt(occurred).getEpochSecond()
                 - oneHour.expiresAt(occurred).getEpochSecond();
@@ -122,7 +122,7 @@ class RecordingSupportTest {
         // through untouched. If it ever normalizes or swaps them,
         // downstream record factories will persist the wrong source /
         // location and location-scoped queries will silently miss.
-        RecordingSupport support = new RecordingSupport(Duration.parse("1d"));
+        RecordingSupport support = new RecordingSupport(Duration.parse("1d"), "test");
         Origin origin = Origin.environment("lava-fire");
         Source source = Source.entity(java.util.UUID.randomUUID(), "CREEPER");
         BlockLocation location = new BlockLocation(WORLD, "world", 42, 70, -13);

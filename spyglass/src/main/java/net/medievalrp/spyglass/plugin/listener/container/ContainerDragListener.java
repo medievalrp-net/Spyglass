@@ -77,7 +77,7 @@ public final class ContainerDragListener implements RecordingListener {
                     support.newId(), "deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
-                    location, deposited.getType().name(), containerType,
+                    location, support.serverName(), deposited.getType().name(), containerType,
                     rawSlot, delta, storedBefore, storedAfter));
         }
     }

@@ -41,7 +41,8 @@ final class ClickHouseFieldMapper {
             Map.entry("location.worldName", "location_world_name"),
             Map.entry("location.x", "location_x"),
             Map.entry("location.y", "location_y"),
-            Map.entry("location.z", "location_z"));
+            Map.entry("location.z", "location_z"),
+            Map.entry("server", "server"));
 
     private ClickHouseFieldMapper() {
     }

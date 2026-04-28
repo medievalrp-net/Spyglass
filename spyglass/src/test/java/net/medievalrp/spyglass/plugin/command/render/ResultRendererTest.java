@@ -34,6 +34,7 @@ class ResultRendererTest {
                 Origin.player(),
                 Source.player(PLAYER_ID, "Alice"),
                 new BlockLocation(WORLD_ID, "world", 10, 64, 20),
+                "test",
                 "SCULK_SENSOR");
     }
 

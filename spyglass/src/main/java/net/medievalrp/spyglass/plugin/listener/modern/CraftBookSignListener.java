@@ -84,7 +84,7 @@ public final class CraftBookSignListener implements RecordingListener {
         recorder.record(new BlockUseRecord(
                 ctx.id(), "useSign",
                 ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target));
     }
 

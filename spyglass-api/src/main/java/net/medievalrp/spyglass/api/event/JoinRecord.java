@@ -14,13 +14,14 @@ public record JoinRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String address) implements EventRecord {
 
     public static JoinRecord of(RecordContext ctx, String target, String address) {
         return new JoinRecord(
                 ctx.id(), "join", ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, address);
     }
 }

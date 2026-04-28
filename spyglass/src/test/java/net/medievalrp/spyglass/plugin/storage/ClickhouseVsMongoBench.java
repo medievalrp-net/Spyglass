@@ -358,35 +358,35 @@ class ClickhouseVsMongoBench {
 
             EventRecord record = switch (event) {
                 case "break" -> new BlockBreakRecord(id, "break", occurred, expiresAt,
-                        origin, source, loc, "STONE", stone, air);
+                        origin, source, loc, "test", "STONE", stone, air);
                 case "place" -> new BlockPlaceRecord(id, "place", occurred, expiresAt,
-                        origin, source, loc, "STONE", air, stone);
+                        origin, source, loc, "test", "STONE", air, stone);
                 case "deposit" -> new ContainerDepositRecord(id, "deposit", occurred, expiresAt,
-                        origin, source, loc, "DIAMOND", "CHEST", 3, 1, null, diamond);
+                        origin, source, loc, "test", "DIAMOND", "CHEST", 3, 1, null, diamond);
                 case "withdraw" -> new net.medievalrp.spyglass.api.event.ContainerWithdrawRecord(
                         id, "withdraw", occurred, expiresAt,
-                        origin, source, loc, "DIAMOND", "CHEST", 3, 1, diamond, null);
+                        origin, source, loc, "test", "DIAMOND", "CHEST", 3, 1, diamond, null);
                 case "say" -> new ChatRecord(id, "say", occurred, expiresAt,
-                        origin, source, loc, PLAYER_NAMES[playerIdx],
+                        origin, source, loc, "test", PLAYER_NAMES[playerIdx],
                         "msg-" + i, List.of());
                 case "death" -> new EntityDeathRecord(id, "death", occurred, expiresAt,
-                        origin, source, loc, "ZOMBIE", "ZOMBIE",
+                        origin, source, loc, "test", "ZOMBIE", "ZOMBIE",
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null);
                 case "join" -> new net.medievalrp.spyglass.api.event.JoinRecord(
                         id, "join", occurred, expiresAt,
-                        origin, source, loc, PLAYER_NAMES[playerIdx],
+                        origin, source, loc, "test", PLAYER_NAMES[playerIdx],
                         "127.0.0.1");
                 case "quit" -> new net.medievalrp.spyglass.api.event.QuitRecord(
                         id, "quit", occurred, expiresAt,
-                        origin, source, loc, PLAYER_NAMES[playerIdx]);
+                        origin, source, loc, "test", PLAYER_NAMES[playerIdx]);
                 default -> new BlockBreakRecord(id, "break", occurred, expiresAt,
-                        origin, source, loc, "STONE", stone, air);
+                        origin, source, loc, "test", "STONE", stone, air);
             };
             if (rnd.nextInt(50) == 0 && record instanceof BlockPlaceRecord place) {
                 record = new BlockPlaceRecord(place.id(), place.event(),
                         place.occurred(), place.expiresAt(),
                         place.origin(), place.source(), place.location(),
-                        "CHEST", air, chest);
+                        "test", "CHEST", air, chest);
             }
             all.add(record);
         }

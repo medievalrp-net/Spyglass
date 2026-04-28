@@ -34,7 +34,7 @@ class ChatListenerTest {
     @BeforeEach
     void setUp() {
         recorder = new CapturingRecorder();
-        support = new RecordingSupport(new Duration(3600));
+        support = new RecordingSupport(new Duration(3600), "test");
         listener = new ChatListener(recorder, support);
     }
 

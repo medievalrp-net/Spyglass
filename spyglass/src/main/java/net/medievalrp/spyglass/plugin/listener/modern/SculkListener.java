@@ -59,7 +59,7 @@ public final class SculkListener implements RecordingListener {
         recorder.record(new BlockUseRecord(
                 ctx.id(), "sculk",
                 ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 block.getType().name()));
     }
 

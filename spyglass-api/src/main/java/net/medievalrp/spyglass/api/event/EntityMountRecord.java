@@ -12,6 +12,7 @@ public record EntityMountRecord(
         Origin origin,
         Source source,
         BlockLocation location,
+        String server,
         String target,
         String mountType,
         UUID mountId,
@@ -21,7 +22,7 @@ public record EntityMountRecord(
                                        String mountType, UUID mountId, boolean dismount) {
         return new EntityMountRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(),
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(),
                 target, mountType, mountId, dismount);
     }
 }

@@ -59,6 +59,12 @@ final class ClickHouseSchema {
     static void ensure(Client client, String database, String eventsTable) {
         execute(client, "CREATE DATABASE IF NOT EXISTS " + quoteIdentifier(database));
         execute(client, buildEventRecordsTable(database, eventsTable));
+        // Idempotent ADD COLUMN for tables created by older Spyglass
+        // versions: CH ignores ADD COLUMN IF NOT EXISTS when the column
+        // is already there, but a fresh CREATE TABLE above would have
+        // included it from the start.
+        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                + " ADD COLUMN IF NOT EXISTS server LowCardinality(String) DEFAULT ''");
         execute(client, buildUndoHistoryTable(database));
         execute(client, buildToolStatesTable(database));
     }
@@ -116,6 +122,7 @@ final class ClickHouseSchema {
                 + "    location_x Int32,\n"
                 + "    location_y Int32,\n"
                 + "    location_z Int32,\n"
+                + "    server LowCardinality(String) DEFAULT '',\n"
                 + "    target Nullable(String),\n"
                 // --- Block events (Break / Place / Use) ---
                 + "    original_block Nullable(String) CODEC(ZSTD(1)),\n"
