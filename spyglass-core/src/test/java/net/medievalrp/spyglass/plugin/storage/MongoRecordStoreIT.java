@@ -27,7 +27,6 @@ import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
-import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -54,15 +53,7 @@ class MongoRecordStoreIT {
         container.start();
         String uri = container.getReplicaSetUrl();
         rawClient = MongoClients.create(uri);
-        SpyglassConfig.Database config = new SpyglassConfig.Database(
-                SpyglassConfig.Backend.MONGO, uri, "IT", "EventRecords",
-                stubClickHouse());
-        store = new MongoRecordStore(config, new IndexManager());
-    }
-
-    private static SpyglassConfig.ClickHouse stubClickHouse() {
-        return new SpyglassConfig.ClickHouse(
-                "localhost", 8123, "x", "x", "default", "", false);
+        store = new MongoRecordStore(uri, "IT", "EventRecords", new IndexManager());
     }
 
     @AfterAll
