@@ -1,25 +1,42 @@
 package net.medievalrp.spyglass.plugin.command.param;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.function.Function;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.bukkit.command.CommandSender;
 
 /**
- * {@code ip:192.168.1.100} — exact match against
- * {@link net.medievalrp.spyglass.api.event.JoinRecord#address()}.
- * Since {@code address} only exists on {@link
- * net.medievalrp.spyglass.api.event.JoinRecord}, the per-record-type
- * narrowing in
- * {@link net.medievalrp.spyglass.plugin.storage.MongoRecordStore}
- * naturally scopes the query to join records; no explicit event filter
- * needed.
+ * {@code ip:192.168.1.100} — find every event by the player(s) who joined
+ * from this IP, plus the join records themselves.
  *
- * <p>Primary use case: alt-account / ban-evasion investigation, where
- * a banned player returns from a different name but the same IP.
+ * <p>Older revisions only emitted {@code Eq("address", X)}, which only
+ * matches {@link net.medievalrp.spyglass.api.event.JoinRecord} (the only
+ * subtype with an address column). Combining {@code ip:} with another
+ * action filter ({@code a:break ip:1.2.3.4}) silently returned zero rows
+ * because break records have no address — surprising, since the obvious
+ * read is "what did the player at this IP do."
+ *
+ * <p>Now: {@code ip:X} resolves to the recent set of player UUIDs that
+ * joined from {@code X} (capped at the
+ * {@link net.medievalrp.spyglass.plugin.config.SpyglassConfig.Limits#searchResult()}
+ * cap to bound the lookup), and emits an {@code Or} of the address match
+ * (so join records still match precisely) and a player-UUID set match
+ * (so break / chat / container events by those players come through too).
+ *
+ * <p>Cost: one extra synchronous query against the record store at parse
+ * time. The resolver runs on the command thread; queries that don't use
+ * {@code ip:} aren't affected.
  */
 public final class IpParam implements QueryParamHandler {
+
+    private final Function<String, List<UUID>> ipToPlayerIds;
+
+    public IpParam(Function<String, List<UUID>> ipToPlayerIds) {
+        this.ipToPlayerIds = ipToPlayerIds;
+    }
 
     @Override
     public List<String> aliases() {
@@ -31,7 +48,27 @@ public final class IpParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("ip requires an address.");
         }
-        return new QueryPredicate.Eq("address", value.trim());
+        String ip = value.trim();
+        QueryPredicate addressMatch = new QueryPredicate.Eq("address", ip);
+
+        List<UUID> playerIds;
+        try {
+            playerIds = ipToPlayerIds.apply(ip);
+        } catch (RuntimeException ex) {
+            // Resolver blew up — log path is the search service, not here.
+            // Fall back to the address-only match so the search still runs;
+            // the operator just won't get the cross-event correlation.
+            return addressMatch;
+        }
+        if (playerIds == null || playerIds.isEmpty()) {
+            // No one joined from this IP within the lookup window. The
+            // address match alone may still catch an old join row from
+            // beyond that window if the operator widened t:.
+            return addressMatch;
+        }
+        return new QueryPredicate.Or(List.of(
+                addressMatch,
+                new QueryPredicate.In("source.playerId", playerIds)));
     }
 
     @Override

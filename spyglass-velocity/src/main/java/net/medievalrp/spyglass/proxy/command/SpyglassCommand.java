@@ -15,8 +15,10 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.query.Flag;
+import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
+import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.proxy.config.SpyglassProxyConfig;
 import org.slf4j.Logger;
@@ -51,7 +53,25 @@ public final class SpyglassCommand implements SimpleCommand {
         this.store = store;
         this.config = config;
         this.logger = logger;
-        this.parser = new ProxyQueryStringParser(config.limits().searchResult());
+        // ip:<addr> resolver — synchronous lookup against the same
+        // record store. Capped at the search-result limit so we never
+        // pull more than the operator could see anyway.
+        int limit = config.limits().searchResult();
+        long defaultTimeSeconds = config.defaults().time().seconds();
+        this.parser = new ProxyQueryStringParser(limit, defaultTimeSeconds, ip -> {
+            QueryRequest joinReq = new QueryRequest(
+                    List.of(new QueryPredicate.Eq("event", "join"),
+                            new QueryPredicate.Eq("address", ip)),
+                    Sort.NEWEST_FIRST,
+                    limit,
+                    EnumSet.noneOf(Flag.class),
+                    false);
+            return store.querySummary(joinReq).records().stream()
+                    .map(r -> r.source() == null ? null : r.source().playerId())
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
+                    .toList();
+        });
     }
 
     @Override
@@ -85,6 +105,17 @@ public final class SpyglassCommand implements SimpleCommand {
     }
 
     private void runSearch(CommandSource source, String raw) {
+        // /sgv search with no params would otherwise pull every record
+        // in the default 3-day window, which on a busy proxy is "show me
+        // everything" — never what an operator means. Make them say
+        // something concrete (srv:, p:, a:, t:, ...).
+        if (raw == null || raw.isBlank()) {
+            source.sendMessage(Component.text(
+                    "search needs at least one filter. Try /sgv help.",
+                    NamedTextColor.YELLOW));
+            sendHelp(source);
+            return;
+        }
         QueryRequest request;
         try {
             request = parser.parse(raw);
@@ -174,7 +205,7 @@ public final class SpyglassCommand implements SimpleCommand {
     }
 
     private void sendHelp(CommandSource source) {
-        source.sendMessage(Component.text("/spyglass search <params...>", NamedTextColor.AQUA));
+        source.sendMessage(Component.text("/sgv search <params...>", NamedTextColor.AQUA));
         source.sendMessage(Component.text("  srv:<name>     filter to one backend server",
                 NamedTextColor.GRAY));
         source.sendMessage(Component.text("  p:<player>     filter by player name",
@@ -193,7 +224,7 @@ public final class SpyglassCommand implements SimpleCommand {
                 NamedTextColor.GRAY));
         source.sendMessage(Component.text("  -ord:asc|desc  sort order",
                 NamedTextColor.GRAY));
-        source.sendMessage(Component.text("/spyglass page [n]      jump to page n (next page if blank)",
+        source.sendMessage(Component.text("/sgv page [n]      jump to page n (next page if blank)",
                 NamedTextColor.AQUA));
     }
 

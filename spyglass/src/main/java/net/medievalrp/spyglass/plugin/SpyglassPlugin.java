@@ -281,7 +281,28 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new ItemMaterialParam());
         apiImpl.registerQueryParamHandler(new CustomItemParam());
         apiImpl.registerQueryParamHandler(new TargetParam());
-        apiImpl.registerQueryParamHandler(new IpParam());
+        // ip:<addr> resolves to the player UUIDs that joined from this IP,
+        // so /sg search a:break ip:1.2.3.4 returns break events by those
+        // players (not just join records). Capped at the search-result
+        // limit to bound the synchronous lookup.
+        RecordStore ipResolverStore = recordStore;
+        int ipResolverLimit = config.limits().searchResult();
+        apiImpl.registerQueryParamHandler(new IpParam(ip -> {
+            net.medievalrp.spyglass.api.query.QueryRequest joinReq =
+                    new net.medievalrp.spyglass.api.query.QueryRequest(
+                            java.util.List.of(
+                                    new net.medievalrp.spyglass.api.query.QueryPredicate.Eq("event", "join"),
+                                    new net.medievalrp.spyglass.api.query.QueryPredicate.Eq("address", ip)),
+                            net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                            ipResolverLimit,
+                            java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class),
+                            false);
+            return ipResolverStore.querySummary(joinReq).records().stream()
+                    .map(r -> r.source() == null ? null : r.source().playerId())
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
+                    .toList();
+        }));
         apiImpl.registerQueryParamHandler(new RecipientParam());
         apiImpl.registerQueryParamHandler(new ServerParam(config.server().name()));
 

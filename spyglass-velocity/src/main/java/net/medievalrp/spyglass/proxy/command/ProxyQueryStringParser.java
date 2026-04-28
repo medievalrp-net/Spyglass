@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
+import java.util.function.Function;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
@@ -34,9 +36,14 @@ import net.medievalrp.spyglass.api.query.Sort;
 public final class ProxyQueryStringParser {
 
     private final int searchLimit;
+    private final long defaultTimeSeconds;
+    private final Function<String, List<UUID>> ipToPlayerIds;
 
-    public ProxyQueryStringParser(int searchLimit) {
+    public ProxyQueryStringParser(int searchLimit, long defaultTimeSeconds,
+                                  Function<String, List<UUID>> ipToPlayerIds) {
         this.searchLimit = searchLimit;
+        this.defaultTimeSeconds = defaultTimeSeconds;
+        this.ipToPlayerIds = ipToPlayerIds;
     }
 
     public QueryRequest parse(String raw) throws ParseException {
@@ -99,7 +106,7 @@ public final class ProxyQueryStringParser {
                                             ".*" + java.util.regex.Pattern.quote(value) + ".*",
                                             java.util.regex.Pattern.CASE_INSENSITIVE)));
                     case "target", "trg" -> predicates.add(new QueryPredicate.Eq("target", value));
-                    case "ip" -> predicates.add(new QueryPredicate.Eq("address", value));
+                    case "ip" -> predicates.add(resolveIpPredicate(value));
                     case "w", "world" -> predicates.add(new QueryPredicate.Eq("location.worldName", value));
                     default -> throw new ParseException("Unknown parameter: " + alias);
                 }
@@ -107,15 +114,43 @@ public final class ProxyQueryStringParser {
         }
 
         if (!sawTime) {
-            // Default to "last 3 days" so an unbounded /spyglass search
-            // doesn't drag every row in the store across the wire.
-            // Mirrors the Paper-side defaults.time = "3d".
-            Instant lower = Instant.now().minus(3, ChronoUnit.DAYS);
+            // Config-driven default window (defaults.time, parsed at config
+            // load into seconds). No 0-disable: an unbounded query against
+            // a long-lived store can pull tens of millions of rows, and
+            // the proxy has no spatial constraint to lean on instead.
+            Instant lower = Instant.now().minusSeconds(defaultTimeSeconds);
             predicates.add(new QueryPredicate.Range("occurred", lower, null));
         }
 
         boolean grouping = !flags.contains(Flag.NO_GROUP);
         return new QueryRequest(predicates, sort, searchLimit, flags, grouping);
+    }
+
+    /**
+     * {@code ip:1.2.3.4} on the proxy mirrors the Paper-side semantics:
+     * resolve the IP to player UUIDs via recent join records, then OR an
+     * exact address match (so join rows still match precisely) with a
+     * source.playerId IN (...) match (so non-join events by those players
+     * come through). When no players are known to have joined from the
+     * given IP within the lookup window, falls back to address-only.
+     */
+    private QueryPredicate resolveIpPredicate(String ip) {
+        QueryPredicate addressMatch = new QueryPredicate.Eq("address", ip);
+        if (ipToPlayerIds == null) {
+            return addressMatch;
+        }
+        List<UUID> playerIds;
+        try {
+            playerIds = ipToPlayerIds.apply(ip);
+        } catch (RuntimeException ex) {
+            return addressMatch;
+        }
+        if (playerIds == null || playerIds.isEmpty()) {
+            return addressMatch;
+        }
+        return new QueryPredicate.Or(List.of(
+                addressMatch,
+                new QueryPredicate.In("source.playerId", playerIds)));
     }
 
     private static Sort applyFlag(String name, String value, EnumSet<Flag> flags, Sort sort)
