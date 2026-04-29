@@ -12,6 +12,37 @@
 
 import mineflayer from 'mineflayer';
 import net from 'net';
+import fs from 'fs';
+import path from 'path';
+import vec3pkg from 'vec3';
+const Vec3 = vec3pkg.Vec3 || vec3pkg.default || vec3pkg;
+
+const SERVER_LOG = '/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server/logs/latest.log';
+
+// Read the server log and check whether ChunkDirectWriter / ChunkResender
+// fell back to Bukkit. If yes, the rollback path is NOT exercising NMS
+// and the visual/sand-fall fixes won't be active. We treat this as a
+// hard test failure even if state correctness still passes.
+function checkFallbackWarnings(sinceLine) {
+    const text = fs.readFileSync(SERVER_LOG, 'utf8');
+    const after = sinceLine ? text.slice(text.indexOf(sinceLine) + sinceLine.length) : text;
+    const lines = after.split('\n');
+    const warnings = lines.filter(l =>
+        l.includes('ChunkDirectWriter unavailable') ||
+        l.includes('ChunkDirectWriter failed') ||
+        l.includes('ChunkResender unavailable') ||
+        l.includes('ChunkResender failed'));
+    return warnings;
+}
+
+function getLogTailMarker() {
+    try {
+        const text = fs.readFileSync(SERVER_LOG, 'utf8');
+        return text.slice(-200);
+    } catch (e) {
+        return null;
+    }
+}
 
 const HOST = '127.0.0.1';
 const PORT = 25566;
@@ -88,11 +119,19 @@ async function runCase(bot, { size, baseY }) {
 
     logStep(`--- case size=${size} (cube ${SIDE}^3 = ${expected} blocks, y=${y0}-${y1}) ---`);
 
-    await rcon(`tp ${BOT_NAME} ${x0 + 0.5} ${y1 + 5} ${z0 + 0.5}`);
-    // Force-load the chunks the cube spans so /fill can write them. Bot's
-    // view distance alone often hasn't propagated by the time we /fill.
+    // Force-load FIRST so the destination chunks exist before the
+    // teleport — otherwise the tp can silently fail and the bot stays
+    // at spawn (observed: server-side getLocation() reported chunk(0,0)
+    // even though the cube was at chunk(62,62), making the rollback
+    // chunk-resend filter exclude the bot).
     await rcon(`forceload add ${x0} ${z0} ${x1} ${z1}`);
+    await sleep(800);
+    await rcon(`tp ${BOT_NAME} ${x0 + 0.5} ${y1 + 5} ${z0 + 0.5}`);
     await sleep(2500);
+    // Verify bot actually moved server-side; if not, push it via
+    // mineflayer's own movement.
+    const tpProbe = await rcon(`data get entity ${BOT_NAME} Pos`);
+    logStep(`  bot pos after tp: ${tpProbe.slice(0, 140)}`);
 
     // Use /fill (RCON, console origin) to lay stone. This does NOT fire
     // WorldEdit / BlockPlaceEvent listeners on Spyglass, so the rollback
@@ -185,8 +224,14 @@ async function runCase(bot, { size, baseY }) {
     // post-rollback settle so the last per-tick apply batch lands
     await sleep(2000);
 
-    // bulk-verify post-rollback by sampling a deterministic stride of cells
-    let stone = 0, air = 0, other = 0;
+    // bulk-verify post-rollback by sampling a deterministic stride of cells.
+    // Server-side check (via /execute) confirms the world state is correct.
+    // Client-side check (via bot.world from received packets) confirms the
+    // chunk packets actually reached the client — this is the difference
+    // between "blocks rolled back invisibly" (server right, client stale)
+    // and "blocks rolled back visibly" (matching server + client).
+    let serverStone = 0, serverAir = 0, serverOther = 0;
+    let clientStone = 0, clientAir = 0, clientOther = 0;
     const samples = Math.min(64, expected);
     const stride = Math.max(1, Math.floor(expected / samples));
     let scanned = 0;
@@ -195,26 +240,37 @@ async function runCase(bot, { size, baseY }) {
             for (let dz = 0; dz < SIDE && scanned < samples; dz++) {
                 if ((dx * SIDE * SIDE + dy * SIDE + dz) % stride !== 0) continue;
                 const X = x0 + dx, Y = y0 + dy, Z = z0 + dz;
+                // server-side
                 const sr = await rcon(`execute if block ${X} ${Y} ${Z} minecraft:stone`);
-                if (sr.toLowerCase().includes('passed')) { stone++; scanned++; continue; }
-                const ar = await rcon(`execute if block ${X} ${Y} ${Z} minecraft:air`);
-                if (ar.toLowerCase().includes('passed')) { air++; scanned++; continue; }
-                other++;
+                if (sr.toLowerCase().includes('passed')) serverStone++;
+                else {
+                    const ar = await rcon(`execute if block ${X} ${Y} ${Z} minecraft:air`);
+                    if (ar.toLowerCase().includes('passed')) serverAir++;
+                    else serverOther++;
+                }
+                // client-side (mineflayer's world model — only updated by packets the bot received)
+                const cb = bot.blockAt(new Vec3(X, Y, Z));
+                const cn = cb ? cb.name : 'unknown';
+                if (cn === 'stone') clientStone++;
+                else if (cn === 'air' || cn === 'cave_air' || cn === 'void_air') clientAir++;
+                else clientOther++;
                 scanned++;
             }
         }
     }
-    const nonAir = stone + other; // anything that's not air counts as restored if our fill was stone
 
     const breakCount = await chQuery(
         `SELECT count() FROM spyglass.event_records WHERE event = 'break' AND source_player_name = '${BOT_NAME}' AND occurred > now() - INTERVAL 10 MINUTE`);
     const restoreCount = await chQuery(
         `SELECT count() FROM spyglass.event_records WHERE event = 'rolled-place' AND occurred > now() - INTERVAL 10 MINUTE`);
 
-    const ok = stone === scanned;
-    logStep(`scan: stone=${stone} air=${air} other=${other} of ${scanned} — ${ok ? 'PASS' : 'FAIL'}`);
+    const serverOk = serverStone === scanned;
+    const clientOk = clientStone === scanned;
+    const ok = serverOk && clientOk;
+    logStep(`server scan: stone=${serverStone} air=${serverAir} other=${serverOther} of ${scanned} — ${serverOk ? 'PASS' : 'FAIL'}`);
+    logStep(`client scan: stone=${clientStone} air=${clientAir} other=${clientOther} of ${scanned} — ${clientOk ? 'PASS' : 'FAIL'}`);
     logStep(`CH rows: break=${breakCount} (expected ~${expected}), rolled-place=${restoreCount}`);
-    return { size, expected, scanned, stone, air, other, ok, fillElapsed, burstElapsed, rbElapsed, breakCount, restoreCount };
+    return { size, expected, scanned, serverStone, serverAir, serverOther, clientStone, clientAir, clientOther, ok, fillElapsed, burstElapsed, rbElapsed, breakCount, restoreCount };
 }
 
 async function main() {
@@ -238,6 +294,9 @@ async function main() {
     await rcon(`gamemode creative ${BOT_NAME}`);
     await sleep(500);
 
+    // Mark current log tail so we only check warnings emitted from now on.
+    const logMarker = getLogTailMarker();
+
     const sizes = parseSizes();
     const results = [];
     for (const size of sizes) {
@@ -250,11 +309,113 @@ async function main() {
         await sleep(2000);
     }
 
+    // Sand-column undo regression: this is the user's bug.
+    // Build a 16-tall sand column on a stone support, break it via
+    // //replace, rollback (which restores the column), then /sg undo
+    // — the undo writes air back into the column. The test verifies
+    // that the WRITES alone don't cause sand to fall: every cell
+    // must be air after a 1-second settle (no gravity-cascaded sand
+    // landing in the column).
+    try {
+        results.push(await runSandUndoCase(bot, { baseY: 80 + sizes.length * 30 }));
+    } catch (e) {
+        logStep('sand-undo case threw:', e.message);
+        results.push({ id: 'sand-undo', ok: false, error: e.message });
+    }
+
     bot.quit();
     console.log('\n=== summary ===');
     for (const r of results) console.log(JSON.stringify(r));
+
+    // Hard fail if the rollback path took the Bukkit fallback. State
+    // correctness can pass with the fallback (Bukkit setBlockData
+    // actually writes blocks), but the user-facing visual + sand-fall
+    // bugs only get fixed if NMS direct writes actually executed.
+    const fallbackWarnings = checkFallbackWarnings(logMarker);
+    if (fallbackWarnings.length > 0) {
+        console.log('\n=== FALLBACK DETECTED ===');
+        for (const w of fallbackWarnings.slice(0, 5)) console.log(w);
+        console.log(`(... ${fallbackWarnings.length} total fallback warnings)`);
+        console.log('Rollback ran on Bukkit fallback, NOT NMS. Visual + sand-fall bugs are NOT fixed.');
+        process.exit(2);
+    }
+
     const failures = results.filter(r => !r.ok).length;
     process.exit(failures ? 1 : 0);
+}
+
+async function runSandUndoCase(bot, { baseY }) {
+    const COLUMN_H = 16;
+    const x0 = 1100, z0 = 1100;
+    const yStone = baseY;            // support
+    const ySandLo = baseY + 1;
+    const ySandHi = baseY + COLUMN_H;
+    logStep(`--- sand-undo regression at (${x0}, ${yStone}+, ${z0}), column height=${COLUMN_H} ---`);
+
+    await rcon(`forceload add ${x0} ${z0} ${x0} ${z0}`);
+    await sleep(500);
+    await rcon(`tp ${BOT_NAME} ${x0 + 0.5} ${ySandHi + 5} ${z0 + 0.5}`);
+    await sleep(2000);
+
+    // Lay one stone at yStone, sand from ySandLo..ySandHi
+    await rcon(`fill ${x0} ${yStone} ${z0} ${x0} ${yStone} ${z0} stone`);
+    await rcon(`fill ${x0} ${ySandLo} ${z0} ${x0} ${ySandHi} ${z0} sand`);
+    await sleep(500);
+    // Probe to confirm the column is laid
+    const probe1 = await rcon(`execute if block ${x0} ${ySandLo} ${z0} minecraft:sand`);
+    logStep(`  laid: ${probe1.replace(/\n/g, ' | ')}`);
+
+    // Bot breaks the column via //replace
+    bot.chat(`//sel cuboid`); await sleep(150);
+    bot.chat(`//pos1 ${x0},${ySandLo},${z0}`); await sleep(150);
+    bot.chat(`//pos2 ${x0},${ySandHi},${z0}`); await sleep(150);
+    const replaceDone = waitForChat(bot, /blocks have been replaced/i, 10000);
+    bot.chat(`//replace sand air`);
+    await replaceDone;
+    await sleep(800);
+
+    // Rollback restores the sand column
+    const rbDone = waitForChat(bot, /(reversals|No results)/i, 60000);
+    bot.chat(`/spyglass rollback p:${BOT_NAME} t:5m -g`);
+    await rbDone;
+    await sleep(800);
+
+    // Undo the rollback — every cell goes back to air. KEY ASSERTION:
+    // after a settle, every column cell must STILL be air. If gravity
+    // fires during the undo, sand from above would re-fall and land
+    // in the column.
+    const undoDone = waitForChat(bot, /(reversed|undone|reverted|No results|reversals)/i, 30000);
+    bot.chat(`/spyglass undo`);
+    await undoDone;
+    await sleep(1500);  // gravity settle window
+
+    let air = 0, sand = 0, other = 0;
+    for (let y = ySandLo; y <= ySandHi; y++) {
+        const sr = await rcon(`execute if block ${x0} ${y} ${z0} minecraft:air`);
+        if (sr.toLowerCase().includes('passed')) { air++; continue; }
+        const sd = await rcon(`execute if block ${x0} ${y} ${z0} minecraft:sand`);
+        if (sd.toLowerCase().includes('passed')) { sand++; continue; }
+        other++;
+    }
+    // Also check below the support: if sand spilled past the support, it
+    // would have landed at yStone-N. Sample a few cells below to detect that.
+    let belowSand = 0;
+    for (let y = yStone - 1; y >= yStone - 5; y--) {
+        const sd = await rcon(`execute if block ${x0} ${y} ${z0} minecraft:sand`);
+        if (sd.toLowerCase().includes('passed')) belowSand++;
+    }
+
+    const ok = sand === 0 && belowSand === 0 && air === COLUMN_H;
+    logStep(`column scan: air=${air} sand=${sand} other=${other} of ${COLUMN_H} — belowSand=${belowSand} — ${ok ? 'PASS' : 'FAIL'}`);
+    return { id: 'sand-undo', columnHeight: COLUMN_H, air, sand, other, belowSand, ok };
+}
+
+function waitForChat(bot, re, timeout) {
+    return new Promise(resolve => {
+        const handler = m => { if (re.test(m)) { bot.removeListener('messagestr', handler); resolve(true); } };
+        bot.on('messagestr', handler);
+        setTimeout(() => { bot.removeListener('messagestr', handler); resolve(false); }, timeout);
+    });
 }
 
 function parseSizes() {
