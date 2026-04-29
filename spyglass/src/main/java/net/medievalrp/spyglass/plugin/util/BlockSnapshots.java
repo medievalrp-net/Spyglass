@@ -6,10 +6,12 @@ import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
+import java.util.Map;
 import org.bukkit.Material;
 import org.bukkit.block.Banner;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
+import org.bukkit.block.DecoratedPot;
 import org.bukkit.block.Jukebox;
 import org.bukkit.block.Sign;
 import org.bukkit.block.banner.Pattern;
@@ -23,6 +25,21 @@ public final class BlockSnapshots {
     }
 
     public static BlockSnapshot capture(BlockState state) {
+        // For tile-entity types where Paper's snapshot BlockState has
+        // a detached BlockEntity (level=null, fields not populated),
+        // upgrade to the LIVE state. Affects Jukebox (record disc
+        // missing from snapshot) and DecoratedPot (sherds map
+        // returns empty). The block is still the original tile-entity
+        // type at capture time (we haven't broken it yet), so
+        // getState(false) returns a fully-populated live wrapper.
+        if (state instanceof Jukebox || state instanceof DecoratedPot) {
+            try {
+                state = state.getBlock().getState(false);
+            } catch (Throwable ignored) {
+                // Fall through with the snapshot — at worst we lose
+                // the disc / sherds (the original bug), nothing else.
+            }
+        }
         List<StoredItem> items = List.of();
         if (state instanceof Container container) {
             items = captureInventory(container.getSnapshotInventory());
@@ -48,6 +65,23 @@ public final class BlockSnapshots {
             jukeboxRecord = ItemSerialization.encode(record);
         }
 
+        List<String> potSherds = List.of();
+        if (state instanceof DecoratedPot pot) {
+            // 4 sides in declaration order: BACK, LEFT, RIGHT, FRONT.
+            // A blank face stores BRICK; on rollback we restore that
+            // exact material. Map.get returning null means "no sherd
+            // on this face" — fall back to BRICK so the apply round-
+            // trips cleanly.
+            Map<DecoratedPot.Side, Material> sherdMap = pot.getSherds();
+            DecoratedPot.Side[] sides = DecoratedPot.Side.values();
+            List<String> names = new ArrayList<>(sides.length);
+            for (DecoratedPot.Side side : sides) {
+                Material m = sherdMap == null ? null : sherdMap.get(side);
+                names.add((m == null ? Material.BRICK : m).name());
+            }
+            potSherds = List.copyOf(names);
+        }
+
         return new BlockSnapshot(
                 state.getType(),
                 state.getBlockData().getAsString(),
@@ -55,7 +89,8 @@ public final class BlockSnapshots {
                 signFront,
                 signBack,
                 bannerPatterns,
-                jukeboxRecord);
+                jukeboxRecord,
+                potSherds);
     }
 
     public static BlockSnapshot air() {

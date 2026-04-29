@@ -49,6 +49,7 @@ import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceListener;
 import net.medievalrp.spyglass.plugin.listener.block.ContainerDropListener;
 import net.medievalrp.spyglass.plugin.listener.block.DependantBreakListener;
+import net.medievalrp.spyglass.plugin.listener.block.FallingBlockLandListener;
 import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakListener;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatListener;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandListener;
@@ -209,6 +210,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockBurnListener(recorder, support, this),
                 new BlockPlaceListener(recorder, support),
                 new BlockMultiPlaceListener(recorder, support),
+                new FallingBlockLandListener(recorder, support),
                 new ContainerTransactionListener(recorder, support),
                 new ContainerDragListener(recorder, support),
                 new ContainerInteractListener(recorder, support),
@@ -319,8 +321,33 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         HelpService helpService = new HelpService();
         SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
-        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, recorder, recordStore, getLogger());
-        UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
+        net.medievalrp.spyglass.plugin.command.service.RollbackJobQueue rollbackQueue =
+                new net.medievalrp.spyglass.plugin.command.service.RollbackJobQueue();
+        net.medievalrp.spyglass.plugin.command.service.RollbackResumeStore resumeStore =
+                new net.medievalrp.spyglass.plugin.command.service.RollbackResumeStore(
+                        getDataFolder().toPath(), getLogger());
+        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, recorder, recordStore, getLogger(), rollbackQueue, resumeStore);
+        rollbackService.wireQueue();
+        // On startup, surface any rollback that was in flight when
+        // the JVM previously died. Each leftover marker becomes a
+        // line in the server log; operators can /sg rbqueue resume
+        // <id> to re-run, or /sg rbqueue cancel <id> to discard.
+        var pendingResume = resumeStore.listPending();
+        if (!pendingResume.isEmpty()) {
+            getLogger().warning("Spyglass: " + pendingResume.size()
+                    + " rollback(s) were interrupted by the previous shutdown. "
+                    + "Run /sg rbqueue to view; /sg rbqueue resume <id> to re-run, "
+                    + "/sg rbqueue cancel <id> to discard.");
+            for (var s : pendingResume) {
+                getLogger().warning("  • " + s.shortId() + " (" + s.mode() + ") by "
+                        + s.operatorName() + " — query: " + s.query()
+                        + " — started " + s.startedAt());
+            }
+        }
+        UndoService undoService = new UndoService(engine, undoStack, serviceSupport, config);
+        net.medievalrp.spyglass.plugin.command.service.RbqueueService rbqueueService =
+                new net.medievalrp.spyglass.plugin.command.service.RbqueueService(
+                        rollbackQueue, resumeStore, rollbackService);
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
@@ -334,6 +361,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 searchService,
                 rollbackService,
                 undoService,
+                rbqueueService,
                 pageCache,
                 toolService,
                 teleportService,

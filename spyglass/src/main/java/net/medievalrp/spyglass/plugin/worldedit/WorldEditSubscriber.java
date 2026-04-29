@@ -94,6 +94,12 @@ public final class WorldEditSubscriber {
     private final class LoggingExtent extends AbstractDelegateExtent {
         private final Player player;
         private final World world;
+        // Per-EditSession dedup for the falling-block cascade emit.
+        // Without this, if WE breaks every cell of an N-tall sand
+        // column in the same op, each break re-walks the column above
+        // and re-logs every still-standing sand cell — O(N²) audit
+        // events for a single //set 0 over a sand silo.
+        private final java.util.Set<Long> cascadedAbove = new java.util.HashSet<>();
 
         LoggingExtent(Extent extent, Player player, World world) {
             super(extent);
@@ -122,6 +128,21 @@ public final class WorldEditSubscriber {
                         support.newId(), "break", occurred, support.expiresAt(occurred),
                         origin, source, location, support.serverName(),
                         original.material().name(), original, after));
+                // Cascade: if this break knocks out the support of a
+                // gravity-affected column above (sand, gravel, anvil,
+                // concrete powder, ...), the column will drop as
+                // falling-block entities on the next tick — by which
+                // point the original cells are air and there's no
+                // listener that ties those falls back to this player.
+                // Pre-emptively log the column's breaks tagged with the
+                // same player + WE origin so a rollback of this op
+                // pulls the cascade in. Cheap when the block above
+                // isn't gravity-affected (one Material lookup, returns).
+                if (newIsAir) {
+                    net.medievalrp.spyglass.plugin.util.FallingBlockCascade.emitCascadeAbove(
+                            recorder, support, player, world,
+                            position.x(), position.y(), position.z(), cascadedAbove);
+                }
             }
             if (!newIsAir) {
                 recorder.record(new BlockPlaceRecord(

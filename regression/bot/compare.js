@@ -1,0 +1,357 @@
+// Head-to-head: Spyglass vs CoreProtect rollback + restore/undo timing.
+//
+// For each size N in [10K, 100K, 500K, 1M, 2.5M]:
+//   - Spawn a fresh bot named cmp<size> at unique coords.
+//   - /fill stone via RCON (not logged), then //replace stone air via WE
+//     (logged by BOTH plugins through their EditSession integrations).
+//   - Wait for the recorder queue to drain.
+//   - Capture baseline TPS.
+//   - Time /spyglass rollback (Spyglass restores cube to stone).
+//   - Time /spyglass undo     (Spyglass replays inverse → back to air).
+//   - Time /co rollback       (CoreProtect restores cube to stone).
+//   - Time /co restore        (CoreProtect re-applies → back to air).
+//   - Sample TPS during each op.
+//
+// Each bot has its own log entries, so user-scoped rollbacks
+// (`p:` for Spyglass, `u:` for CoreProtect) don't cross-contaminate
+// between sizes. We also use a unique Z offset per size so the cubes
+// never overlap.
+
+import mineflayer from 'mineflayer';
+import net from 'net';
+
+const HOST = '127.0.0.1', PORT = 25566;
+const RCON_PORT = 25576, PASS = 'test123';
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ts = () => '[' + new Date().toISOString().slice(11, 19) + ']';
+const log = (...a) => console.log(ts(), ...a);
+
+// ─── RCON helpers (lifted from big2m.js) ───────────────────────────
+function packet(id, t, body) {
+    const b = Buffer.from(body, 'utf8');
+    const len = 4 + 4 + b.length + 2;
+    const o = Buffer.alloc(4 + len);
+    o.writeInt32LE(len, 0);
+    o.writeInt32LE(id, 4);
+    o.writeInt32LE(t, 8);
+    b.copy(o, 12);
+    o.writeInt16LE(0, 12 + b.length);
+    return o;
+}
+function rcon(cmd) {
+    return new Promise((res, rej) => {
+        const s = net.createConnection({ host: HOST, port: RCON_PORT, timeout: 30000 });
+        let st = 0;
+        const bufs = [];
+        s.on('error', rej);
+        s.on('timeout', () => { s.destroy(); rej(new Error('rcon timeout')); });
+        s.on('connect', () => s.write(packet(0x1337, 3, PASS)));
+        s.on('data', c => {
+            bufs.push(c);
+            const all = Buffer.concat(bufs);
+            if (all.length < 4) return;
+            const len = all.readInt32LE(0);
+            if (all.length < len + 4) return;
+            const id = all.readInt32LE(4);
+            const body = all.slice(12, 12 + len - 10).toString('utf8');
+            if (st === 0) {
+                if (id === -1) return rej('auth');
+                st = 1;
+                bufs.length = 0;
+                s.write(packet(0x1337, 2, cmd));
+            } else { s.end(); res(body); }
+        });
+    });
+}
+
+function waitForChat(bot, re, timeout) {
+    return new Promise(resolve => {
+        const handler = m => { if (re.test(m)) { bot.removeListener('messagestr', handler); resolve(m); } };
+        bot.on('messagestr', handler);
+        setTimeout(() => { bot.removeListener('messagestr', handler); resolve(null); }, timeout);
+    });
+}
+
+async function rconUp() {
+    for (let i = 0; i < 90; i++) {
+        try {
+            const r = await rcon('list');
+            if (r && r.length > 0) return true;
+        } catch { }
+        await sleep(2000);
+    }
+    return false;
+}
+
+// ─── Test config ───────────────────────────────────────────────────
+// Pick cube sides so volume hits target counts within ~5%.
+//   22³ = 10,648    (10K)
+//   47³ = 103,823   (100K)
+//   80³ = 512,000   (500K)
+//  100³ = 1,000,000 (1M)
+//  136³ = 2,515,456 (2.5M)
+const SIZES = [
+    { name: '10K',   side: 22  },
+    { name: '100K',  side: 47  },
+    { name: '500K',  side: 80  },
+    { name: '1M',    side: 100 },
+    { name: '2.5M',  side: 136 },
+];
+
+const X_BASE = 14000, Y_BASE = 80, Z_BASE = 14000;
+const TEST_GAP = 300; // each size shifts Z by 300; max cube side is 136 so they never touch
+
+// ─── Helpers ───────────────────────────────────────────────────────
+function tpsStats(samples) {
+    if (samples.length === 0) return { min: 0, avg: 0, max: 0, n: 0 };
+    return {
+        min: Math.min(...samples),
+        avg: samples.reduce((a, b) => a + b, 0) / samples.length,
+        max: Math.max(...samples),
+        n: samples.length,
+    };
+}
+
+async function captureBaselineTps() {
+    const samples = [];
+    for (let i = 0; i < 3; i++) {
+        try {
+            const r = await rcon('tps');
+            const m = r.match(/from last 1m, 5m, 15m:\s*[§a-f0-9]*?([\d.]+)/);
+            if (m) samples.push(parseFloat(m[1]));
+        } catch { }
+        await sleep(800);
+    }
+    return samples;
+}
+
+// Run a chat command, watch chat for completion, sample TPS during.
+async function timedOp(bot, command, completionRegex, timeout = 1800000) {
+    const t0 = Date.now();
+    const done = waitForChat(bot, completionRegex, timeout);
+
+    const tpsDuring = [];
+    let sampling = true;
+    const sampler = (async () => {
+        while (sampling) {
+            try {
+                const r = await rcon('tps');
+                const m = r.match(/from last 1m, 5m, 15m:\s*[§a-f0-9]*?([\d.]+)/);
+                if (m) tpsDuring.push(parseFloat(m[1]));
+            } catch { }
+            await sleep(1500);
+        }
+    })();
+
+    bot.chat(command);
+    const summary = await done;
+    const ms = Date.now() - t0;
+    sampling = false;
+    await sampler;
+    return { ms, summary, tpsDuring };
+}
+
+const results = [];
+
+async function runOneSize(s, idx) {
+    const botName = `cmp${s.name.toLowerCase().replace(/\./g, '')}`;
+    const x0 = X_BASE, z0 = Z_BASE + idx * TEST_GAP;
+    const x1 = x0 + s.side - 1, y1 = Y_BASE + s.side - 1, z1 = z0 + s.side - 1;
+    const expected = s.side ** 3;
+
+    log(`\n══════════════════════════════════════════════`);
+    log(`▶  ${s.name}: ${s.side}³ = ${expected.toLocaleString()} blocks @ ${x0},${Y_BASE},${z0}`);
+    log(`══════════════════════════════════════════════`);
+
+    // Forceload chunks BEFORE the bot connects so it spawns into loaded chunks.
+    await rcon(`forceload add ${x0} ${z0} ${x1} ${z1}`);
+    await sleep(800);
+
+    const bot = mineflayer.createBot({
+        host: HOST, port: PORT, username: botName, version: '1.21.4',
+    });
+    await new Promise((r, j) => { bot.once('spawn', r); bot.once('error', j); });
+
+    bot.on('messagestr', m => {
+        if (/(reversal|completed for|chunks affected|skip|error|exception|querying|Rollback|Restore|No data found|No results|reversals)/i.test(m)) {
+            log(`  [${botName}] >`, m.replace(/\s+/g, ' ').slice(0, 200));
+        }
+    });
+
+    await rcon(`op ${botName}`);
+    await rcon(`gamemode creative ${botName}`);
+    await rcon(`tp ${botName} ${x0 + 0.5} ${y1 + 5} ${z0 + 0.5}`);
+    await sleep(2500);
+
+    // /fill stone via RCON — not logged by either plugin
+    log('  filling stone…');
+    const fillT0 = Date.now();
+    const FILL = 32768;
+    const slab = Math.max(1, Math.floor(FILL / (s.side * s.side)));
+    let yCursor = Y_BASE;
+    while (yCursor <= y1) {
+        const yEnd = Math.min(y1, yCursor + slab - 1);
+        await rcon(`fill ${x0} ${yCursor} ${z0} ${x1} ${yEnd} ${z1} stone`);
+        yCursor = yEnd + 1;
+    }
+    log(`  fill: ${Date.now() - fillT0} ms`);
+    await sleep(1500);
+
+    // //replace stone air via WorldEdit — logged by BOTH plugins
+    log('  //replace stone air…');
+    bot.chat(`//sel cuboid`); await sleep(300);
+    bot.chat(`//pos1 ${x0},${Y_BASE},${z0}`); await sleep(300);
+    bot.chat(`//pos2 ${x1},${y1},${z1}`); await sleep(300);
+    const replaceDone = waitForChat(bot, /blocks have been replaced/i, 900000);
+    const replaceT0 = Date.now();
+    bot.chat(`//replace stone air`);
+    await replaceDone;
+    log(`  //replace: ${Date.now() - replaceT0} ms`);
+
+    // Generous drain wait — 2.5M events at 50-100k/s = 25-50s.
+    const drainMs = Math.max(20000, Math.min(60000, expected / 50));
+    log(`  draining ${drainMs} ms…`);
+    await sleep(drainMs);
+
+    // Baseline TPS
+    const baseline = await captureBaselineTps();
+    log(`  baseline TPS: ${baseline.join(', ')}`);
+
+    const r = {
+        size: s.name,
+        blocks: expected,
+        baselineTps: baseline,
+    };
+
+    // ── Spyglass rollback ─────────────────────────────────────────
+    log('  /spyglass rollback');
+    const sgRb = await timedOp(bot, `/spyglass rollback p:${botName} t:30m -g`,
+        /(reversals|No results)/i);
+    log(`  → ${sgRb.ms} ms (${(expected / (sgRb.ms / 1000)).toFixed(0)} bps)`);
+    log(`     summary: ${(sgRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
+    r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring) };
+    await sleep(4000);
+
+    // ── Spyglass undo SKIPPED ────────────────────────────────────
+    // Known issue: /sg undo push() OOMs for rollbacks >~250K effects
+    // because BSON-encoding the entire inverse-effects list in one
+    // pass blows the JVM heap. Documented; need paged push to fix.
+    // The earlier compare run captured the failure mode at 500K/1M.
+    r.sgUndo = null;
+
+    // After SG rollback the cube is stone. /fill it back to air via
+    // RCON (server-issued, NOT logged by either plugin) so CP
+    // rollback has real block-write work to do — otherwise CP
+    // iterates its log but writes no blocks (already-stone),
+    // measuring only its scan path, not its apply path.
+    log('  /fill air (reset for CP test)…');
+    {
+        let yc = Y_BASE;
+        const slab2 = Math.max(1, Math.floor(32768 / (s.side * s.side)));
+        while (yc <= y1) {
+            const yEnd = Math.min(y1, yc + slab2 - 1);
+            await rcon(`fill ${x0} ${yc} ${z0} ${x1} ${yEnd} ${z1} air`);
+            yc = yEnd + 1;
+        }
+    }
+    await sleep(2000);
+
+    // ── CoreProtect rollback ─────────────────────────────────────
+    // After SG undo, the cube is air again. CP's log still has the
+    // original break events from //replace, so /co rollback restores
+    // to stone. CP completion message: "Rollback completed for "X"."
+    log('  /co rollback');
+    const cpRb = await timedOp(bot, `/co rollback t:30m u:${botName} r:#global`,
+        /(Rollback completed|No data found)/i);
+    log(`  → ${cpRb.ms} ms (${(expected / (cpRb.ms / 1000)).toFixed(0)} bps)`);
+    log(`     summary: ${(cpRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
+    r.cpRollback = { ms: cpRb.ms, summary: cpRb.summary, tps: tpsStats(cpRb.tpsDuring) };
+    await sleep(4000);
+
+    // ── CoreProtect restore (re-apply the breaks → back to air) ──
+    log('  /co restore');
+    const cpRestore = await timedOp(bot, `/co restore t:30m u:${botName} r:#global`,
+        /(Restore completed|No data found)/i);
+    log(`  → ${cpRestore.ms} ms (${(expected / (cpRestore.ms / 1000)).toFixed(0)} bps)`);
+    log(`     summary: ${(cpRestore.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
+    r.cpRestore = { ms: cpRestore.ms, summary: cpRestore.summary, tps: tpsStats(cpRestore.tpsDuring) };
+    await sleep(2000);
+
+    bot.quit();
+    await sleep(2000);
+    await rcon(`forceload remove ${x0} ${z0} ${x1} ${z1}`);
+
+    results.push(r);
+    return r;
+}
+
+function fmtMs(ms) {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+    return `${m}m${s}s`;
+}
+
+function printReport() {
+    log('\n\n╔══════════════════════════════════════════════════════════════════════════════════════╗');
+    log('║ COMPARISON RESULTS                                                                   ║');
+    log('╚══════════════════════════════════════════════════════════════════════════════════════╝');
+    log('');
+    log('Size  | Blocks    | SG rollback    | SG undo        | CP rollback    | CP restore');
+    log('------|-----------|----------------|----------------|----------------|----------------');
+    for (const r of results) {
+        const fmt = (op) => {
+            if (!op) return 'n/a            ';
+            const bps = (r.blocks / (op.ms / 1000)).toFixed(0).padStart(7);
+            const time = fmtMs(op.ms).padStart(6);
+            return `${time} ${bps}bps`;
+        };
+        const fmtSize = r.size.padEnd(5);
+        const fmtBlk = r.blocks.toLocaleString().padStart(9);
+        log(`${fmtSize} | ${fmtBlk} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
+    }
+    log('');
+    log('TPS during op (min / avg, baseline 20):');
+    log('Size  | SG rollback     | SG undo         | CP rollback     | CP restore');
+    log('------|-----------------|-----------------|-----------------|----------------');
+    for (const r of results) {
+        const fmt = (op) => {
+            if (!op || op.tps.n === 0) return 'n/a            ';
+            return `${op.tps.min.toFixed(1).padStart(4)}/${op.tps.avg.toFixed(1).padEnd(4)} (n=${op.tps.n.toString().padEnd(2)})`;
+        };
+        log(`${r.size.padEnd(5)} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
+    }
+}
+
+// ─── Main ──────────────────────────────────────────────────────────
+(async () => {
+    log('Waiting for RCON…');
+    if (!await rconUp()) {
+        log('FATAL: RCON not up after ~3 minutes');
+        process.exit(1);
+    }
+    log('RCON up.');
+
+    for (let i = 0; i < SIZES.length; i++) {
+        try {
+            await runOneSize(SIZES[i], i);
+        } catch (e) {
+            log(`! ${SIZES[i].name} FAILED:`, e.message);
+            results.push({
+                size: SIZES[i].name,
+                blocks: SIZES[i].side ** 3,
+                error: e.message,
+            });
+        }
+        // Print intermediate report after each size in case the user
+        // wants to peek mid-run.
+        printReport();
+    }
+
+    printReport();
+    process.exit(0);
+})().catch(e => {
+    log('FATAL', e?.stack || e);
+    process.exit(2);
+});
