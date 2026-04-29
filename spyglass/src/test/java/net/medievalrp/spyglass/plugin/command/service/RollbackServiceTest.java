@@ -80,9 +80,23 @@ class RollbackServiceTest {
             // explicitly per-case.
             when(store.queryPage(any(QueryRequest.class), any(), org.mockito.ArgumentMatchers.anyInt()))
                     .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(), null));
+            RollbackJobQueue queue = new RollbackJobQueue();
+            // Test resume store points at a temp dir — no real
+            // persistence is needed for these tests, but the
+            // constructor demands one.
+            RollbackResumeStore resumeStore;
+            try {
+                resumeStore = new RollbackResumeStore(
+                        java.nio.file.Files.createTempDirectory("spyglass-test-"),
+                        Logger.getLogger("test"));
+            } catch (java.io.IOException ex) {
+                throw new RuntimeException(ex);
+            }
             subject = new RollbackService(
                     api, parser, config, engine, undoStack,
-                    ServiceSupport.synchronous(), recorder, store, Logger.getLogger("test"));
+                    ServiceSupport.synchronous(), recorder, store, Logger.getLogger("test"),
+                    queue, resumeStore);
+            subject.wireQueue();
         }
 
         private static SpyglassConfig sampleConfig() {
@@ -138,7 +152,8 @@ class RollbackServiceTest {
                 .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
         RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
         when(fixture.engine.applyAllChunked(
-                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
                 .thenReturn(CompletableFuture.completedFuture(
                         List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
@@ -173,7 +188,8 @@ class RollbackServiceTest {
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
                 .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
         when(fixture.engine.applyAllChunked(
-                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
                 .thenReturn(CompletableFuture.completedFuture(
                         List.of(new RollbackResult.Skipped(r.rollbackEffect(),
                                 new RollbackReason.BlockChanged(r.location(), r.originalBlock(), r.newBlock())))));

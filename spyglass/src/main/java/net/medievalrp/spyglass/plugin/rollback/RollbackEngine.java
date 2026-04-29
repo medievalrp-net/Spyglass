@@ -3,13 +3,10 @@ package net.medievalrp.spyglass.plugin.rollback;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
@@ -30,6 +27,8 @@ import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
+import net.medievalrp.spyglass.plugin.util.ChunkResender;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -152,9 +151,21 @@ public final class RollbackEngine {
      * @param batchSize number of effects to apply per tick before yielding;
      *                  {@link Integer#MAX_VALUE} = "do everything now"
      */
+    /**
+     * Backwards-compatible overload — delegates to the cancel-aware
+     * variant with a no-op cancel flag.
+     */
     public CompletableFuture<List<RollbackResult>> applyAllChunked(
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize) {
+        return applyAllChunked(effects, sender, scheduler, batchSize,
+                new java.util.concurrent.atomic.AtomicBoolean(false));
+    }
+
+    public CompletableFuture<List<RollbackResult>> applyAllChunked(
+            List<RollbackEffect> effects, CommandSender sender,
+            ServiceSupport scheduler, int batchSize,
+            java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         if (!Bukkit.isPrimaryThread()) {
             throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
@@ -212,42 +223,49 @@ public final class RollbackEngine {
             faweCandidateEffects.add(br);
         }
 
-        // Phase 2 — FAWE-batch submit. FAWE itself handles chunk-batching
-        // off-tick; we just hand it the candidate list.
-        boolean[] faweApplied = useFawe
-                ? FaweRollback.applyAll(faweCandidateEffects)
-                : new boolean[faweCandidateEffects.size()];
-
-        // Cluster the parallel arrays by chunk so Phase 3 walks effects
-        // in chunk order. Two wins:
-        //   1. Bukkit's getBlockAt() hits a cached chunk for consecutive
-        //      cells in the same chunk (fewer chunk-lookup hops).
-        //   2. We refresh each chunk's client-side packet ONCE when we
-        //      finish that chunk (see {@link ChunkRefreshState}), not
-        //      every batch. For a 1M-block rollback that's the
-        //      difference between a few hundred refresh packets and
-        //      thousands.
+        // Sort the candidate list BEFORE Phase 2 so WE/FAWE writes the
+        // blocks in (chunk, y-ascending) order. Critical for falling
+        // blocks: when the rollback restores a column whose support
+        // was destroyed AND gravity-affected blocks (sand, gravel,
+        // anvil, dragon eggs, concrete powder) above were knocked
+        // loose, the support layer has to land first — otherwise the
+        // gravel placed above an empty cell converts to a falling-
+        // block entity on the next world tick.
+        //
+        // The sort key (worldId, chunkX, chunkZ, y) keeps each chunk's
+        // cells contiguous so Phase 3's chunk-refresh dedup still
+        // works, and the y-asc order within a chunk is what fixes the
+        // gravel/sand bug. Stable: equal keys preserve input order.
+        //
+        // {@code faweApplied} is all-false at this point so we can sort
+        // the parallel arrays freely — Phase 2 produces faweApplied
+        // aligned with the sorted effects.
+        boolean[] faweApplied = new boolean[faweCandidateEffects.size()];
         sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
 
-        // Phase 3 — apply path. When FAWE/WE are present, Phase 2 has
-        // already done the actual block writes off-tick, so Phase 3 for
-        // simple blocks (the bulk of any rollback) is pure bookkeeping:
-        // build inverse effects, mark resultArray, emit audit records,
-        // track touched chunks. None of that needs the main thread. We
-        // run it async and then bounce to main thread once at the end
-        // to do tile-entity state updates + chunk-refresh packets.
+        // Phase 2+3 — chunk-by-chunk apply. For each chunk in the
+        // sorted effect list:
+        //   1. Hand that chunk's effects to WE in one EditSession (if
+        //      WE is present) so WE batches the writes.
+        //   2. Walk the chunk's effects to do per-effect bookkeeping
+        //      (build inverse, mark resultArray, emit audit record),
+        //      and either apply tile-entity state (WE wrote the
+        //      simple block) or fall back to {@link #applySnapshot}
+        //      (no WE, or WE failed for that cell).
+        //   3. Send a real chunk-data packet via {@link ChunkResender}
+        //      so the client snaps that chunk to the final state in
+        //      one frame, before we move on to the next chunk.
         //
-        // Without FAWE/WE we still need to write blocks ourselves, which
-        // requires the main thread, so we fall back to the per-tick
-        // batched loop.
-        ChunkRefreshState refreshState = new ChunkRefreshState();
-        if (useFawe) {
-            applyOffThreadPhase3(effects, resultArray, faweCandidateIndices,
-                    faweCandidateEffects, faweApplied, sender, scheduler, batchSize, done);
-        } else {
-            applyBlockReplaceBatch(0, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                    faweApplied, useFawe, sender, scheduler, batchSize, done, refreshState);
-        }
+        // CoreProtect-style progressive restore: chunks finalize one
+        // at a time, like a wave, instead of speckling everywhere
+        // simultaneously. Yields between chunks once the per-tick
+        // block budget is hit.
+        //
+        // {@code faweApplied} is the parallel array Phase 2 used to
+        // populate; we now fill it incrementally per chunk inside
+        // the apply loop instead of upfront.
+        applyChunkByChunk(0, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
+                faweApplied, useFawe, sender, scheduler, batchSize, done, cancelFlag);
         return done;
     }
 
@@ -325,247 +343,165 @@ public final class RollbackEngine {
                 || m == org.bukkit.Material.SNOW;
     }
 
-    /** Tracks the chunk currently being written so each chunk's
-     *  client-refresh packet is sent exactly once — when we move to a
-     *  different chunk, or when the whole apply phase finishes. */
-    private static final class ChunkRefreshState {
-        UUID currentWorld;
-        int currentChunkX = Integer.MIN_VALUE;
-        int currentChunkZ = Integer.MIN_VALUE;
-        boolean pending = false;
-    }
+    /** Tick-budget cap for one batch of chunk apply. Soft target: yield
+     *  to the next tick once we've spent this many ms in this turn.
+     *  Sized to leave headroom for other plugins / vanilla tick work. */
+    private static final long TICK_BUDGET_MS = 25L;
 
     /**
-     * One tick's worth of Phase 3 work: apply up to {@code batchSize}
-     * BlockReplace effects from {@code faweCandidate*} starting at index
-     * {@code from}, then either schedule the next batch on the next tick
-     * or hand off to Phase 4+5.
-     */
-    private void applyBlockReplaceBatch(int from,
-                                        List<RollbackEffect> effects,
-                                        RollbackResult[] resultArray,
-                                        List<Integer> faweCandidateIndices,
-                                        List<RollbackEffect.BlockReplace> faweCandidateEffects,
-                                        boolean[] faweApplied,
-                                        boolean useFawe,
-                                        CommandSender sender,
-                                        ServiceSupport scheduler,
-                                        int batchSize,
-                                        CompletableFuture<List<RollbackResult>> done,
-                                        ChunkRefreshState refreshState) {
-        int total = faweCandidateIndices.size();
-        int to = Math.min(from + batchSize, total);
-        // Effects are sorted by chunk (Phase 1.5) so consecutive entries
-        // share a chunk almost always. We send one chunk-refresh packet
-        // per chunk at the moment we leave it (i.e. the next effect is
-        // in a different chunk). At the end of all batches a final
-        // flush refreshes the last chunk.
-        for (int i = from; i < to; i++) {
-            int targetIndex = faweCandidateIndices.get(i);
-            RollbackEffect.BlockReplace effect = faweCandidateEffects.get(i);
-            BlockSnapshot replacement = effect.replacement();
-            BlockLocation loc = effect.location();
-            int chunkX = loc.x() >> 4;
-            int chunkZ = loc.z() >> 4;
-            // Detect chunk boundary BEFORE applying — we want to flush
-            // the previous chunk's refresh packet only after its last
-            // effect has landed, which is the iteration BEFORE this one
-            // (state was left at "pending = true, currentChunk = prev"
-            // by the previous iteration's effect). Flushing here means
-            // the previous chunk's packet goes out as we transition.
-            boolean chunkChanged = !refreshState.pending
-                    || refreshState.currentWorld == null
-                    || !refreshState.currentWorld.equals(loc.worldId())
-                    || refreshState.currentChunkX != chunkX
-                    || refreshState.currentChunkZ != chunkZ;
-            if (chunkChanged && refreshState.pending) {
-                refreshChunk(refreshState.currentWorld,
-                        refreshState.currentChunkX, refreshState.currentChunkZ);
-                refreshState.pending = false;
-            }
-            try {
-                if (useFawe && faweApplied[i]) {
-                    if (!FaweRollback.isSimple(replacement)) {
-                        Block block = BlockLocations.resolveWorld(loc).orElseThrow()
-                                .getBlockAt(loc.x(), loc.y(), loc.z());
-                        applyTileEntityState(block, replacement);
-                    }
-                } else {
-                    Block block = BlockLocations.resolveWorld(loc).orElseThrow()
-                            .getBlockAt(loc.x(), loc.y(), loc.z());
-                    applySnapshot(block, replacement);
-                }
-                refreshState.currentWorld = loc.worldId();
-                refreshState.currentChunkX = chunkX;
-                refreshState.currentChunkZ = chunkZ;
-                refreshState.pending = true;
-                RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                        loc, replacement, effect.expectedCurrent());
-                resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
-                emitRollbackSourceRecord(sender, loc, replacement);
-            } catch (RuntimeException thrown) {
-                resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                        new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
-            }
-        }
-        if (sender instanceof Player p && total > batchSize && to < total) {
-            p.sendActionBar(Component.text("Rolling back " + to + " / " + total));
-        }
-        if (to < total) {
-            scheduler.onMainThreadLater(1L, () -> applyBlockReplaceBatch(
-                    to, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                    faweApplied, useFawe, sender, scheduler, batchSize, done, refreshState));
-        } else {
-            // Final flush: refresh the last chunk we wrote to before
-            // moving on. Phase 4/5 don't refresh chunks themselves.
-            if (refreshState.pending) {
-                refreshChunk(refreshState.currentWorld,
-                        refreshState.currentChunkX, refreshState.currentChunkZ);
-                refreshState.pending = false;
-            }
-            runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
-        }
-    }
-
-    /**
-     * Off-thread variant of Phase 3 used when FAWE / vanilla WE handled
-     * the block writes in Phase 2. Iterates every effect on an async
-     * thread doing only off-thread-safe work — building inverse effects,
-     * marking {@code resultArray}, emitting {@code rolled-place} audit
-     * records, accumulating tile-entity touch-ups and the set of chunks
-     * to refresh. Then dispatches a single main-thread task at the end
-     * to drain those two queues and continue into Phase 4/5.
+     * Apply chunks in a tight loop until the per-tick budget
+     * ({@link #TICK_BUDGET_MS}) is consumed, then yield to the next
+     * tick and resume. This is the "process whole chunks fast" path —
+     * an earlier rev did one-chunk-per-tick to avoid per-block speckle
+     * at chunk boundaries, but with NMS direct writes (no per-block
+     * packets) we can pack many chunks into a single tick and the
+     * client just sees one big snap at end-of-tick.
      *
-     * <p>The main-thread cost of a 1M-block stone-fill rollback drops
-     * from ~5 seconds (with {@code batchSize=4000} → 250 ticks at
-     * ~20ms each) to ~50ms (one tick of tile-entity + chunk-refresh
-     * work at the end), with the heavy lifting moved to a JVM thread
-     * Bukkit doesn't care about. For tile-entity-heavy rollbacks the
-     * main-thread cost still scales with the tile-entity count; the
-     * win shows up where it always does — large simple-block ops.
+     * <p>Effect of the change: a 50k-block / 4-chunk rollback that
+     * used to take ~200 ms (4 ticks) finishes in ~1 tick (1 client
+     * frame) and reads as a single instant snap. A 1M-block / 343-chunk
+     * rollback that used to take ~17 s lower bound now finishes in
+     * ~5–10 s, with chunks finalizing in batches of dozens per tick
+     * — visually a fast wave, not a glacial one-at-a-time crawl.
+     *
+     * <p>Per chunk:
+     * <ol>
+     *   <li>Walk the chunk's effects writing each block via
+     *       {@link ChunkDirectWriter} (NMS direct palette write — no
+     *       physics, no scheduled ticks, no per-block packets).</li>
+     *   <li>For non-simple blocks (containers, signs, banners,
+     *       jukeboxes, decorated pots), apply tile-entity state via
+     *       {@link #applyTileEntityState}.</li>
+     *   <li>Send one {@link ChunkResender} packet for this chunk.</li>
+     * </ol>
+     *
+     * <p>{@code batchSize} is the absolute upper bound on per-call
+     * work as a watchdog safeguard; the tick-budget normally trips
+     * first.
      */
-    private void applyOffThreadPhase3(List<RollbackEffect> effects,
-                                      RollbackResult[] resultArray,
-                                      List<Integer> faweCandidateIndices,
-                                      List<RollbackEffect.BlockReplace> faweCandidateEffects,
-                                      boolean[] faweApplied,
-                                      CommandSender sender,
-                                      ServiceSupport scheduler,
-                                      int batchSize,
-                                      CompletableFuture<List<RollbackResult>> done) {
-        scheduler.onAsyncThread(() -> {
-            int total = faweCandidateIndices.size();
-            // Tile-entity effects (containers, signs, banners, jukeboxes)
-            // need {@code BlockState.update} on the main thread. Same for
-            // the rare case where FAWE/WE failed for a specific block —
-            // we'd fall back to {@link #applySnapshot}.
-            List<TileEntityWork> tileEntityWork = new ArrayList<>();
-            // Chunks we need to send a fresh chunk-data packet for at end.
-            // Map<worldId, set-of-packed-chunk-coords>; one packet per
-            // chunk regardless of how many cells we touched in it.
-            Map<UUID, Set<Long>> chunksToRefresh = new HashMap<>();
-
-            for (int i = 0; i < total; i++) {
-                int targetIndex = faweCandidateIndices.get(i);
-                RollbackEffect.BlockReplace effect = faweCandidateEffects.get(i);
-                BlockSnapshot replacement = effect.replacement();
-                BlockLocation loc = effect.location();
-                try {
-                    if (faweApplied[i]) {
-                        if (!FaweRollback.isSimple(replacement)) {
-                            // Tile-entity touch-up needed; defer to main thread.
-                            tileEntityWork.add(new TileEntityWork(loc, replacement, false));
-                        }
-                        // simple block: Phase 2 finished it. Off-thread bookkeeping only.
-                    } else {
-                        // FAWE/WE failed for this cell; main-thread fallback writes it.
-                        tileEntityWork.add(new TileEntityWork(loc, replacement, true));
-                    }
-                    long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
-                    chunksToRefresh.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
-                    RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                            loc, replacement, effect.expectedCurrent());
-                    resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
-                    emitRollbackSourceRecord(sender, loc, replacement);
-                } catch (RuntimeException thrown) {
-                    resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                            new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
+    private void applyChunkByChunk(int from,
+                                   List<RollbackEffect> effects,
+                                   RollbackResult[] resultArray,
+                                   List<Integer> faweCandidateIndices,
+                                   List<RollbackEffect.BlockReplace> faweCandidateEffects,
+                                   boolean[] faweApplied,
+                                   boolean useFawe,
+                                   CommandSender sender,
+                                   ServiceSupport scheduler,
+                                   int batchSize,
+                                   CompletableFuture<List<RollbackResult>> done,
+                                   java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+        int total = faweCandidateIndices.size();
+        // Cancellation: checked at the entry of each batch, so the
+        // current chunk finishes (no half-applied chunks) but no
+        // further chunks start. Unprocessed effects are marked
+        // Skipped so the result array stays fully populated for
+        // {@link RollbackService}'s summary.
+        if (cancelFlag.get()) {
+            for (int j = from; j < total; j++) {
+                int targetIndex = faweCandidateIndices.get(j);
+                if (resultArray[targetIndex] == null) {
+                    resultArray[targetIndex] = new RollbackResult.Skipped(
+                            faweCandidateEffects.get(j),
+                            new RollbackReason.Error("Cancelled by operator"));
                 }
             }
-
-            // Bounce to main thread for the tasks Bukkit insists be on
-            // its tick. Tile-entity and chunk-refresh work scales with
-            // touched-chunk count and tile-entity count (NOT total
-            // effect count), so even for million-block rollbacks the
-            // main-thread tail is small.
-            scheduler.onMainThread(() -> finishOffThreadPhase3(
-                    effects, resultArray, sender, scheduler, batchSize, done,
-                    tileEntityWork, chunksToRefresh));
-        });
-    }
-
-    private void finishOffThreadPhase3(List<RollbackEffect> effects,
-                                        RollbackResult[] resultArray,
-                                        CommandSender sender,
-                                        ServiceSupport scheduler,
-                                        int batchSize,
-                                        CompletableFuture<List<RollbackResult>> done,
-                                        List<TileEntityWork> tileEntityWork,
-                                        Map<UUID, Set<Long>> chunksToRefresh) {
-        for (TileEntityWork w : tileEntityWork) {
-            try {
-                Block block = BlockLocations.resolveWorld(w.location).orElseThrow()
-                        .getBlockAt(w.location.x(), w.location.y(), w.location.z());
-                if (w.fullSnapshot) {
-                    applySnapshot(block, w.snapshot);
-                } else {
-                    applyTileEntityState(block, w.snapshot);
-                }
-            } catch (RuntimeException ignored) {
-                // The matching resultArray slot is already Applied (we
-                // recorded the inverse off-thread); a tile-entity touch-
-                // up failure leaves the simple block correct, just with
-                // empty container contents. Acceptable.
-            }
-        }
-        for (Map.Entry<UUID, Set<Long>> entry : chunksToRefresh.entrySet()) {
-            World world = Bukkit.getWorld(entry.getKey());
-            if (world == null) continue;
-            for (long packed : entry.getValue()) {
-                int cx = (int) (packed >> 32);
-                int cz = (int) packed;
-                try {
-                    world.refreshChunk(cx, cz);
-                } catch (RuntimeException ignored) {
-                    // see refreshChunk() comment — best-effort
-                }
-            }
-        }
-        runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
-    }
-
-    /** Deferred main-thread work captured by the off-thread Phase 3
-     *  pass. {@code fullSnapshot=true} means FAWE/WE failed for that
-     *  cell and we need to do the whole snapshot-write on main thread;
-     *  {@code false} means just the tile-entity portion. */
-    private record TileEntityWork(BlockLocation location, BlockSnapshot snapshot, boolean fullSnapshot) {
-    }
-
-    /** Send a single chunk-data packet for one chunk. Catches errors
-     *  from non-Bukkit test envs / unloaded worlds and continues — the
-     *  fallback (per-block change packet from Bukkit) still gets the
-     *  cells right, refresh just makes it instant. */
-    private void refreshChunk(UUID worldId, int cx, int cz) {
-        if (worldId == null) {
+            // Skip Phase 4/5 too — nothing user-meaningful to do.
+            done.complete(List.of(resultArray));
             return;
         }
-        try {
-            World world = Bukkit.getWorld(worldId);
-            if (world != null) {
-                world.refreshChunk(cx, cz);
+        if (from >= total) {
+            runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
+            return;
+        }
+
+        long tickStart = System.nanoTime();
+        long budgetNanos = TICK_BUDGET_MS * 1_000_000L;
+        int blocksThisTick = 0;
+        int i = from;
+
+        while (i < total) {
+            // Walk forward to the next chunk boundary. Effects are
+            // sorted by (worldId, chunkX, chunkZ, y) so all entries
+            // for one chunk are contiguous.
+            BlockLocation startLoc = faweCandidateEffects.get(i).location();
+            UUID worldId = startLoc.worldId();
+            int cx = startLoc.x() >> 4;
+            int cz = startLoc.z() >> 4;
+            int chunkEnd = i + 1;
+            while (chunkEnd < total) {
+                BlockLocation l = faweCandidateEffects.get(chunkEnd).location();
+                if (!l.worldId().equals(worldId)
+                        || (l.x() >> 4) != cx
+                        || (l.z() >> 4) != cz) {
+                    break;
+                }
+                chunkEnd++;
             }
-        } catch (RuntimeException ignored) {
-            // see refreshTouchedChunks comment — best-effort
+
+            World world = Bukkit.getWorld(worldId);
+            if (world == null) {
+                for (int j = i; j < chunkEnd; j++) {
+                    int targetIndex = faweCandidateIndices.get(j);
+                    RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
+                    resultArray[targetIndex] = new RollbackResult.Skipped(eff,
+                            new RollbackReason.InvalidLocation(eff.location()));
+                }
+            } else {
+                for (int j = i; j < chunkEnd; j++) {
+                    int targetIndex = faweCandidateIndices.get(j);
+                    RollbackEffect.BlockReplace effect = faweCandidateEffects.get(j);
+                    BlockSnapshot replacement = effect.replacement();
+                    BlockLocation loc = effect.location();
+                    try {
+                        org.bukkit.block.data.BlockData bd =
+                                Bukkit.createBlockData(replacement.blockData());
+                        ChunkDirectWriter.writeBlock(world, loc.x(), loc.y(), loc.z(), bd);
+                        if (!FaweRollback.isSimple(replacement)) {
+                            Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
+                            applyTileEntityState(block, replacement);
+                        }
+                        RollbackEffect inverse = new RollbackEffect.BlockReplace(
+                                loc, replacement, effect.expectedCurrent());
+                        resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
+                        emitRollbackSourceRecord(sender, loc, replacement);
+                    } catch (RuntimeException thrown) {
+                        resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                                new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
+                    }
+                }
+                // One chunk-data packet per chunk. The client renders
+                // every chunk packet that lands in the same network
+                // burst together at end-of-tick — a multi-chunk batch
+                // shows up as a single visual snap.
+                try {
+                    ChunkResender.resend(world, cx, cz);
+                } catch (RuntimeException ignored) {
+                }
+            }
+
+            blocksThisTick += chunkEnd - i;
+            i = chunkEnd;
+
+            // Yield once we've spent the tick-budget OR hit the
+            // hard batchSize cap (watchdog safeguard).
+            if (System.nanoTime() - tickStart >= budgetNanos
+                    || blocksThisTick >= batchSize) {
+                break;
+            }
+        }
+
+        if (sender instanceof Player p && total > 0) {
+            p.sendActionBar(Component.text("Rolling back " + i + " / " + total));
+        }
+
+        if (i < total) {
+            int next = i;
+            scheduler.onMainThreadLater(1L, () -> applyChunkByChunk(
+                    next, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
+                    faweApplied, useFawe, sender, scheduler, batchSize, done, cancelFlag));
+        } else {
+            runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
         }
     }
 
@@ -670,11 +606,55 @@ public final class RollbackEngine {
             banner.setPatterns(patterns);
         }
 
-        if (state instanceof Jukebox jukebox) {
-            jukebox.getSnapshotInventory().setItem(0, ItemSerialization.decode(snapshot.jukeboxRecord()));
+        if (state instanceof Jukebox) {
+            // Don't write through the snapshot inventory — Paper's
+            // snapshot Jukebox has a detached BlockEntity (this.level
+            // == null), and the underlying setItem path eventually
+            // calls Level.registryAccess() to resolve the disc's
+            // sound registry, which NPEs. Get the LIVE state and
+            // setRecord on that — the live wrapper holds a real
+            // Level reference. Wrapped in a try so a failure here
+            // doesn't kill the whole rollback's apply step.
+            try {
+                org.bukkit.block.BlockState live = block.getState(false);
+                if (live instanceof Jukebox liveJukebox) {
+                    org.bukkit.inventory.ItemStack disc =
+                            ItemSerialization.decode(snapshot.jukeboxRecord());
+                    if (disc != null) {
+                        liveJukebox.setRecord(disc);
+                    }
+                }
+            } catch (Throwable jukeboxFailure) {
+                // Disc lost; block stays a jukebox without its record.
+                // Acceptable — rare path, not worth aborting the rollback.
+            }
+        }
+
+        if (state instanceof org.bukkit.block.DecoratedPot pot
+                && !snapshot.potSherds().isEmpty()) {
+            applyPotSherds(pot, snapshot.potSherds());
         }
 
         state.update(true, false);
+    }
+
+    /**
+     * Restore the 4 sides of a decorated pot from the captured names.
+     * Order matches {@link org.bukkit.block.DecoratedPot.Side} enum
+     * declaration; the snapshot list is built the same way in
+     * {@link BlockSnapshots#capture}.
+     */
+    private void applyPotSherds(org.bukkit.block.DecoratedPot pot, List<String> names) {
+        org.bukkit.block.DecoratedPot.Side[] sides = org.bukkit.block.DecoratedPot.Side.values();
+        for (int i = 0; i < sides.length && i < names.size(); i++) {
+            try {
+                Material material = Material.valueOf(names.get(i));
+                pot.setSherd(sides[i], material);
+            } catch (IllegalArgumentException ignored) {
+                // Stored material name no longer exists in this MC
+                // version; leave that face at default (brick).
+            }
+        }
     }
 
     /**
@@ -939,8 +919,33 @@ public final class RollbackEngine {
             banner.setPatterns(patterns);
         }
 
-        if (state instanceof Jukebox jukebox) {
-            jukebox.getSnapshotInventory().setItem(0, ItemSerialization.decode(snapshot.jukeboxRecord()));
+        if (state instanceof Jukebox) {
+            // Don't write through the snapshot inventory — Paper's
+            // snapshot Jukebox has a detached BlockEntity (this.level
+            // == null), and the underlying setItem path eventually
+            // calls Level.registryAccess() to resolve the disc's
+            // sound registry, which NPEs. Get the LIVE state and
+            // setRecord on that — the live wrapper holds a real
+            // Level reference. Wrapped in a try so a failure here
+            // doesn't kill the whole rollback's apply step.
+            try {
+                org.bukkit.block.BlockState live = block.getState(false);
+                if (live instanceof Jukebox liveJukebox) {
+                    org.bukkit.inventory.ItemStack disc =
+                            ItemSerialization.decode(snapshot.jukeboxRecord());
+                    if (disc != null) {
+                        liveJukebox.setRecord(disc);
+                    }
+                }
+            } catch (Throwable jukeboxFailure) {
+                // Disc lost; block stays a jukebox without its record.
+                // Acceptable — rare path, not worth aborting the rollback.
+            }
+        }
+
+        if (state instanceof org.bukkit.block.DecoratedPot pot
+                && !snapshot.potSherds().isEmpty()) {
+            applyPotSherds(pot, snapshot.potSherds());
         }
 
         state.update(true, false);
