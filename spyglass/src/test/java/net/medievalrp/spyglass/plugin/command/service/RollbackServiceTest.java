@@ -66,14 +66,34 @@ class RollbackServiceTest {
         final UndoStack undoStack = mock(UndoStack.class);
         final SpyglassConfig config = sampleConfig();
         final CommandSender sender = mock(CommandSender.class);
-        final RollbackService subject = new RollbackService(
-                api, parser, config, engine, undoStack,
-                ServiceSupport.synchronous(), Logger.getLogger("test"));
+        final net.medievalrp.spyglass.plugin.pipeline.Recorder recorder =
+                mock(net.medievalrp.spyglass.plugin.pipeline.Recorder.class);
+        final net.medievalrp.spyglass.plugin.storage.RecordStore store =
+                mock(net.medievalrp.spyglass.plugin.storage.RecordStore.class);
+        final RollbackService subject;
+
+        TestFixture() {
+            when(recorder.flush(any(net.medievalrp.spyglass.api.util.Duration.class)))
+                    .thenReturn(true);
+            // Empty page → executes the "no results" branch and returns
+            // immediately. Tests that need actual results stub this
+            // explicitly per-case.
+            when(store.queryPage(any(QueryRequest.class), any(), org.mockito.ArgumentMatchers.anyInt()))
+                    .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(), null));
+            subject = new RollbackService(
+                    api, parser, config, engine, undoStack,
+                    ServiceSupport.synchronous(), recorder, store, Logger.getLogger("test"));
+        }
 
         private static SpyglassConfig sampleConfig() {
             SpyglassConfig cfg = mock(SpyglassConfig.class);
             SpyglassConfig.Limits limits = mock(SpyglassConfig.Limits.class);
             when(limits.rollbackResult()).thenReturn(10_000);
+            when(limits.rollbackPageSize()).thenReturn(5_000);
+            when(limits.rollbackUndoCap()).thenReturn(50_000);
+            when(limits.rollbackBatchSize()).thenReturn(200);
+            when(limits.rollbackFlushTimeout())
+                    .thenReturn(new net.medievalrp.spyglass.api.util.Duration(30L));
             when(cfg.limits()).thenReturn(limits);
             return cfg;
         }
@@ -112,11 +132,15 @@ class RollbackServiceTest {
             throw new RuntimeException(unexpected);
         }
         BlockBreakRecord r = record();
-        when(fixture.api.query(any(QueryRequest.class)))
-                .thenReturn(CompletableFuture.completedFuture(new QueryResult(List.of(r), List.of())));
+        // Streaming path: first call returns the page, second returns empty
+        // (terminator), so the loop exits cleanly after one iteration.
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
         RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
-        when(fixture.engine.applyAll(ArgumentMatchers.any(), ArgumentMatchers.any()))
-                .thenReturn(List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse)));
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
@@ -131,8 +155,7 @@ class RollbackServiceTest {
         TestFixture fixture = new TestFixture();
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
                 .thenReturn(sampleRequest());
-        when(fixture.api.query(any(QueryRequest.class)))
-                .thenReturn(CompletableFuture.completedFuture(new QueryResult(List.of(), List.of())));
+        // Default store mock already returns an empty page with null cursor.
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
@@ -147,11 +170,13 @@ class RollbackServiceTest {
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
-        when(fixture.api.query(any(QueryRequest.class)))
-                .thenReturn(CompletableFuture.completedFuture(new QueryResult(List.of(r), List.of())));
-        when(fixture.engine.applyAll(ArgumentMatchers.any(), ArgumentMatchers.any()))
-                .thenReturn(List.of(new RollbackResult.Skipped(r.rollbackEffect(),
-                        new RollbackReason.BlockChanged(r.location(), r.originalBlock(), r.newBlock()))));
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Skipped(r.rollbackEffect(),
+                                new RollbackReason.BlockChanged(r.location(), r.originalBlock(), r.newBlock())))));
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);

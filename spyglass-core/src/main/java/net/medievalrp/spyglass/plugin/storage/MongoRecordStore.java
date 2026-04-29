@@ -100,6 +100,50 @@ public final class MongoRecordStore implements RecordStore {
         return runQuery(request, null);
     }
 
+    @Override
+    public QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
+        // Keyset pagination on (occurred, id). Memory is O(pageSize)
+        // per call rather than O(matchSet) — same goal as the CH path.
+        // Used by the rollback engine to stream million-row result sets
+        // a page at a time instead of allocating one huge list.
+        Bson baseFilter = buildFilter(request);
+        boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
+        Bson sort = newestFirst
+                ? Sorts.orderBy(Sorts.descending(RecordFields.OCCURRED), Sorts.descending(RecordFields.ID))
+                : Sorts.orderBy(Sorts.ascending(RecordFields.OCCURRED), Sorts.ascending(RecordFields.ID));
+
+        Bson filter = baseFilter;
+        if (cursor != null) {
+            // Tuple compare expanded to OR-of-AND so Mongo can index it.
+            // For NEWEST_FIRST: occurred < co OR (occurred == co AND id < ci).
+            // High-level Filters builder handles the UUID/Instant codec
+            // wiring so we don't have to round-trip through BsonString.
+            Bson occLess = newestFirst
+                    ? com.mongodb.client.model.Filters.lt(RecordFields.OCCURRED, cursor.occurred())
+                    : com.mongodb.client.model.Filters.gt(RecordFields.OCCURRED, cursor.occurred());
+            Bson tieBreak = com.mongodb.client.model.Filters.and(
+                    com.mongodb.client.model.Filters.eq(RecordFields.OCCURRED, cursor.occurred()),
+                    newestFirst
+                            ? com.mongodb.client.model.Filters.lt(RecordFields.ID, cursor.id())
+                            : com.mongodb.client.model.Filters.gt(RecordFields.ID, cursor.id()));
+            Bson keysetClause = com.mongodb.client.model.Filters.or(occLess, tieBreak);
+            filter = baseFilter == null
+                    ? keysetClause
+                    : com.mongodb.client.model.Filters.and(baseFilter, keysetClause);
+        }
+
+        var iter = polymorphicCollection.find(filter).sort(sort).limit(pageSize);
+        List<EventRecord> records = iter.into(new ArrayList<>(pageSize));
+        QueryPage.Cursor next = null;
+        if (records.size() == pageSize) {
+            EventRecord last = records.get(records.size() - 1);
+            if (last.occurred() != null && last.id() != null) {
+                next = new QueryPage.Cursor(last.occurred(), last.id());
+            }
+        }
+        return new QueryPage(records, next);
+    }
+
     /**
      * Summary projection: drops the deeply-nested snapshot fields before
      * the cursor streams docs back. The block events in particular carry
