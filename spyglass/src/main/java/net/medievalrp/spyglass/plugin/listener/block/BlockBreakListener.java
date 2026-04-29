@@ -38,5 +38,16 @@ public final class BlockBreakListener implements RecordingListener {
         BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
         recorder.record(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
+        // Cascade: if breaking this block knocks out the support of a
+        // gravity-affected column above (sand, gravel, anvil, concrete
+        // powder, etc.), pre-emptively log the column's breaks tagged
+        // to the same player. Without this, the column drops as
+        // falling-block entities, the original cells aren't recorded
+        // as "broken by player", and a /spyglass rollback p:them
+        // restores the support but the sand stays gone.
+        net.medievalrp.spyglass.plugin.util.FallingBlockCascade.emitCascadeAbove(
+                recorder, support, event.getPlayer(),
+                event.getBlock().getWorld(),
+                event.getBlock().getX(), event.getBlock().getY(), event.getBlock().getZ());
     }
 }
