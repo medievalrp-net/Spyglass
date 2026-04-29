@@ -4,6 +4,7 @@ import java.util.List;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import net.medievalrp.spyglass.plugin.command.service.HelpService;
+import net.medievalrp.spyglass.plugin.command.service.RbqueueService;
 import net.medievalrp.spyglass.plugin.command.service.RollbackMode;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
@@ -32,6 +33,7 @@ public final class SpyglassCommands {
     private final SearchService search;
     private final RollbackService rollback;
     private final UndoService undo;
+    private final RbqueueService rbqueue;
     private final PageCache pageCache;
     private final ToolService tool;
     private final TeleportService teleport;
@@ -43,6 +45,7 @@ public final class SpyglassCommands {
                         SearchService search,
                         RollbackService rollback,
                         UndoService undo,
+                        RbqueueService rbqueue,
                         PageCache pageCache,
                         ToolService tool,
                         TeleportService teleport,
@@ -53,6 +56,7 @@ public final class SpyglassCommands {
         this.search = search;
         this.rollback = rollback;
         this.undo = undo;
+        this.rbqueue = rbqueue;
         this.pageCache = pageCache;
         this.tool = tool;
         this.teleport = teleport;
@@ -68,6 +72,7 @@ public final class SpyglassCommands {
     private static final List<String> ROLLBACK_ALIASES = List.of("rollback", "rb", "roll");
     private static final List<String> RESTORE_ALIASES = List.of("restore", "rs", "rst");
     private static final List<String> UNDO_ALIASES = List.of("undo", "u");
+    private static final List<String> RBQUEUE_ALIASES = List.of("rbqueue", "queue", "rbq");
     private static final List<String> TOOL_ALIASES = List.of("tool", "t", "inspect");
     private static final List<String> EVENTS_ALIASES = List.of("events", "e");
     private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
@@ -117,6 +122,18 @@ public final class SpyglassCommands {
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.rollback")
                         .handler(ctx -> undo.execute(ctx.sender())));
+            }
+
+            for (String name : RBQUEUE_ALIASES) {
+                // /sg rbqueue (no args = list)
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> rbqueue.execute(ctx.sender(), "")));
+                // /sg rbqueue <subcommand-with-args> — pass through
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("args", StringParser.greedyStringParser())
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> rbqueue.execute(ctx.sender(), ctx.get("args"))));
             }
 
             for (String name : PAGE_ALIASES) {
