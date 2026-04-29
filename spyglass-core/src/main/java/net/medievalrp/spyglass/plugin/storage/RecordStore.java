@@ -19,6 +19,36 @@ public interface RecordStore extends AutoCloseable {
     QueryResult query(QueryRequest request);
 
     /**
+     * Stream one page of {@code pageSize} records starting after
+     * {@code cursor} (or from the beginning of the result set when
+     * {@code cursor} is {@code null}). Used by the rollback path to
+     * keep memory bounded — a 1M-row rollback can be processed in
+     * pages of 5k rather than allocating the whole result list.
+     *
+     * <p>Implementations should use keyset pagination on
+     * {@code (occurred, id)} so the per-page cost stays O(pageSize)
+     * even deep in the result set — OFFSET-based pagination degrades
+     * to O(N) per page on a large match set.
+     *
+     * <p>The returned {@link QueryPage#next} is {@code null} when the
+     * result set is exhausted. Callers loop until {@code next} is
+     * null OR the running tally hits {@code request.limit()}, whichever
+     * comes first.
+     *
+     * <p>Default implementation falls back to a single full
+     * {@link #query} call so test doubles and stores that haven't
+     * been streaming-fitted still work — at the cost of materializing
+     * everything once.
+     */
+    default QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
+        if (cursor != null) {
+            return new QueryPage(List.of(), null);
+        }
+        QueryResult full = query(request);
+        return new QueryPage(full.records(), null);
+    }
+
+    /**
      * Display-only query: hydrates just the fields the search renderer
      * needs (event, origin, source, location, target, scalar extras like
      * amount/damage/recipients/commandLine/address).
