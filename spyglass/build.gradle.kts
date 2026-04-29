@@ -26,7 +26,15 @@ repositories {
     maven("https://maven.enginehub.org/repo/")
 }
 
-val faweJar = rootProject.rootDir.resolve("../RP_Server/plugins/FastAsyncWorldEdit.jar")
+// FAWE jar for compileOnly. Look in both plugins/ and plugins/disabled/ —
+// when an operator wants to test against vanilla WorldEdit they typically
+// move the FAWE jar to plugins/disabled/ rather than delete it. Either
+// location keeps Spyglass's FAWE-aware classes (FaweHook, FaweBatchLogger)
+// compilable.
+val faweJar = listOf(
+    rootProject.rootDir.resolve("../RP_Server/plugins/FastAsyncWorldEdit.jar"),
+    rootProject.rootDir.resolve("../RP_Server/plugins/disabled/FastAsyncWorldEdit.jar")
+).firstOrNull { it.exists() }
 
 // ClickHouse 0.9.x pulls Guava 33.4.6 transitively, but Paper / WorldEdit
 // pin Guava strictly to 33.3.1. Force the Paper version so the runtime
@@ -50,7 +58,7 @@ dependencies {
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     compileOnly("com.sk89q.worldedit:worldedit-core:7.3.15")
     compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
-    if (faweJar.exists()) {
+    if (faweJar != null) {
         compileOnly(files(faweJar))
     }
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
