@@ -152,6 +152,33 @@ public final class AsyncRecorder implements Recorder {
     }
 
     @Override
+    public boolean flush(Duration timeout) {
+        // Snapshot semantics: capture the high-water mark at call time
+        // and wait until the drain catches up to it. New records added
+        // after this point may or may not also be drained — they don't
+        // gate the call. Reading {@link #drained} and {@code queue.size()}
+        // in this order can undercount the mark by at most one batch (a
+        // record moves from queue to drained between reads) which
+        // doesn't affect correctness; the drain catches it on the next
+        // cycle either way.
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(Math.max(0L, timeout.seconds()));
+        long highWaterMark = drained.get() + queue.size();
+        while (drained.get() < highWaterMark) {
+            if (System.nanoTime() >= deadlineNanos) {
+                return false;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     public ShutdownReport shutdown(Duration timeout) {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeout.seconds());
         running.set(false);
@@ -175,9 +202,17 @@ public final class AsyncRecorder implements Recorder {
                 if (first == null) {
                     continue;
                 }
+                // Drain batch sized for ClickHouse's MergeTree, not Mongo.
+                // Mongo absorbs 512-doc batches in ~ms; ClickHouse pays the
+                // same fixed cost for any batch under ~10 k rows (one part
+                // per INSERT, then a merge), so small batches starve the
+                // ingest rate. With this larger batch, 1M-row WE bursts
+                // drain at ~50-100k records/sec instead of ~7k/sec, which
+                // is the difference between rollback waiting on a partial
+                // CH and rollback seeing the whole burst.
                 List<EventRecord> batch = new ArrayList<>();
                 batch.add(first);
-                queue.drainTo(batch, 511);
+                queue.drainTo(batch, 9_999);
 
                 // WAL durability: when enabled, fsync the batch to disk
                 // before the DB push so a hard crash leaves a recoverable

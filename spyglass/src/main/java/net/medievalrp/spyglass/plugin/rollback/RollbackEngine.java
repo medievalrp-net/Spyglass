@@ -3,11 +3,16 @@ package net.medievalrp.spyglass.plugin.rollback;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
@@ -83,24 +88,87 @@ public final class RollbackEngine {
                 : lookup;
     }
 
+    /**
+     * Synchronous entry point — used by tests and by external callers that
+     * already control their own scheduling. Wraps {@link #applyAllChunked}
+     * with a {@link ServiceSupport#synchronous() synchronous} scheduler and
+     * an unbounded batch so everything happens in a single call.
+     *
+     * <p>For production use, {@code RollbackService} calls
+     * {@link #applyAllChunked} directly so the per-block apply phase can
+     * yield between batches and stay under Paper's tick watchdog.
+     */
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
+        return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
+    }
+
+    /**
+     * Apply a rollback split across ticks.
+     *
+     * <p>Earlier revisions did the entire rollback in one main-thread call.
+     * On the FAWE-less slow path each {@code BlockState.update} costs a few
+     * ms; for a 2 000-block rollback that's tens of seconds in one tick,
+     * which trips Paper's 60 s watchdog and crashes the server. Worse, the
+     * synchronous flood of {@code rolled-place}/{@code rolled-break}
+     * recorder events to ClickHouse OOM-killed CH at the same time, so the
+     * data layer would tear down with the world half-rolled (the visible
+     * "diagonal lines / 4×4 chunks" pattern operators reported).
+     *
+     * <p>This method now:
+     * <ol>
+     *   <li>Runs Phase 1 (precondition check) and Phase 2 (FAWE batch
+     *       submit) inline — both are fast: Phase 1 is just block reads,
+     *       Phase 2 hands the whole list to FAWE which schedules its own
+     *       chunk-batched writes off-tick.</li>
+     *   <li>Splits Phase 3 (per-block {@code BlockState.update}) into
+     *       batches of {@code batchSize} effects per tick, yielding back
+     *       to the main thread between batches via
+     *       {@link ServiceSupport#onMainThreadLater}. Each batch also
+     *       emits its own {@code rolled-*} recorder events, which keeps
+     *       the ClickHouse insert rate proportional to the rollback
+     *       throughput instead of dumping everything at once.</li>
+     *   <li>Runs Phase 4 (container-slot batches) in one tick — small N
+     *       (one batch per chest, not per slot) and already cheap.</li>
+     *   <li>Splits Phase 5 (entity ops + custom handlers) the same way
+     *       Phase 3 does.</li>
+     * </ol>
+     *
+     * Returns a future that completes once every batch has run. The
+     * caller (RollbackService) chains the summary line and undo-stack push
+     * onto completion so the player gets feedback once everything's
+     * actually applied — not when the work is just queued.
+     *
+     * <p>Must be invoked on the main thread (Phase 1 reads block state).
+     * Subsequent batches are re-entered on the main thread by the
+     * scheduler.
+     *
+     * @param effects   ordered list of rollback effects (already sorted
+     *                  newest-first for ROLLBACK / oldest-first for RESTORE
+     *                  by the caller)
+     * @param sender    the operator running the command; receives action
+     *                  bar progress messages once batching kicks in
+     * @param scheduler bridges {@code Bukkit.getScheduler().runTaskLater}
+     *                  for production and {@code Runnable.run()} for tests
+     * @param batchSize number of effects to apply per tick before yielding;
+     *                  {@link Integer#MAX_VALUE} = "do everything now"
+     */
+    public CompletableFuture<List<RollbackResult>> applyAllChunked(
+            List<RollbackEffect> effects, CommandSender sender,
+            ServiceSupport scheduler, int batchSize) {
         if (!Bukkit.isPrimaryThread()) {
-            throw new IllegalStateException("RollbackEngine.applyAll must run on the main thread.");
+            throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
+        CompletableFuture<List<RollbackResult>> done = new CompletableFuture<>();
         if (effects.isEmpty()) {
-            return List.of();
+            done.complete(List.of());
+            return done;
         }
 
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
         boolean useFawe = FaweRollback.isAvailable();
 
         // Phase 1 — cheap precondition check for every BlockReplace.
-        // Just material + blockdata, no full BlockSnapshot capture (the
-        // old code captured sign text / banner patterns / container
-        // contents / jukebox record on every block just to throw them
-        // away in {@link #matches} — wildly expensive per block).
-        // Survivors land in the FAWE candidate list; failures land in
-        // {@code resultArray} as Skipped right here.
+        // Just material + blockdata, no full BlockSnapshot capture.
         List<Integer> faweCandidateIndices = new ArrayList<>();
         List<RollbackEffect.BlockReplace> faweCandidateEffects = new ArrayList<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -128,39 +196,64 @@ public final class RollbackEngine {
             faweCandidateEffects.add(br);
         }
 
-        // Phase 2 — FAWE-batch every surviving BlockReplace (simple AND
-        // complex). FAWE writes material+blockdata in chunk-batched bulk;
-        // tile-entity contents (containers, signs, banners, jukeboxes)
-        // get written by Phase 3 via Bukkit's BlockState.update — but
-        // Phase 3 skips the redundant setType/setBlockData since FAWE
-        // already did them.
+        // Phase 2 — FAWE-batch submit. FAWE itself handles chunk-batching
+        // off-tick; we just hand it the candidate list.
         boolean[] faweApplied = useFawe
                 ? FaweRollback.applyAll(faweCandidateEffects)
                 : new boolean[faweCandidateEffects.size()];
 
-        for (int i = 0; i < faweCandidateIndices.size(); i++) {
+        // Phase 3 — kick off the chunked per-block apply loop.
+        applyBlockReplaceBatch(0, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
+                faweApplied, useFawe, sender, scheduler, batchSize, done);
+        return done;
+    }
+
+    /**
+     * One tick's worth of Phase 3 work: apply up to {@code batchSize}
+     * BlockReplace effects from {@code faweCandidate*} starting at index
+     * {@code from}, then either schedule the next batch on the next tick
+     * or hand off to Phase 4+5.
+     */
+    private void applyBlockReplaceBatch(int from,
+                                        List<RollbackEffect> effects,
+                                        RollbackResult[] resultArray,
+                                        List<Integer> faweCandidateIndices,
+                                        List<RollbackEffect.BlockReplace> faweCandidateEffects,
+                                        boolean[] faweApplied,
+                                        boolean useFawe,
+                                        CommandSender sender,
+                                        ServiceSupport scheduler,
+                                        int batchSize,
+                                        CompletableFuture<List<RollbackResult>> done) {
+        int total = faweCandidateIndices.size();
+        int to = Math.min(from + batchSize, total);
+        // Track every chunk we touch this batch so we can force a full
+        // chunk-data resend at the end. Without this, hundreds of single
+        // block-change packets either get rate-limited by the client or
+        // arrive out of order, producing the classic "pixelated grain"
+        // look — the server has the right blocks, the client's render
+        // cache is wrong. Pushing a fresh chunk packet wipes the stale
+        // mesh in one shot. Map<worldId, Set<packed-chunk-coord>>.
+        Map<UUID, Set<Long>> chunksTouched = new HashMap<>();
+        for (int i = from; i < to; i++) {
             int targetIndex = faweCandidateIndices.get(i);
             RollbackEffect.BlockReplace effect = faweCandidateEffects.get(i);
             BlockSnapshot replacement = effect.replacement();
             BlockLocation loc = effect.location();
-
             try {
                 if (useFawe && faweApplied[i]) {
-                    // Phase 3a — FAWE handled the bulk write. If this
-                    // block carries tile-entity state, apply it now via
-                    // Bukkit's BlockState.update; otherwise we're done.
                     if (!FaweRollback.isSimple(replacement)) {
                         Block block = BlockLocations.resolveWorld(loc).orElseThrow()
                                 .getBlockAt(loc.x(), loc.y(), loc.z());
                         applyTileEntityState(block, replacement);
                     }
                 } else {
-                    // Phase 3b — FAWE either isn't available or rejected
-                    // this entry; do the full per-block apply ourselves.
                     Block block = BlockLocations.resolveWorld(loc).orElseThrow()
                             .getBlockAt(loc.x(), loc.y(), loc.z());
                     applySnapshot(block, replacement);
                 }
+                long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
+                chunksTouched.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
                 RollbackEffect inverse = new RollbackEffect.BlockReplace(
                         loc, replacement, effect.expectedCurrent());
                 resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
@@ -170,11 +263,71 @@ public final class RollbackEngine {
                         new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
             }
         }
+        // End-of-batch chunk refresh for every chunk we wrote to. Paper's
+        // World.refreshChunk(x, z) sends the chunk-data packet to every
+        // viewer, replacing whatever stale mesh the client had built up.
+        refreshTouchedChunks(chunksTouched);
+        if (sender instanceof Player p && total > batchSize && to < total) {
+            p.sendActionBar(Component.text("Rolling back " + to + " / " + total));
+        }
+        if (to < total) {
+            scheduler.onMainThreadLater(1L, () -> applyBlockReplaceBatch(
+                    to, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
+                    faweApplied, useFawe, sender, scheduler, batchSize, done));
+        } else {
+            runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
+        }
+    }
 
-        // Phase 4 — ContainerSlotWrites grouped by location. The old
-        // path did one Block.getState + cast + BlockState.update PER
-        // SLOT (so a 30-item theft rollback was 30 getState/update
-        // cycles for ONE chest); now it's one of each per chest.
+    /**
+     * Force a fresh chunk-data packet on every chunk we wrote to in the
+     * batch. Cheap when called once per batch (~at most a few dozen
+     * chunks even on a wide rollback); expensive if called per block.
+     * Tolerates non-Bukkit test environments — if the world isn't
+     * resolvable or {@code refreshChunk} throws, we just log and move on
+     * (the worst case is the existing per-block-change packet path,
+     * which is what the user already had).
+     */
+    private void refreshTouchedChunks(Map<UUID, Set<Long>> chunksByWorld) {
+        for (Map.Entry<UUID, Set<Long>> entry : chunksByWorld.entrySet()) {
+            World world;
+            try {
+                world = Bukkit.getWorld(entry.getKey());
+            } catch (RuntimeException ex) {
+                continue;
+            }
+            if (world == null) {
+                continue;
+            }
+            for (long packed : entry.getValue()) {
+                int cx = (int) (packed >> 32);
+                int cz = (int) packed;
+                try {
+                    world.refreshChunk(cx, cz);
+                } catch (RuntimeException ex) {
+                    // Swallow — the client will eventually resync via
+                    // its own chunk reload (re-render-distance, leave
+                    // and rejoin the chunk, etc.). Don't fail the whole
+                    // rollback over a single chunk that wouldn't refresh.
+                }
+            }
+        }
+    }
+
+    /**
+     * Phase 4 (containers, single-tick) → Phase 5 (entity ops + custom
+     * handlers, chunked the same way Phase 3 is). Called once Phase 3 has
+     * fully drained.
+     */
+    private void runContainerAndLeftover(List<RollbackEffect> effects,
+                                         RollbackResult[] resultArray,
+                                         CommandSender sender,
+                                         ServiceSupport scheduler,
+                                         int batchSize,
+                                         CompletableFuture<List<RollbackResult>> done) {
+        // Phase 4 — group ContainerSlotWrites by location and apply each
+        // chest in a single getState/update cycle. Typically <100
+        // locations even on big rollbacks; one tick is enough.
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -193,27 +346,41 @@ public final class RollbackEngine {
                     resultArray);
         }
 
-        // Phase 5 — entity spawn/remove and any leftovers fall through
-        // to the original per-effect dispatcher. These are rare in TNT
-        // workloads (only Bukkit.getUnsafe().deserializeEntity drives
-        // them) so per-block is fine.
-        for (int index = 0; index < effects.size(); index++) {
-            if (resultArray[index] != null) {
-                continue;
-            }
-            if (sender instanceof Player player && index > 0 && index % 500 == 0) {
-                player.sendActionBar(Component.text("Applying " + index + " / " + effects.size()));
-            }
-            RollbackEffect effect = effects.get(index);
-            try {
-                resultArray[index] = apply(effect);
-            } catch (RuntimeException thrown) {
-                resultArray[index] = new RollbackResult.Skipped(effect,
-                        new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
-            }
-        }
+        // Phase 5 — leftover effects (entity spawn/remove, custom).
+        applyLeftoverBatch(0, effects, resultArray, sender, scheduler, batchSize, done);
+    }
 
-        return List.of(resultArray);
+    /** Phase 5 batched the same way Phase 3 is. */
+    private void applyLeftoverBatch(int from,
+                                    List<RollbackEffect> effects,
+                                    RollbackResult[] resultArray,
+                                    CommandSender sender,
+                                    ServiceSupport scheduler,
+                                    int batchSize,
+                                    CompletableFuture<List<RollbackResult>> done) {
+        int total = effects.size();
+        int processed = 0;
+        int i = from;
+        while (i < total && processed < batchSize) {
+            if (resultArray[i] == null) {
+                RollbackEffect effect = effects.get(i);
+                try {
+                    resultArray[i] = apply(effect);
+                } catch (RuntimeException thrown) {
+                    resultArray[i] = new RollbackResult.Skipped(effect,
+                            new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
+                }
+                processed++;
+            }
+            i++;
+        }
+        if (i < total) {
+            int next = i;
+            scheduler.onMainThreadLater(1L, () -> applyLeftoverBatch(
+                    next, effects, resultArray, sender, scheduler, batchSize, done));
+        } else {
+            done.complete(List.of(resultArray));
+        }
     }
 
     /**

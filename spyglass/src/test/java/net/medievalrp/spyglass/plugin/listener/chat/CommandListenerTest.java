@@ -111,5 +111,10 @@ class CommandListenerTest {
         public AsyncRecorder.ShutdownReport shutdown(Duration timeout) {
             return new AsyncRecorder.ShutdownReport(records.size(), 0, 0);
         }
+
+        @Override
+        public boolean flush(Duration timeout) {
+            return true;
+        }
     }
 }
