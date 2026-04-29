@@ -83,10 +83,10 @@ public record SpyglassConfig(
                         root.node("limits", "search-result").getInt(1_000),
                         root.node("limits", "rollback-result").getInt(10_000),
                         root.node("limits", "chat-dump").getInt(50),
-                        root.node("limits", "rollback-batch-size").getInt(2_000),
+                        root.node("limits", "rollback-batch-size").getInt(4_000),
                         Duration.parse(root.node("limits", "rollback-flush-timeout").getString("30s")),
                         root.node("limits", "rollback-page-size").getInt(5_000),
-                        root.node("limits", "rollback-undo-cap").getInt(50_000)),
+                        root.node("limits", "rollback-undo-cap").getInt(500_000)),
                 Map.copyOf(events),
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
                 new Server(root.node("server", "name").getString("default")));
