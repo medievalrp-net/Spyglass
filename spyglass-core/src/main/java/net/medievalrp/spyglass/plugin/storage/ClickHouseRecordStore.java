@@ -408,6 +408,72 @@ public final class ClickHouseRecordStore implements RecordStore {
         return runQuery(request, false);
     }
 
+    @Override
+    public QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
+        // Keyset-paginated streaming read. Memory is O(pageSize) per
+        // call instead of O(matchSet) — required for million-row
+        // rollbacks that would otherwise OOM the JVM during the single
+        // queryAll() materialization. The cursor is the (occurred, id)
+        // tuple of the last row we returned; we ask CH for everything
+        // strictly past that point in the configured sort direction.
+        StringBuilder sql = new StringBuilder("SELECT ")
+                .append(fullSelect)
+                .append(" FROM ").append(qualifiedTable);
+
+        List<QueryPredicate> predicates = new ArrayList<>(request.predicates());
+        if (request.flags().contains(Flag.NO_CHAT)) {
+            predicates.add(new QueryPredicate.Exists(RecordFields.MESSAGE, false));
+        }
+        String where = predicateToSql.translate(predicates);
+        boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
+        String op = newestFirst ? "<" : ">";
+        if (!where.isEmpty()) {
+            sql.append(" WHERE ").append(where);
+        }
+        if (cursor != null) {
+            sql.append(where.isEmpty() ? " WHERE " : " AND ");
+            // Tuple compare with toUUID() forces ClickHouse to evaluate
+            // the id as UUID rather than coerce both sides to strings.
+            sql.append("(occurred, id) ").append(op).append(" (")
+                    .append(chTimestamp(cursor.occurred())).append(", toUUID('")
+                    .append(cursor.id()).append("'))");
+        }
+        sql.append(" ORDER BY occurred ").append(newestFirst ? "DESC" : "ASC")
+                .append(", id ").append(newestFirst ? "DESC" : "ASC")
+                .append(" LIMIT ").append(pageSize);
+
+        List<GenericRecord> rows;
+        try {
+            rows = client.queryAll(sql.toString());
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("ClickHouse paginated query failed: " + ex.getMessage(), ex);
+        }
+        List<EventRecord> records = new ArrayList<>(rows.size());
+        Instant lastOccurred = null;
+        UUID lastId = null;
+        for (GenericRecord row : rows) {
+            EventRecord record = decodeRow(row, true);
+            if (record != null) {
+                records.add(record);
+            }
+            // Always advance the cursor — even if decodeRow returned
+            // null (unknown event). Skipping over an undecodable row
+            // is fine; freezing on it would loop forever.
+            lastOccurred = row.getInstant("occurred");
+            lastId = row.getUUID("id");
+        }
+        QueryPage.Cursor next = (rows.size() == pageSize && lastOccurred != null)
+                ? new QueryPage.Cursor(lastOccurred, lastId)
+                : null;
+        return new QueryPage(records, next);
+    }
+
+    private static String chTimestamp(Instant when) {
+        long s = when.getEpochSecond();
+        int ms = when.getNano() / 1_000_000;
+        return "toDateTime64('" + s + "." + String.format("%03d", ms) + "', 3, 'UTC')";
+    }
+
     private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
         StringBuilder sql = new StringBuilder("SELECT ")
                 .append(includeHeavy ? fullSelect : summarySelect)

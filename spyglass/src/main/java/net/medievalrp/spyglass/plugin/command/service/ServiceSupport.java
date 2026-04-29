@@ -18,6 +18,16 @@ public interface ServiceSupport {
     void onMainThread(Runnable runnable);
 
     /**
+     * Defer a runnable to the main thread {@code delayTicks} ticks from
+     * now (1 tick = 50ms). Used by the chunked rollback engine to yield
+     * between per-tick batches: each batch finishes its work, then schedules
+     * the next batch via this method so the main thread gets to process
+     * other tasks (player movement, redstone, plugin events) before the
+     * next chunk of block writes.
+     */
+    void onMainThreadLater(long delayTicks, Runnable runnable);
+
+    /**
      * Hand work off to an async pool. Used by services that finished
      * their main-thread side (e.g. block-placement during rollback) and
      * still owe a slow I/O step (writing the undo stack to ClickHouse)
@@ -38,6 +48,11 @@ public interface ServiceSupport {
             }
 
             @Override
+            public void onMainThreadLater(long delayTicks, Runnable runnable) {
+                Bukkit.getScheduler().runTaskLater(plugin, runnable, Math.max(1L, delayTicks));
+            }
+
+            @Override
             public void onAsyncThread(Runnable runnable) {
                 Bukkit.getScheduler().runTaskAsynchronously(plugin, runnable);
             }
@@ -48,6 +63,11 @@ public interface ServiceSupport {
         return new ServiceSupport() {
             @Override
             public void onMainThread(Runnable runnable) {
+                runnable.run();
+            }
+
+            @Override
+            public void onMainThreadLater(long delayTicks, Runnable runnable) {
                 runnable.run();
             }
 

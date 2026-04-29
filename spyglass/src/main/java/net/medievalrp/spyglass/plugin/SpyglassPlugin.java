@@ -319,7 +319,7 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         HelpService helpService = new HelpService();
         SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
-        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, getLogger());
+        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, recorder, recordStore, getLogger());
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport);
         ToolService toolService = new ToolService(toolStateStore, config.tool().material());
         getServer().getPluginManager().registerEvents(
