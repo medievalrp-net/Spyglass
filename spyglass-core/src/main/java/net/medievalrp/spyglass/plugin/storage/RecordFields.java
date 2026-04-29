@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.storage;
 
 final class RecordFields {
 
+    static final String ID = "id";
     static final String EVENT = "event";
     static final String OCCURRED = "occurred";
     static final String EXPIRES_AT = "expiresAt";
