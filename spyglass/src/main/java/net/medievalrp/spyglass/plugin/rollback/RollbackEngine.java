@@ -186,11 +186,27 @@ public final class RollbackEngine {
             BlockSnapshot expected = br.expectedCurrent();
             if (block.getType() != expected.material()
                     || !block.getBlockData().getAsString().equals(expected.blockData())) {
-                BlockSnapshot lightweightActual = BlockSnapshots.of(
-                        block.getType(), block.getBlockData().getAsString());
-                resultArray[index] = new RollbackResult.Skipped(br,
-                        new RollbackReason.BlockChanged(br.location(), expected, lightweightActual));
-                continue;
+                // Loose match: if the cell's current contents are a
+                // transient environmental block (water flowed back in,
+                // lava re-pooled, fire re-ignited, snow drifted), let
+                // the rollback write through it. The rollback's intent
+                // — "put the original block back here" — should not be
+                // blocked by a fluid that drained in to fill the void
+                // we created when we broke the original. Without this,
+                // a //set 0 over a lake leaves all the cells flooded
+                // with new flowing water and the rollback skips every
+                // one of them with "block changed".
+                if (!isTransientFiller(block.getType())) {
+                    BlockSnapshot lightweightActual = BlockSnapshots.of(
+                            block.getType(), block.getBlockData().getAsString());
+                    resultArray[index] = new RollbackResult.Skipped(br,
+                            new RollbackReason.BlockChanged(br.location(), expected, lightweightActual));
+                    continue;
+                }
+                // else: fall through and apply the rollback. The
+                // matching {@link #applyBlockReplace} path uses {@link
+                // #matches}, which doesn't have this loose-match logic
+                // — but Phase 3 doesn't re-check, so we're fine.
             }
             faweCandidateIndices.add(index);
             faweCandidateEffects.add(br);
@@ -284,6 +300,29 @@ public final class RollbackEngine {
             effects.set(i, newEffects[i]);
             applied[i] = newApplied[i];
         }
+    }
+
+    /**
+     * "Transient fillers" — blocks that flowed / drifted / re-ignited
+     * into a cell after the user broke whatever was there originally.
+     * These don't represent player intent: water flowed in to fill a
+     * void, lava pooled from a neighbor, fire re-spread, snow drifted.
+     * The rollback can safely overwrite them without losing anything
+     * the operator cares about.
+     *
+     * <p>Note: AIR is intentionally NOT in this list. If the cell is
+     * already air it matches the typical {@code expected.material() =
+     * AIR} for a break event's pre-condition, so the strict-match path
+     * accepts it on its own. We only loosen for the case where actual
+     * differs from expected because of fluid/fire flow.
+     */
+    private static boolean isTransientFiller(org.bukkit.Material m) {
+        return m == org.bukkit.Material.WATER
+                || m == org.bukkit.Material.LAVA
+                || m == org.bukkit.Material.BUBBLE_COLUMN
+                || m == org.bukkit.Material.FIRE
+                || m == org.bukkit.Material.SOUL_FIRE
+                || m == org.bukkit.Material.SNOW;
     }
 
     /** Tracks the chunk currently being written so each chunk's
