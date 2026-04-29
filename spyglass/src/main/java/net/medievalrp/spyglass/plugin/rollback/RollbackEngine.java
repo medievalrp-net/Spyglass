@@ -202,10 +202,77 @@ public final class RollbackEngine {
                 ? FaweRollback.applyAll(faweCandidateEffects)
                 : new boolean[faweCandidateEffects.size()];
 
+        // Cluster the parallel arrays by chunk so Phase 3 walks effects
+        // in chunk order. Two wins:
+        //   1. Bukkit's getBlockAt() hits a cached chunk for consecutive
+        //      cells in the same chunk (fewer chunk-lookup hops).
+        //   2. We refresh each chunk's client-side packet ONCE when we
+        //      finish that chunk (see {@link ChunkRefreshState}), not
+        //      every batch. For a 1M-block rollback that's the
+        //      difference between a few hundred refresh packets and
+        //      thousands.
+        sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
+
         // Phase 3 — kick off the chunked per-block apply loop.
+        ChunkRefreshState refreshState = new ChunkRefreshState();
         applyBlockReplaceBatch(0, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                faweApplied, useFawe, sender, scheduler, batchSize, done);
+                faweApplied, useFawe, sender, scheduler, batchSize, done, refreshState);
         return done;
+    }
+
+    /**
+     * Cluster the parallel arrays so consecutive entries share a chunk.
+     * Stable sort: preserves the relative order of effects within the
+     * same chunk (so newest-first / oldest-first ordering is intact at
+     * the per-chunk granularity that matters for rollback semantics —
+     * within a chunk we apply in time order, across chunks we apply in
+     * arbitrary chunk order, and chunk independence means that's fine).
+     */
+    private static void sortParallelByChunk(List<Integer> indices,
+                                            List<RollbackEffect.BlockReplace> effects,
+                                            boolean[] applied) {
+        int n = indices.size();
+        if (n <= 1) {
+            return;
+        }
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        java.util.Arrays.sort(order, (a, b) -> {
+            BlockLocation la = effects.get(a).location();
+            BlockLocation lb = effects.get(b).location();
+            int c = la.worldId().compareTo(lb.worldId());
+            if (c != 0) return c;
+            c = Integer.compare(la.x() >> 4, lb.x() >> 4);
+            if (c != 0) return c;
+            c = Integer.compare(la.z() >> 4, lb.z() >> 4);
+            if (c != 0) return c;
+            return Integer.compare(a, b); // stable: preserve input order
+        });
+        // Rewrite arrays under the new permutation.
+        Integer[] newIndices = new Integer[n];
+        @SuppressWarnings("unchecked")
+        RollbackEffect.BlockReplace[] newEffects = new RollbackEffect.BlockReplace[n];
+        boolean[] newApplied = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            newIndices[i] = indices.get(order[i]);
+            newEffects[i] = effects.get(order[i]);
+            newApplied[i] = applied[order[i]];
+        }
+        for (int i = 0; i < n; i++) {
+            indices.set(i, newIndices[i]);
+            effects.set(i, newEffects[i]);
+            applied[i] = newApplied[i];
+        }
+    }
+
+    /** Tracks the chunk currently being written so each chunk's
+     *  client-refresh packet is sent exactly once — when we move to a
+     *  different chunk, or when the whole apply phase finishes. */
+    private static final class ChunkRefreshState {
+        UUID currentWorld;
+        int currentChunkX = Integer.MIN_VALUE;
+        int currentChunkZ = Integer.MIN_VALUE;
+        boolean pending = false;
     }
 
     /**
@@ -224,22 +291,38 @@ public final class RollbackEngine {
                                         CommandSender sender,
                                         ServiceSupport scheduler,
                                         int batchSize,
-                                        CompletableFuture<List<RollbackResult>> done) {
+                                        CompletableFuture<List<RollbackResult>> done,
+                                        ChunkRefreshState refreshState) {
         int total = faweCandidateIndices.size();
         int to = Math.min(from + batchSize, total);
-        // Track every chunk we touch this batch so we can force a full
-        // chunk-data resend at the end. Without this, hundreds of single
-        // block-change packets either get rate-limited by the client or
-        // arrive out of order, producing the classic "pixelated grain"
-        // look — the server has the right blocks, the client's render
-        // cache is wrong. Pushing a fresh chunk packet wipes the stale
-        // mesh in one shot. Map<worldId, Set<packed-chunk-coord>>.
-        Map<UUID, Set<Long>> chunksTouched = new HashMap<>();
+        // Effects are sorted by chunk (Phase 1.5) so consecutive entries
+        // share a chunk almost always. We send one chunk-refresh packet
+        // per chunk at the moment we leave it (i.e. the next effect is
+        // in a different chunk). At the end of all batches a final
+        // flush refreshes the last chunk.
         for (int i = from; i < to; i++) {
             int targetIndex = faweCandidateIndices.get(i);
             RollbackEffect.BlockReplace effect = faweCandidateEffects.get(i);
             BlockSnapshot replacement = effect.replacement();
             BlockLocation loc = effect.location();
+            int chunkX = loc.x() >> 4;
+            int chunkZ = loc.z() >> 4;
+            // Detect chunk boundary BEFORE applying — we want to flush
+            // the previous chunk's refresh packet only after its last
+            // effect has landed, which is the iteration BEFORE this one
+            // (state was left at "pending = true, currentChunk = prev"
+            // by the previous iteration's effect). Flushing here means
+            // the previous chunk's packet goes out as we transition.
+            boolean chunkChanged = !refreshState.pending
+                    || refreshState.currentWorld == null
+                    || !refreshState.currentWorld.equals(loc.worldId())
+                    || refreshState.currentChunkX != chunkX
+                    || refreshState.currentChunkZ != chunkZ;
+            if (chunkChanged && refreshState.pending) {
+                refreshChunk(refreshState.currentWorld,
+                        refreshState.currentChunkX, refreshState.currentChunkZ);
+                refreshState.pending = false;
+            }
             try {
                 if (useFawe && faweApplied[i]) {
                     if (!FaweRollback.isSimple(replacement)) {
@@ -252,8 +335,10 @@ public final class RollbackEngine {
                             .getBlockAt(loc.x(), loc.y(), loc.z());
                     applySnapshot(block, replacement);
                 }
-                long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
-                chunksTouched.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
+                refreshState.currentWorld = loc.worldId();
+                refreshState.currentChunkX = chunkX;
+                refreshState.currentChunkZ = chunkZ;
+                refreshState.pending = true;
                 RollbackEffect inverse = new RollbackEffect.BlockReplace(
                         loc, replacement, effect.expectedCurrent());
                 resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
@@ -263,56 +348,43 @@ public final class RollbackEngine {
                         new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
             }
         }
-        // End-of-batch chunk refresh for every chunk we wrote to. Paper's
-        // World.refreshChunk(x, z) sends the chunk-data packet to every
-        // viewer, replacing whatever stale mesh the client had built up.
-        refreshTouchedChunks(chunksTouched);
         if (sender instanceof Player p && total > batchSize && to < total) {
             p.sendActionBar(Component.text("Rolling back " + to + " / " + total));
         }
         if (to < total) {
             scheduler.onMainThreadLater(1L, () -> applyBlockReplaceBatch(
                     to, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                    faweApplied, useFawe, sender, scheduler, batchSize, done));
+                    faweApplied, useFawe, sender, scheduler, batchSize, done, refreshState));
         } else {
+            // Final flush: refresh the last chunk we wrote to before
+            // moving on. Phase 4/5 don't refresh chunks themselves.
+            if (refreshState.pending) {
+                refreshChunk(refreshState.currentWorld,
+                        refreshState.currentChunkX, refreshState.currentChunkZ);
+                refreshState.pending = false;
+            }
             runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
         }
     }
 
-    /**
-     * Force a fresh chunk-data packet on every chunk we wrote to in the
-     * batch. Cheap when called once per batch (~at most a few dozen
-     * chunks even on a wide rollback); expensive if called per block.
-     * Tolerates non-Bukkit test environments — if the world isn't
-     * resolvable or {@code refreshChunk} throws, we just log and move on
-     * (the worst case is the existing per-block-change packet path,
-     * which is what the user already had).
-     */
-    private void refreshTouchedChunks(Map<UUID, Set<Long>> chunksByWorld) {
-        for (Map.Entry<UUID, Set<Long>> entry : chunksByWorld.entrySet()) {
-            World world;
-            try {
-                world = Bukkit.getWorld(entry.getKey());
-            } catch (RuntimeException ex) {
-                continue;
+    /** Send a single chunk-data packet for one chunk. Catches errors
+     *  from non-Bukkit test envs / unloaded worlds and continues — the
+     *  fallback (per-block change packet from Bukkit) still gets the
+     *  cells right, refresh just makes it instant. */
+    private void refreshChunk(UUID worldId, int cx, int cz) {
+        if (worldId == null) {
+            return;
+        }
+        try {
+            World world = Bukkit.getWorld(worldId);
+            if (world != null) {
+                world.refreshChunk(cx, cz);
             }
-            if (world == null) {
-                continue;
-            }
-            for (long packed : entry.getValue()) {
-                int cx = (int) (packed >> 32);
-                int cz = (int) packed;
-                try {
-                    world.refreshChunk(cx, cz);
-                } catch (RuntimeException ex) {
-                    // Swallow — the client will eventually resync via
-                    // its own chunk reload (re-render-distance, leave
-                    // and rejoin the chunk, etc.). Don't fail the whole
-                    // rollback over a single chunk that wouldn't refresh.
-                }
-            }
+        } catch (RuntimeException ignored) {
+            // see refreshTouchedChunks comment — best-effort
         }
     }
+
 
     /**
      * Phase 4 (containers, single-tick) → Phase 5 (entity ops + custom

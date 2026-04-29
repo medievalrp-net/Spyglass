@@ -183,10 +183,19 @@ public final class ClickHouseRecordStore implements RecordStore {
             throw new RuntimeException("ClickHouse RowBinary write failed: " + ex.getMessage(), ex);
         }
 
+        // async_insert=1 + wait_for_async_insert=0 → fire-and-forget. CH
+        // server-side buffers our rows and flushes them in big efficient
+        // batches; we don't sit blocked on every INSERT round-trip. The
+        // 1-second window where data lives only in CH's buffer is covered
+        // by Spyglass's own WAL (which fsyncs each batch BEFORE the CH
+        // push), so a CH crash mid-buffer leaves a recoverable file on
+        // disk. Trade-off: insert latency ~3-5x faster during bursts;
+        // small risk of dup-on-retry if CH partially flushed before
+        // failing — acceptable for an audit log.
         InsertSettings settings = new InsertSettings()
                 .setDatabase(database)
                 .serverSetting("async_insert", "1")
-                .serverSetting("wait_for_async_insert", "1");
+                .serverSetting("wait_for_async_insert", "0");
         try (InsertResponse ignored = client.insert(
                 table,
                 new ByteArrayInputStream(buffer.toByteArray()),
