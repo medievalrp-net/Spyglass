@@ -41,7 +41,7 @@ function packet(id, t, body) {
 }
 function rcon(cmd) {
     return new Promise((res, rej) => {
-        const s = net.createConnection({ host: HOST, port: RCON_PORT, timeout: 30000 });
+        const s = net.createConnection({ host: HOST, port: RCON_PORT, timeout: 180000 });
         let st = 0;
         const bufs = [];
         s.on('error', rej);
@@ -54,7 +54,9 @@ function rcon(cmd) {
             const len = all.readInt32LE(0);
             if (all.length < len + 4) return;
             const id = all.readInt32LE(4);
-            const body = all.slice(12, 12 + len - 10).toString('utf8');
+            // Strip Minecraft chat color codes — easier downstream
+            // regex matching against cleaned text.
+            const body = all.slice(12, 12 + len - 10).toString('utf8').replace(/§./g, '');
             if (st === 0) {
                 if (id === -1) return rej('auth');
                 st = 1;
@@ -92,11 +94,10 @@ async function rconUp() {
 //  100³ = 1,000,000 (1M)
 //  136³ = 2,515,456 (2.5M)
 const SIZES = [
-    { name: '10K',   side: 22  },
-    { name: '100K',  side: 47  },
-    { name: '500K',  side: 80  },
-    { name: '1M',    side: 100 },
-    { name: '2.5M',  side: 136 },
+    // { name: '10K',   side: 22  },
+    // { name: '100K',  side: 47  },
+    // { name: '1M',    side: 100 },
+    { name: '2M',    side: 126 },
 ];
 
 const X_BASE = 14000, Y_BASE = 80, Z_BASE = 14000;
@@ -113,17 +114,64 @@ function tpsStats(samples) {
     };
 }
 
-async function captureBaselineTps() {
-    const samples = [];
-    for (let i = 0; i < 3; i++) {
-        try {
-            const r = await rcon('tps');
-            const m = r.match(/from last 1m, 5m, 15m:\s*[§a-f0-9]*?([\d.]+)/);
-            if (m) samples.push(parseFloat(m[1]));
-        } catch { }
-        await sleep(800);
+// /mspt gives us tick-time averages over 5s, 10s, 1m windows —
+// directly measures main-thread load. Returns the 5s avg in ms, or
+// null if it didn't parse. mspt < 50 ms = healthy 20 TPS;
+// mspt > 50 ms = real TPS drop.
+async function msptAvg5s() {
+    try {
+        const r = await rcon('mspt');
+        // "Server tick times (avg/min/max) from last 5s, 10s, 1m:
+        //  ◴ 1.7/0.6/7.4, 1.8/0.6/7.4, 1.6/0.5/21.0"
+        const m = r.match(/([\d.]+)\/([\d.]+)\/([\d.]+),/);
+        if (m) return parseFloat(m[1]);
+    } catch { }
+    return null;
+}
+
+// Compute TPS from mspt: TPS = 1000 / max(50, mspt). The MC tick
+// floor is 50 ms (= 20 TPS), so mspt under 50 still means 20 TPS.
+function tpsFromMspt(mspt) {
+    if (mspt == null) return null;
+    return 1000.0 / Math.max(50.0, mspt);
+}
+
+// Wait until the server has recovered to a healthy idle baseline
+// before timing anything. The //fill of a 2M-block cube punishes
+// the main thread for ~30+ s; sampling baseline before recovery
+// would give us a 14-TPS "baseline" instead of the real idle value.
+// Polls /mspt 5s-avg until we see {@code stableSamples} consecutive
+// readings under {@code maxMspt} AND within 0.5 ms of each other,
+// or {@code maxWaitMs} elapses.
+async function waitForStableBaseline({ maxMspt = 5.0, stableSamples = 4, maxWaitMs = 180000 } = {}) {
+    const t0 = Date.now();
+    const recent = [];
+    while (Date.now() - t0 < maxWaitMs) {
+        const m = await msptAvg5s();
+        if (m != null) {
+            recent.push(m);
+            if (recent.length > stableSamples) recent.shift();
+            if (recent.length === stableSamples) {
+                const lo = Math.min(...recent);
+                const hi = Math.max(...recent);
+                if (hi <= maxMspt && (hi - lo) <= 0.8) {
+                    return recent.slice();
+                }
+            }
+            log(`  baseline wait: mspt-5s avg = ${m.toFixed(2)} ms (need ${stableSamples} consecutive <= ${maxMspt} ms, span <= 0.8 ms)`);
+        }
+        await sleep(2000);
     }
-    return samples;
+    log(`  baseline wait: timed out after ${maxWaitMs / 1000}s, using last samples`);
+    return recent;
+}
+
+async function captureBaselineTps() {
+    const msptSamples = await waitForStableBaseline({ maxMspt: 5.0, stableSamples: 4, maxWaitMs: 180000 });
+    if (msptSamples.length === 0) {
+        return { mspt: [], tps: [20.0] };
+    }
+    return { mspt: msptSamples, tps: msptSamples.map(tpsFromMspt) };
 }
 
 // Run a chat command, watch chat for completion, sample TPS during.
@@ -132,14 +180,15 @@ async function timedOp(bot, command, completionRegex, timeout = 1800000) {
     const done = waitForChat(bot, completionRegex, timeout);
 
     const tpsDuring = [];
+    const msptDuring = [];
     let sampling = true;
     const sampler = (async () => {
         while (sampling) {
-            try {
-                const r = await rcon('tps');
-                const m = r.match(/from last 1m, 5m, 15m:\s*[§a-f0-9]*?([\d.]+)/);
-                if (m) tpsDuring.push(parseFloat(m[1]));
-            } catch { }
+            const m = await msptAvg5s();  // 5s avg — responsive within rollback window
+            if (m != null) {
+                msptDuring.push(m);
+                tpsDuring.push(tpsFromMspt(m));
+            }
             await sleep(1500);
         }
     })();
@@ -149,13 +198,19 @@ async function timedOp(bot, command, completionRegex, timeout = 1800000) {
     const ms = Date.now() - t0;
     sampling = false;
     await sampler;
-    return { ms, summary, tpsDuring };
+    return { ms, summary, tpsDuring, msptDuring };
 }
 
 const results = [];
 
+// Unique per-script-run suffix so each compare.js invocation gets its
+// own bot identity, isolating events from prior runs that still live in
+// the DB. Without this, t:30m pulls in accumulated history from earlier
+// tests and inflates rollback work.
+const RUN_TAG = Date.now().toString(36).slice(-5);
+
 async function runOneSize(s, idx) {
-    const botName = `cmp${s.name.toLowerCase().replace(/\./g, '')}`;
+    const botName = `cmp${s.name.toLowerCase().replace(/\./g, '')}_${RUN_TAG}`;
     const x0 = X_BASE, z0 = Z_BASE + idx * TEST_GAP;
     const x1 = x0 + s.side - 1, y1 = Y_BASE + s.side - 1, z1 = z0 + s.side - 1;
     const expected = s.side ** 3;
@@ -216,7 +271,9 @@ async function runOneSize(s, idx) {
 
     // Baseline TPS
     const baseline = await captureBaselineTps();
-    log(`  baseline TPS: ${baseline.join(', ')}`);
+    const msptStr = baseline.mspt.map(m => m.toFixed(2)).join(', ');
+    const tpsStr = baseline.tps.map(t => t.toFixed(2)).join(', ');
+    log(`  baseline mspt: [${msptStr}] ms  → TPS [${tpsStr}]`);
 
     const r = {
         size: s.name,
@@ -230,7 +287,7 @@ async function runOneSize(s, idx) {
         /(reversals|No results)/i);
     log(`  → ${sgRb.ms} ms (${(expected / (sgRb.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(sgRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring) };
+    r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring), mspt: tpsStats(sgRb.msptDuring) };
     await sleep(4000);
 
     // ── Spyglass undo SKIPPED ────────────────────────────────────
@@ -266,7 +323,7 @@ async function runOneSize(s, idx) {
         /(Rollback completed|No data found)/i);
     log(`  → ${cpRb.ms} ms (${(expected / (cpRb.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(cpRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.cpRollback = { ms: cpRb.ms, summary: cpRb.summary, tps: tpsStats(cpRb.tpsDuring) };
+    r.cpRollback = { ms: cpRb.ms, summary: cpRb.summary, tps: tpsStats(cpRb.tpsDuring), mspt: tpsStats(cpRb.msptDuring) };
     await sleep(4000);
 
     // ── CoreProtect restore (re-apply the breaks → back to air) ──
@@ -275,7 +332,7 @@ async function runOneSize(s, idx) {
         /(Restore completed|No data found)/i);
     log(`  → ${cpRestore.ms} ms (${(expected / (cpRestore.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(cpRestore.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.cpRestore = { ms: cpRestore.ms, summary: cpRestore.summary, tps: tpsStats(cpRestore.tpsDuring) };
+    r.cpRestore = { ms: cpRestore.ms, summary: cpRestore.summary, tps: tpsStats(cpRestore.tpsDuring), mspt: tpsStats(cpRestore.msptDuring) };
     await sleep(2000);
 
     bot.quit();
@@ -312,7 +369,18 @@ function printReport() {
         log(`${fmtSize} | ${fmtBlk} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
     }
     log('');
-    log('TPS during op (min / avg, baseline 20):');
+    log('mspt during op (max / avg ms — 50 ms = 20 TPS floor):');
+    log('Size  | SG rollback         | SG undo             | CP rollback         | CP restore');
+    log('------|---------------------|---------------------|---------------------|----------------');
+    for (const r of results) {
+        const fmt = (op) => {
+            if (!op || !op.mspt || op.mspt.n === 0) return 'n/a                ';
+            return `${op.mspt.max.toFixed(1).padStart(5)}/${op.mspt.avg.toFixed(1).padEnd(5)} ms (n=${op.mspt.n.toString().padEnd(2)})`;
+        };
+        log(`${r.size.padEnd(5)} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
+    }
+    log('');
+    log('TPS during op (min / avg, computed from mspt — capped at 20):');
     log('Size  | SG rollback     | SG undo         | CP rollback     | CP restore');
     log('------|-----------------|-----------------|-----------------|----------------');
     for (const r of results) {

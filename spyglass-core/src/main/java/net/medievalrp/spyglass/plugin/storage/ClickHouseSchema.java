@@ -125,8 +125,26 @@ final class ClickHouseSchema {
                 + "    server LowCardinality(String) DEFAULT '',\n"
                 + "    target Nullable(String),\n"
                 // --- Block events (Break / Place / Use) ---
-                + "    original_block Nullable(String) CODEC(ZSTD(1)),\n"
-                + "    new_block Nullable(String) CODEC(ZSTD(1)),\n"
+                // Materials and blockdata strings are heavily repetitive
+                // across rollback windows (a //replace stone air run is
+                // 100K rows of the same two materials and blockdatas).
+                // LowCardinality auto-dictionaries them so the actual
+                // disk + network footprint is one int per row instead of
+                // a 200-500-byte BSON BlockSnapshot blob. The "extras"
+                // column captures the rare per-block tile-entity state
+                // (container items, sign text, banner patterns, jukebox
+                // record, decorated-pot sherds) as a compact BSON blob,
+                // populated only when at least one of those fields is
+                // non-empty — NULL for the 99%+ of block events that are
+                // plain stone/dirt/air. This is the column shape behind
+                // the schema rewrite that closed the gap with
+                // coreprotect-clickhouse.
+                + "    before_material LowCardinality(Nullable(String)),\n"
+                + "    before_blockdata LowCardinality(Nullable(String)),\n"
+                + "    before_extras Nullable(String) CODEC(ZSTD(1)),\n"
+                + "    after_material LowCardinality(Nullable(String)),\n"
+                + "    after_blockdata LowCardinality(Nullable(String)),\n"
+                + "    after_extras Nullable(String) CODEC(ZSTD(1)),\n"
                 // --- Container events ---
                 + "    container_type LowCardinality(Nullable(String)),\n"
                 + "    slot Nullable(Int32),\n"
