@@ -86,7 +86,14 @@ public record SpyglassConfig(
                         root.node("limits", "rollback-batch-size").getInt(4_000),
                         Duration.parse(root.node("limits", "rollback-flush-timeout").getString("30s")),
                         root.node("limits", "rollback-page-size").getInt(20_000),
-                        root.node("limits", "rollback-undo-cap").getInt(5_000_000)),
+                        root.node("limits", "rollback-undo-cap").getInt(5_000_000),
+                        // Tick-budget cap for the per-tick world-write phase.
+                        // 50 ms = one full tick. Default 15 ms (~30% of a
+                        // tick) keeps server TPS at or near 20 even during
+                        // a multi-million-block rollback. Operators on
+                        // dedicated rollback windows can raise it for
+                        // faster wall-clock at the cost of TPS.
+                        root.node("limits", "rollback-tick-budget-ms").getLong(15L)),
                 Map.copyOf(events),
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
                 new Server(root.node("server", "name").getString("default")));
@@ -205,7 +212,8 @@ public record SpyglassConfig(
 
     public record Limits(int maxRadius, int searchResult, int rollbackResult, int chatDump,
                          int rollbackBatchSize, Duration rollbackFlushTimeout,
-                         int rollbackPageSize, int rollbackUndoCap) {
+                         int rollbackPageSize, int rollbackUndoCap,
+                         long rollbackTickBudgetMs) {
     }
 
     public record EventSettings(boolean enabled, String pastTense) {
