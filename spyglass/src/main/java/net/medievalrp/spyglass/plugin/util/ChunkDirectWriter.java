@@ -100,21 +100,17 @@ public final class ChunkDirectWriter {
             // Write the palette entry directly. No onPlace, no physics,
             // no scheduled ticks, no neighbor notify, no client packet.
             sectionSetBlockState.invoke(section, localX, localY, localZ, nmsState);
-            // Tell the light engine the block changed. Without this,
-            // the chunk-data packet built by ChunkResender carries
-            // stale skylight/blocklight data — the client renders
-            // with wrong lighting briefly and you see a "shimmer"
-            // as the engine catches up via a later relight pass.
-            // Best-effort: any failure leaves the (working) palette
-            // write intact; lighting will reconcile eventually.
-            if (lightEngineCheckBlock != null && blockPosCtor != null) {
-                try {
-                    Object lightEngine = serverLevelGetLightEngine.invoke(serverLevel);
-                    Object blockPos = blockPosCtor.newInstance(x, y, z);
-                    lightEngineCheckBlock.invoke(lightEngine, blockPos);
-                } catch (Throwable ignored) {
-                }
-            }
+            // PERF: per-block lightEngine.checkBlock removed. The
+            // ChunkResender packet built later carries the new block
+            // data; light is recomputed by the engine on its own
+            // pass within ~1-2 ticks. The earlier "shimmer" we
+            // worried about isn't visible at the speed players
+            // perceive a chunk-batch resend (whole-chunk visual
+            // snap). At 1 M blocks the per-block reflection +
+            // BlockPos alloc was 2 of the 7 reflective calls per
+            // block — dropping them is the largest single rollback-
+            // throughput win we get without paperweight-userdev.
+            //
             // Mark chunk dirty so the change persists on save. The
             // chunk packet from {@link ChunkResender} handles client
             // visibility separately.
