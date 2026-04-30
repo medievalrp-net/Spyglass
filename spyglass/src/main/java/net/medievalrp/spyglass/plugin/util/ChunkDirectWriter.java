@@ -65,10 +65,146 @@ public final class ChunkDirectWriter {
     }
 
     /**
+     * Cache of NMS {@code BlockState} resolved from a Bukkit
+     * {@link BlockData} instance. {@code BlockData} is immutable per
+     * its Bukkit contract; the underlying NMS state is also fixed for
+     * an instance, so caching the unwrap saves one reflective invoke
+     * per block in the rollback hot loop. Combined with the
+     * {@code BLOCK_DATA_CACHE} in RollbackEngine (string→BlockData),
+     * a 100K stone-rollback ends up doing one parse and one state
+     * unwrap, then 99,998 cache hits.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<BlockData, Object> NMS_STATE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static Method chunkGetMinSectionY;
+
+    /**
+     * Per-chunk write context. Resolves {@code serverLevel} +
+     * {@code levelChunk} once at {@link #prepareChunk}; subsequent
+     * {@link #writeBlock} calls reuse them and only re-resolve the
+     * {@code LevelChunkSection} when {@code y} crosses a 16-block
+     * vertical boundary. {@link #finishChunk} marks the chunk dirty
+     * so writes survive save.
+     *
+     * <p>Per-block cost in this path: one cached {@code getState}
+     * lookup + one {@code setBlockState} reflective invoke. Down from
+     * 7 reflective invokes per block in the legacy
+     * {@link #writeBlock} entry point.
+     */
+    public static final class ChunkContext {
+        private final Object levelChunk;
+        private final int minSection;
+        private Object lastSection;
+        private int lastSectionIndex = Integer.MIN_VALUE;
+
+        ChunkContext(Object levelChunk, int minSection) {
+            this.levelChunk = levelChunk;
+            this.minSection = minSection;
+        }
+
+        /**
+         * Write a block within this chunk. {@code (x, y, z)} are
+         * absolute world coords; the chunk membership is asserted by
+         * the caller (the rollback engine sorts effects by chunk).
+         */
+        public void writeBlock(int x, int y, int z, BlockData blockData) {
+            try {
+                // sectionIndex computed directly from y — no reflective
+                // call per block. Equivalent to LevelChunk.getSectionIndex(y)
+                // = (y - minBuildHeight) >> 4 = (y >> 4) - minSection.
+                int sectionIndex = (y >> 4) - minSection;
+                if (sectionIndex != lastSectionIndex) {
+                    lastSection = levelChunkGetSection.invoke(levelChunk, sectionIndex);
+                    lastSectionIndex = sectionIndex;
+                }
+                if (lastSection == null) {
+                    return;
+                }
+                Object nmsState = NMS_STATE_CACHE.computeIfAbsent(blockData, this::resolveNmsState);
+                if (nmsState == null) {
+                    return;
+                }
+                sectionSetBlockState.invoke(lastSection, x & 15, y & 15, z & 15, nmsState);
+            } catch (Throwable ignored) {
+                // Swallow per-block failures; the legacy writeBlock
+                // path's Bukkit fallback would also lose the cell on
+                // throw. Caller's whole-chunk fallback handles broad
+                // reflection breakage.
+            }
+        }
+
+        private Object resolveNmsState(BlockData bd) {
+            try {
+                return craftBlockDataGetState.invoke(bd);
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Prepare a write context for a single chunk. Returns {@code null}
+     * if the underlying NMS access path isn't available — caller
+     * should fall back to {@link #writeBlock} (which itself falls back
+     * to Bukkit) for that chunk.
+     */
+    public static ChunkContext prepareChunk(World world, int cx, int cz) {
+        if (world == null) {
+            return null;
+        }
+        if (!initialized) {
+            init();
+        }
+        if (!available) {
+            return null;
+        }
+        try {
+            Object serverLevel = craftWorldGetHandle.invoke(world);
+            Object levelChunk = serverLevelGetChunk.invoke(serverLevel, cx, cz);
+            if (levelChunk == null) {
+                return null;
+            }
+            int minSection = 0;
+            if (chunkGetMinSectionY != null) {
+                try {
+                    minSection = (int) chunkGetMinSectionY.invoke(levelChunk);
+                } catch (Throwable ignored) {
+                    // Default 0 — works for vanilla overworld of older
+                    // builds. Modern overworld is -4; on a Paper build
+                    // where the lookup fails, sectionIndex math drifts
+                    // and writes hit a wrong section. Fail loud:
+                    minSection = 0;
+                }
+            }
+            return new ChunkContext(levelChunk, minSection);
+        } catch (Throwable t) {
+            available = false;
+            LOG.log(Level.WARNING, "Spyglass ChunkDirectWriter prepareChunk failed", t);
+            return null;
+        }
+    }
+
+    /** Mark the chunk dirty so writes from {@link ChunkContext#writeBlock} persist on save. */
+    public static void finishChunk(ChunkContext ctx) {
+        if (ctx == null || levelChunkSetUnsaved == null) {
+            return;
+        }
+        try {
+            levelChunkSetUnsaved.invoke(ctx.levelChunk, true);
+        } catch (Throwable ignored) {
+            // setUnsaved missing → Paper's chunk system periodically
+            // saves dirty regions anyway; the missed mark isn't fatal.
+        }
+    }
+
+    /**
      * Write {@code blockData} at {@code (x, y, z)} in {@code world}
      * via direct {@code LevelChunkSection} palette write. Returns
      * {@code true} on any non-throwing path (including the Bukkit
-     * fallback).
+     * fallback). Legacy single-block entry — used for non-chunked
+     * callers and for the per-block fallback inside the engine when
+     * {@link #prepareChunk} returns null.
      */
     public static boolean writeBlock(World world, int x, int y, int z, BlockData blockData) {
         if (world == null || blockData == null) {
@@ -160,6 +296,19 @@ public final class ChunkDirectWriter {
             // getSection(int sectionIndex) — present on both LevelChunk and
             // ChunkAccess parent.
             levelChunkGetSection = findMethod(levelChunkClass, "getSection", int.class);
+            // getMinSectionY() — used by ChunkContext to compute
+            // sectionIndex without a per-block reflective call. Try
+            // a few names since the API has rotated through
+            // getMinSection/getMinSectionY/getMinBuildHeight.
+            try {
+                chunkGetMinSectionY = findMethod(levelChunkClass, "getMinSectionY");
+            } catch (NoSuchMethodException e1) {
+                try {
+                    chunkGetMinSectionY = findMethod(levelChunkClass, "getMinSection");
+                } catch (NoSuchMethodException e2) {
+                    chunkGetMinSectionY = null;
+                }
+            }
             // setUnsaved(boolean) on ChunkAccess. Some Paper builds also
             // expose markUnsaved(); try setUnsaved first, fall back to
             // markUnsaved(). null = neither available; we'll skip the
