@@ -94,6 +94,7 @@ import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
+import net.medievalrp.spyglass.plugin.rollback.RollbackPhysicsBlocker;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
@@ -113,6 +114,15 @@ public final class SpyglassPlugin extends JavaPlugin {
 
     private AsyncRecorder recorder;
     private RecordStore recordStore;
+    /**
+     * Worker for the off-main-thread palette-write phase of the
+     * rollback engine. Held as a field so {@link #onDisable} can
+     * shutdown the thread cleanly on plugin unload — without this,
+     * the daemon worker leaks across {@code /reload} (it dies on
+     * JVM exit but hangs around for the lifetime of the running
+     * server otherwise).
+     */
+    private java.util.concurrent.ExecutorService worldWriteExecutor;
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
     private Executor queryExecutor;
@@ -312,6 +322,28 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         RollbackEngine engine = new RollbackEngine(recorder, support);
         engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
+        RollbackPhysicsBlocker physicsBlocker = new RollbackPhysicsBlocker();
+        getServer().getPluginManager().registerEvents(physicsBlocker, this);
+        engine.setPhysicsBlocker(physicsBlocker);
+        engine.setTickBudgetMs(config.limits().rollbackTickBudgetMs());
+        // Single-thread executor for the off-main-thread world-write
+        // phase. The apply path's bulk LevelChunkSection.setBlockState
+        // loop runs here so the main thread only handles the small
+        // post-processing (chunk packet, tile entities, inverse build)
+        // per chunk. Server TPS stays at ~20 even on multi-million-
+        // block rollbacks because we're no longer monopolizing the
+        // server thread for the whole rollback duration.
+        this.worldWriteExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "Spyglass-WorldWriter");
+            t.setDaemon(true);
+            t.setPriority(Thread.NORM_PRIORITY);
+            return t;
+        });
+        engine.setWorldWriteExecutor(this.worldWriteExecutor);
+        // Plugin reference so the engine can hold a chunk ticket per
+        // chunk during the async write phase — chunks pinned loaded
+        // until each chunk's main-thread post-processing completes.
+        engine.setChunkTicketHolder(this);
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
@@ -433,6 +465,24 @@ public final class SpyglassPlugin extends JavaPlugin {
                 recordStore.close();
             } catch (Exception ignored) {
             }
+        }
+        // Shut down the off-thread palette-write worker. Without this
+        // the worker thread survives across /reload and accumulates one
+        // leak per reload cycle until JVM exit. Wait briefly for any
+        // in-flight rollback to finish; if it doesn't, hard-kill the
+        // worker — the rollback completion path on the main thread
+        // would no longer have a Bukkit scheduler to run on anyway.
+        if (worldWriteExecutor != null) {
+            worldWriteExecutor.shutdown();
+            try {
+                if (!worldWriteExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    worldWriteExecutor.shutdownNow();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                worldWriteExecutor.shutdownNow();
+            }
+            worldWriteExecutor = null;
         }
         Bukkit.getServicesManager().unregisterAll(this);
     }
