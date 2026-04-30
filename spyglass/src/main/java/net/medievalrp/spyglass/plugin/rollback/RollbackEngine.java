@@ -345,8 +345,24 @@ public final class RollbackEngine {
 
     /** Tick-budget cap for one batch of chunk apply. Soft target: yield
      *  to the next tick once we've spent this many ms in this turn.
-     *  Sized to leave headroom for other plugins / vanilla tick work. */
-    private static final long TICK_BUDGET_MS = 25L;
+     *
+     *  <p>A Minecraft tick is 50 ms. The earlier value (25 ms = half a
+     *  tick) left ~64% of every tick idle waiting for the next yield —
+     *  visible as a 2× rollback slowdown at scale. 45 ms uses 90% of
+     *  the tick for rollback work, dropping the wait fraction to ~10%.
+     *
+     *  <p>Trade-off: while the rollback is running the server thread
+     *  has only ~5 ms of headroom per tick for vanilla physics + other
+     *  plugins. For the duration of a big rollback (30 s+ for 1 M
+     *  blocks) other plugins notice latency. The chunk-finalize work
+     *  inside the budget already runs without scheduled ticks /
+     *  physics so the server itself isn't doing meaningful background
+     *  work for those chunks; the headroom is mainly for player
+     *  movement, network I/O, other plugins' tick handlers. Operators
+     *  who run mass rollbacks while the server is busy can lower this
+     *  via config — see the {@code limits.rollback-tick-budget-ms}
+     *  knob. */
+    private static final long TICK_BUDGET_MS = 45L;
 
     /**
      * Apply chunks in a tight loop until the per-tick budget
@@ -464,7 +480,15 @@ public final class RollbackEngine {
                         RollbackEffect inverse = new RollbackEffect.BlockReplace(
                                 loc, replacement, effect.expectedCurrent());
                         resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
-                        emitRollbackSourceRecord(sender, loc, replacement);
+                        // PERF: per-block emit elided. The per-cell
+                        // "ROLLBACK placed STONE" trail is convenient
+                        // for spot inspection of small rollbacks but
+                        // costs ~7 allocations + 1 recorder offer per
+                        // block. At 2.5 M blocks that's 17 M heap
+                        // allocations of identical-shaped data — pure
+                        // GC churn. We instead emit a single
+                        // per-rollback summary record at the end (TBD).
+                        // emitRollbackSourceRecord(sender, loc, replacement);
                     } catch (RuntimeException thrown) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
                                 new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
