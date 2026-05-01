@@ -287,75 +287,76 @@ public final class RollbackEngine {
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
         boolean useFawe = FaweRollback.isAvailable();
 
-        // No precondition check — match CoreProtect semantics. CP
-        // unconditionally writes the "before" state; if a player has
-        // placed a different block in the area since the rollback
-        // target time, it gets overwritten. Spyglass used to skip
-        // those cells with BlockChanged but the per-block
-        // getType/getBlockData read was a full extra pass over every
-        // BlockReplace before any write started. Stripping it gets us
-        // to one pass total instead of two.
-        List<Integer> faweCandidateIndices = new ArrayList<>();
-        List<RollbackEffect.BlockReplace> faweCandidateEffects = new ArrayList<>();
-        for (int index = 0; index < effects.size(); index++) {
-            if (effects.get(index) instanceof RollbackEffect.BlockReplace br) {
-                faweCandidateIndices.add(index);
-                faweCandidateEffects.add(br);
-            }
-        }
-
-        // Register the rollback's bounding box with the physics blocker
-        // so freshly-restored sand/gravel doesn't convert to FallingBlock
-        // entities on the next tick. Single-world bounding box (rollbacks
-        // span one world per command). Released in whenComplete on the
-        // returned future, so cancel/error paths unregister too.
-        if (physicsBlocker != null && !faweCandidateEffects.isEmpty()) {
-            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-            UUID worldId = faweCandidateEffects.get(0).location().worldId();
-            for (RollbackEffect.BlockReplace br : faweCandidateEffects) {
-                BlockLocation l = br.location();
-                if (l.x() < minX) minX = l.x();
-                if (l.y() < minY) minY = l.y();
-                if (l.z() < minZ) minZ = l.z();
-                if (l.x() > maxX) maxX = l.x();
-                if (l.y() > maxY) maxY = l.y();
-                if (l.z() > maxZ) maxZ = l.z();
-            }
-            long handle = physicsBlocker.enter(worldId, minX, minY, minZ, maxX, maxY, maxZ);
-            done.whenComplete((r, t) -> physicsBlocker.exit(handle));
-        }
-
-        // Sort the candidate list BEFORE Phase 2 so WE/FAWE writes the
-        // blocks in (chunk, y-ascending) order. Critical for falling
-        // blocks: when the rollback restores a column whose support
-        // was destroyed AND gravity-affected blocks (sand, gravel,
-        // anvil, dragon eggs, concrete powder) above were knocked
-        // loose, the support layer has to land first — otherwise the
-        // gravel placed above an empty cell converts to a falling-
-        // block entity on the next world tick.
+        // Two-stage rollback contract:
+        //   STAGE 1 — pure compute: filter to BlockReplace, compute
+        //             physics-blocker bounding box, register the
+        //             physics-blocker region, allocate the parallel
+        //             arrays, sort by chunk. None of this touches
+        //             Bukkit/Mojang state — it's lists, primitive
+        //             arrays, and a ConcurrentHashMap put on the
+        //             physics blocker. Run off main thread when the
+        //             worker executor is wired.
         //
-        // The sort key (worldId, chunkX, chunkZ, y) keeps each chunk's
-        // cells contiguous so Phase 3's chunk-refresh dedup still
-        // works, and the y-asc order within a chunk is what fixes the
-        // gravel/sand bug. Stable: equal keys preserve input order.
+        //   STAGE 2 — Bukkit-touching: applyChunkByChunk + per-chunk
+        //             tile-entity state, chunk packet broadcast,
+        //             scheduler tick yields. These have hard
+        //             main-thread requirements (Bukkit BlockState
+        //             API, ChunkHolder packet system) and stay on
+        //             the server thread by hopping back via
+        //             scheduler.onMainThread.
         //
-        // {@code faweApplied} is all-false at this point so we can sort
-        // the parallel arrays freely — Phase 2 produces faweApplied
-        // aligned with the sorted effects.
-        boolean[] faweApplied = new boolean[faweCandidateEffects.size()];
-        sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
+        // At 10M effects, stage 1 alone is hundreds of ms of pure
+        // CPU on lists / sort — far too long for the server tick.
+        // The 1.94% main-thread cost the spark profile flagged was
+        // the sort; the filter+bbox loops are the same shape and
+        // would also have been visible at scale. With this split,
+        // stage 1 cost on the server thread drops to ~zero
+        // (dispatch + scheduling overhead).
+        Runnable stageOne = () -> {
+            List<Integer> faweCandidateIndices = new ArrayList<>();
+            List<RollbackEffect.BlockReplace> faweCandidateEffects = new ArrayList<>();
+            for (int index = 0; index < effects.size(); index++) {
+                if (effects.get(index) instanceof RollbackEffect.BlockReplace br) {
+                    faweCandidateIndices.add(index);
+                    faweCandidateEffects.add(br);
+                }
+            }
 
-        // Chunk-by-chunk apply. For each chunk in the sorted effect
-        // list, walk its effects, write each block via Bukkit
-        // {@code Block.setBlockData(data, false)}, and apply tile-
-        // entity state for non-simple blocks. Paper coalesces all
-        // same-tick block changes into multi-block-change packets
-        // per chunk section at end-of-tick, so the client sees a
-        // wave of chunks finalizing in batches. Yields between chunks
-        // once the per-tick block budget is hit.
-        applyChunkByChunk(0, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                faweApplied, useFawe, sender, scheduler, batchSize, done, cancelFlag);
+            if (physicsBlocker != null && !faweCandidateEffects.isEmpty()) {
+                int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+                int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                UUID worldId = faweCandidateEffects.get(0).location().worldId();
+                for (RollbackEffect.BlockReplace br : faweCandidateEffects) {
+                    BlockLocation l = br.location();
+                    if (l.x() < minX) minX = l.x();
+                    if (l.y() < minY) minY = l.y();
+                    if (l.z() < minZ) minZ = l.z();
+                    if (l.x() > maxX) maxX = l.x();
+                    if (l.y() > maxY) maxY = l.y();
+                    if (l.z() > maxZ) maxZ = l.z();
+                }
+                long handle = physicsBlocker.enter(worldId, minX, minY, minZ, maxX, maxY, maxZ);
+                done.whenComplete((r, t) -> physicsBlocker.exit(handle));
+            }
+
+            boolean[] faweApplied = new boolean[faweCandidateEffects.size()];
+            sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
+
+            // Hop to main thread for stage 2.
+            scheduler.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
+                    faweCandidateIndices, faweCandidateEffects, faweApplied,
+                    useFawe, sender, scheduler, batchSize, done, cancelFlag));
+        };
+
+        if (worldWriteExecutor != null) {
+            java.util.concurrent.CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+        } else {
+            // Sync fallback (tests / engine without an executor wired).
+            // scheduler.onMainThread under SynchronousServiceSupport
+            // runs inline, so this remains a single-threaded chain
+            // that completes the future before returning.
+            stageOne.run();
+        }
         return done;
     }
 
@@ -658,129 +659,173 @@ public final class RollbackEngine {
                                     CompletableFuture<List<RollbackResult>> done,
                                     java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         int total = faweCandidateIndices.size();
-        // Walk to chunk boundary.
-        BlockLocation startLoc = faweCandidateEffects.get(from).location();
-        UUID worldId = startLoc.worldId();
-        int cx = startLoc.x() >> 4;
-        int cz = startLoc.z() >> 4;
-        int chunkEnd = from + 1;
-        while (chunkEnd < total) {
-            BlockLocation l = faweCandidateEffects.get(chunkEnd).location();
-            if (!l.worldId().equals(worldId)
-                    || (l.x() >> 4) != cx
-                    || (l.z() >> 4) != cz) {
-                break;
-            }
-            chunkEnd++;
-        }
-
-        World world = Bukkit.getWorld(worldId);
-        if (world == null) {
-            for (int j = from; j < chunkEnd; j++) {
-                int targetIndex = faweCandidateIndices.get(j);
-                RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
-                resultArray[targetIndex] = new RollbackResult.Skipped(eff,
-                        new RollbackReason.InvalidLocation(eff.location()));
-            }
-            scheduleNextChunk(chunkEnd, effects, resultArray, faweCandidateIndices,
-                    faweCandidateEffects, faweApplied, useFawe,
-                    sender, scheduler, batchSize, done, cancelFlag);
-            return;
-        }
-
-        // Snapshot the per-block data we need off-thread. Pulling from
-        // the lists once on the calling thread (main) avoids any
-        // concurrent-modification questions about the parallel arrays.
-        final int chunkSize = chunkEnd - from;
-        final int chunkStart = from;
-        final int[] xs = new int[chunkSize];
-        final int[] ys = new int[chunkSize];
-        final int[] zs = new int[chunkSize];
-        final org.bukkit.block.data.BlockData[] writes = new org.bukkit.block.data.BlockData[chunkSize];
-        for (int j = 0; j < chunkSize; j++) {
-            RollbackEffect.BlockReplace effect = faweCandidateEffects.get(chunkStart + j);
-            BlockLocation loc = effect.location();
-            xs[j] = loc.x();
-            ys[j] = loc.y();
-            zs[j] = loc.z();
-            try {
-                writes[j] = blockDataFor(effect.replacement().blockData());
-            } catch (RuntimeException thrown) {
-                // Bad blockData string — leave entry null; the off-
-                // thread loop skips nulls and the main-thread
-                // post-process marks the cell Skipped.
-                writes[j] = null;
-            }
-        }
-
-        // Lambda-effective-final captures of mutable iteration vars.
-        final int chunkEndFinal = chunkEnd;
-        final int totalFinal = total;
-
-        // Pin the chunk loaded for the lifetime of this chunk's apply.
-        // Without this, the chunk system is free to unload between our
-        // snapshot above and the worker's writes below — those writes
-        // would silently no-op (prepareChunk returns null on an
-        // unloaded chunk). Released after the main-thread post-process
-        // completes, in the whenComplete finally block.
+        // Two-stage per-chunk pipeline:
+        //   STAGE 1 — pure compute / NMS palette write. Runs on
+        //             worldWriteExecutor. Walks chunk boundary,
+        //             Bukkit.getWorld lookup (thread-safe), per-block
+        //             BlockData resolution via blockDataFor cache,
+        //             addPluginChunkTicket (thread-safe per Paper),
+        //             prepareChunk + N×LevelChunkSection.setBlockState
+        //             (PalettedContainer is per-section locked).
+        //
+        //   STAGE 2 — Bukkit-touching post-processing. Hops to main
+        //             thread for: applyTileEntityState (BlockState
+        //             API), ChunkResender packet broadcast,
+        //             scheduleNextChunk (Bukkit scheduler), the
+        //             optional player action bar update.
+        //
+        // Server-thread cost per chunk drops to whatever the post
+        // loop needs (~2 ms typical: tile entity dispatch + packet
+        // build + N×Applied alloc). Everything else runs on the
+        // worker.
         final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
-        final boolean ticketAdded;
-        if (ticketHolder != null) {
-            boolean added;
-            try {
-                added = world.addPluginChunkTicket(cx, cz, ticketHolder);
-            } catch (Throwable t) {
-                added = false;
-            }
-            ticketAdded = added;
-        } else {
-            ticketAdded = false;
-        }
-
-        // Off-thread: bulk palette writes. PalettedContainer is
-        // internally locked per section, so concurrent main-thread
-        // chunk reads stay consistent.
         java.util.concurrent.CompletableFuture
                 .supplyAsync(() -> {
-                    ChunkDirectWriter.ChunkContext ctx =
-                            ChunkDirectWriter.prepareChunk(world, cx, cz);
-                    if (ctx == null) {
-                        return null;
+                    BlockLocation startLoc = faweCandidateEffects.get(from).location();
+                    UUID worldId = startLoc.worldId();
+                    int cx = startLoc.x() >> 4;
+                    int cz = startLoc.z() >> 4;
+                    int chunkEnd = from + 1;
+                    while (chunkEnd < total) {
+                        BlockLocation l = faweCandidateEffects.get(chunkEnd).location();
+                        if (!l.worldId().equals(worldId)
+                                || (l.x() >> 4) != cx
+                                || (l.z() >> 4) != cz) {
+                            break;
+                        }
+                        chunkEnd++;
                     }
+
+                    World world = Bukkit.getWorld(worldId);
+                    if (world == null) {
+                        // Mark all skipped from the worker — resultArray
+                        // writes are visible to main thread after the
+                        // future completes (happens-before on
+                        // future.complete → whenComplete callback).
+                        for (int j = from; j < chunkEnd; j++) {
+                            int targetIndex = faweCandidateIndices.get(j);
+                            RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
+                            resultArray[targetIndex] = new RollbackResult.Skipped(eff,
+                                    new RollbackReason.InvalidLocation(eff.location()));
+                        }
+                        return new ChunkPipelineResult(null, cx, cz, chunkEnd, null, null, false, null);
+                    }
+
+                    int chunkSize = chunkEnd - from;
+                    org.bukkit.block.data.BlockData[] writes =
+                            new org.bukkit.block.data.BlockData[chunkSize];
                     for (int j = 0; j < chunkSize; j++) {
-                        if (writes[j] != null) {
-                            ctx.writeBlock(xs[j], ys[j], zs[j], writes[j]);
+                        try {
+                            writes[j] = blockDataFor(
+                                    faweCandidateEffects.get(from + j).replacement().blockData());
+                        } catch (RuntimeException thrown) {
+                            writes[j] = null;
                         }
                     }
-                    return ctx;
+
+                    // Pin the chunk loaded for the lifetime of this
+                    // chunk's apply. Paper documents addPluginChunkTicket
+                    // as thread-safe (uses the chunk system's own
+                    // per-chunk lock). Released in stage 2.
+                    boolean ticketAdded = false;
+                    if (ticketHolder != null) {
+                        try {
+                            ticketAdded = world.addPluginChunkTicket(cx, cz, ticketHolder);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+
+                    // Bulk palette writes + Applied/inverse build for
+                    // simple blocks (the 99%+ case). PalettedContainer
+                    // is internally locked per section so concurrent
+                    // main-thread reads stay consistent.
+                    //
+                    // The fold-in here is the optimization the recent
+                    // spark profile hinted at — calling
+                    // FaweRollback.isSimple on the main thread for 10M
+                    // blocks lit up signFront() / containerItems() /
+                    // bannerPatterns() etc. as hot non-inlinable
+                    // method-chains on the server tick. By doing the
+                    // isSimple check + Applied/inverse alloc here on
+                    // the worker, main thread only sees the small set
+                    // of blocks that actually need tile-entity work.
+                    ChunkDirectWriter.ChunkContext ctx =
+                            ChunkDirectWriter.prepareChunk(world, cx, cz);
+                    java.util.BitSet nonSimpleMask = new java.util.BitSet(chunkSize);
+                    for (int j = 0; j < chunkSize; j++) {
+                        int targetIndex = faweCandidateIndices.get(from + j);
+                        RollbackEffect.BlockReplace effect = faweCandidateEffects.get(from + j);
+                        if (writes[j] == null) {
+                            resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                                    new RollbackReason.Error("Unparseable blockdata"));
+                            continue;
+                        }
+                        BlockLocation loc = effect.location();
+                        BlockSnapshot replacement = effect.replacement();
+                        if (ctx != null) {
+                            ctx.writeBlock(loc.x(), loc.y(), loc.z(), writes[j]);
+                        }
+                        if (FaweRollback.isSimple(replacement)) {
+                            // No tile-entity state to round-trip — the
+                            // palette write above is the whole apply.
+                            // Build the inverse + Applied result here so
+                            // main thread doesn't have to.
+                            RollbackEffect inverse = new RollbackEffect.BlockReplace(
+                                    loc, replacement, effect.expectedCurrent());
+                            resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
+                        } else {
+                            // Container / sign / banner / jukebox /
+                            // decorated pot — main thread has to call
+                            // BlockState.update for the tile-entity
+                            // payload. Defer to stage 3.
+                            nonSimpleMask.set(j);
+                        }
+                    }
+
+                    return new ChunkPipelineResult(world, cx, cz, chunkEnd, ctx, writes, ticketAdded, nonSimpleMask);
                 }, worldWriteExecutor)
-                // Whatever thread the executor uses, hop back to main
-                // for the post-processing — Bukkit-API calls
-                // (applyTileEntityState's BlockState.update,
-                // ChunkResender's packet send) are main-thread-only.
-                .whenComplete((ctx, throwable) -> scheduler.onMainThread(() -> {
+                // Hop back to main for stage 2.
+                .whenComplete((result, throwable) -> scheduler.onMainThread(() -> {
+                    if (result == null || result.world() == null) {
+                        // Worker either threw or marked the whole chunk
+                        // skipped — either way, just advance.
+                        int next = result != null ? result.chunkEnd() : from + 1;
+                        scheduleNextChunk(next, effects, resultArray, faweCandidateIndices,
+                                faweCandidateEffects, faweApplied, useFawe,
+                                sender, scheduler, batchSize, done, cancelFlag);
+                        return;
+                    }
+                    World world = result.world();
+                    int cx = result.cx();
+                    int cz = result.cz();
+                    int chunkEnd = result.chunkEnd();
+                    ChunkDirectWriter.ChunkContext ctx = result.ctx();
+                    org.bukkit.block.data.BlockData[] writes = result.writes();
+                    java.util.BitSet nonSimpleMask = result.nonSimpleMask();
                     try {
-                        for (int j = 0; j < chunkSize; j++) {
-                            int targetIndex = faweCandidateIndices.get(chunkStart + j);
-                            RollbackEffect.BlockReplace effect = faweCandidateEffects.get(chunkStart + j);
+                        // Only iterate the (typically empty) set of
+                        // non-simple blocks: containers, signs,
+                        // banners, jukeboxes, decorated pots. Worker
+                        // already wrote palette + Applied for every
+                        // simple block. Main thread does only the
+                        // BlockState.update tile-entity round-trip
+                        // here.
+                        for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
+                                j = nonSimpleMask.nextSetBit(j + 1)) {
+                            int targetIndex = faweCandidateIndices.get(from + j);
+                            RollbackEffect.BlockReplace effect = faweCandidateEffects.get(from + j);
                             BlockSnapshot replacement = effect.replacement();
                             BlockLocation loc = effect.location();
                             try {
-                                if (writes[j] == null) {
-                                    resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                                            new RollbackReason.Error("Unparseable blockdata"));
-                                    continue;
-                                }
                                 if (ctx == null) {
-                                    // prepareChunk failed — fall back
-                                    // to per-block legacy path on main
-                                    // thread for this chunk.
-                                    ChunkDirectWriter.writeBlock(world, loc.x(), loc.y(), loc.z(), writes[j]);
+                                    // prepareChunk failed on worker —
+                                    // legacy single-block fallback on
+                                    // main thread for this cell.
+                                    ChunkDirectWriter.writeBlock(
+                                            world, loc.x(), loc.y(), loc.z(), writes[j]);
                                 }
-                                if (!FaweRollback.isSimple(replacement)) {
-                                    Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
-                                    applyTileEntityState(block, replacement);
-                                }
+                                Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
+                                applyTileEntityState(block, replacement);
                                 RollbackEffect inverse = new RollbackEffect.BlockReplace(
                                         loc, replacement, effect.expectedCurrent());
                                 resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
@@ -794,27 +839,46 @@ public final class RollbackEngine {
                             ChunkResender.resend(world, cx, cz);
                         } catch (RuntimeException ignored) {
                         }
-                        if (sender instanceof Player p && totalFinal > 0) {
-                            p.sendActionBar(Component.text("Rolling back " + chunkEndFinal + " / " + totalFinal));
+                        if (sender instanceof Player p && total > 0) {
+                            p.sendActionBar(Component.text("Rolling back " + chunkEnd + " / " + total));
                         }
                     } finally {
-                        // Release the ticket — chunk is free to unload
-                        // again. (We only release if we were the ones
-                        // who added it; tickets are reference-counted
-                        // per-plugin, so removing one we didn't add
-                        // would harmlessly return false but is still
-                        // wasted work.)
-                        if (ticketAdded && ticketHolder != null) {
+                        if (result.ticketAdded() && ticketHolder != null) {
                             try {
                                 world.removePluginChunkTicket(cx, cz, ticketHolder);
                             } catch (Throwable ignored) {
                             }
                         }
-                        scheduleNextChunk(chunkEndFinal, effects, resultArray, faweCandidateIndices,
+                        scheduleNextChunk(chunkEnd, effects, resultArray, faweCandidateIndices,
                                 faweCandidateEffects, faweApplied, useFawe,
                                 sender, scheduler, batchSize, done, cancelFlag);
                     }
                 }));
+    }
+
+    /**
+     * Result handed from the worker thread back to main thread for a
+     * single chunk's apply. Carries everything stage 3 needs for the
+     * narrow set of Bukkit-API operations that have to run on the
+     * server tick — tile-entity state for non-simple blocks (the
+     * indices of which are the only set bits in {@code nonSimpleMask}),
+     * the chunk-update packet broadcast, the {@code finishChunk}
+     * markUnsaved, and the per-chunk ticket release.
+     *
+     * <p>Field {@code world} is null when the worker bailed because
+     * the world is no longer loaded (already-marked-skipped blocks);
+     * main thread fast-paths through to scheduleNextChunk in that
+     * case.
+     */
+    private record ChunkPipelineResult(
+            World world,
+            int cx,
+            int cz,
+            int chunkEnd,
+            ChunkDirectWriter.ChunkContext ctx,
+            org.bukkit.block.data.BlockData[] writes,
+            boolean ticketAdded,
+            java.util.BitSet nonSimpleMask) {
     }
 
     /**
