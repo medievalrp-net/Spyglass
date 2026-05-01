@@ -538,6 +538,19 @@ public final class ClickHouseRecordStore implements RecordStore {
         sql.append(" ORDER BY occurred ").append(newestFirst ? "DESC" : "ASC")
                 .append(", id ").append(newestFirst ? "DESC" : "ASC")
                 .append(" LIMIT ").append(pageSize);
+        // CH defaults max_memory_usage to 1 GiB on Pelican-managed
+        // installs. A 10M-row LIMIT with sort blows past that during
+        // MergeSortingTransform / ParallelFormattingOutputFormat. Raise
+        // the per-query budget AND enable spill-to-disk so even an
+        // operator-asked-for 10M rollback completes without an OOM
+        // exception bouncing through the retry loop. The numbers here
+        // are per-query soft caps; the CH server's hard limit
+        // (max_server_memory_usage) still applies.
+        sql.append(" SETTINGS")
+                .append(" max_memory_usage = 8000000000")
+                .append(", max_memory_usage_for_user = 0")
+                .append(", max_bytes_before_external_sort = 1073741824")
+                .append(", max_bytes_before_external_group_by = 1073741824");
 
         // Streaming reader — pulls rows from CH as they arrive instead
         // of materializing every GenericRecord up front. The OOM at
