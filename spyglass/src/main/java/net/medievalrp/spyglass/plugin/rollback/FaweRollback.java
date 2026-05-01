@@ -122,19 +122,23 @@ final class FaweRollback {
     }
 
     /**
-     * Cheap predicate the engine uses to split effects between the FAWE
-     * batch path and the per-block path. A snapshot is "simple" when no
-     * tile-entity state needs re-application via Bukkit's
-     * {@code BlockState.update}: empty containers, empty sign text,
-     * empty banner patterns, no jukebox record. FAWE only writes the
-     * {@code material + blockData}, so anything else has to fall through.
+     * Cheap predicate the engine uses to split effects between the
+     * fast palette-only path and the slow tile-entity-bearing path.
+     * A snapshot is "simple" when no tile-entity state needs
+     * re-application via Bukkit's {@code BlockState.update} — empty
+     * containers, empty sign text, empty banner patterns, no jukebox
+     * record, no decorated-pot sherds.
+     *
+     * <p>Backed by {@link BlockSnapshot#simple} which the record's
+     * compact constructor computes once at construction. Calling this
+     * is a single field load. The earlier inline 6-method-call chain
+     * lit up as hot frames in the spark profile during 10M-block
+     * rollbacks (signFront / containerItems / bannerPatterns
+     * accessors don't reliably inline through six links of record
+     * components).
      */
     static boolean isSimple(BlockSnapshot snapshot) {
-        return snapshot.containerItems().isEmpty()
-                && snapshot.signFront().isEmpty()
-                && snapshot.signBack().isEmpty()
-                && snapshot.bannerPatterns().isEmpty()
-                && snapshot.jukeboxRecord() == null;
+        return snapshot.simple();
     }
 
     @SuppressWarnings("unused")
