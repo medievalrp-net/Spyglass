@@ -44,7 +44,8 @@ class UndoServiceTest {
                 4_000,       // rollbackBatchSize
                 Duration.parse("30s"),  // rollbackFlushTimeout
                 20_000,      // rollbackPageSize
-                5_000_000);  // rollbackUndoCap
+                5_000_000,   // rollbackUndoCap
+                40L);        // rollbackTickBudgetMs
         return mock(SpyglassConfig.class, invocation -> {
             if ("limits".equals(invocation.getMethod().getName())) return limits;
             return null;

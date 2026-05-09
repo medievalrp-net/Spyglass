@@ -65,8 +65,48 @@ final class ClickHouseSchema {
         // included it from the start.
         execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                 + " ADD COLUMN IF NOT EXISTS server LowCardinality(String) DEFAULT ''");
+        // One-shot migration: pre-chunked undo_history shape lacked
+        // operation_id / chunk_index / chunk_count. ORDER BY changed,
+        // so ALTER can't reshape the key — drop and recreate. Worst
+        // case is losing the in-flight 24 h undo window, which is
+        // acceptable for a schema migration.
+        if (hasLegacyUndoHistory(client, database)) {
+            execute(client, "DROP TABLE IF EXISTS " + undoHistoryTable(database));
+        }
         execute(client, buildUndoHistoryTable(database));
         execute(client, buildToolStatesTable(database));
+    }
+
+    /**
+     * {@code true} when an {@code undo_history} table exists in {@code
+     * database} that predates the chunked-row layout (no {@code
+     * operation_id} column). Used by {@link #ensure} to trigger the
+     * one-shot drop+recreate migration.
+     */
+    private static boolean hasLegacyUndoHistory(Client client, String database) {
+        // system.columns is queryable without privileged grants on a
+        // self-managed instance; a fresh install returns 0 in `total`
+        // because the table doesn't exist yet, which we treat as "not
+        // legacy" so the subsequent CREATE just makes the new shape.
+        String sql = "SELECT "
+                + "  countIf(name = 'operation_id') AS has_op, "
+                + "  count() AS total "
+                + "FROM system.columns "
+                + "WHERE database = '" + database.replace("'", "\\'") + "' "
+                + "  AND table = 'undo_history'";
+        try {
+            var rows = client.queryAll(sql);
+            if (rows.isEmpty()) {
+                return false;
+            }
+            var row = rows.get(0);
+            long total = row.getLong("total");
+            long hasOp = row.getLong("has_op");
+            // Table exists (total > 0) AND missing the new column → legacy.
+            return total > 0 && hasOp == 0;
+        } catch (Exception ex) {
+            throw new RuntimeException("Undo schema probe failed: " + ex.getMessage(), ex);
+        }
     }
 
     private static void execute(Client client, String sql) {
@@ -219,8 +259,26 @@ final class ClickHouseSchema {
     // ---------------------------------------------------------------
 
     private static String buildUndoHistoryTable(String database) {
+        // Chunked-row layout: a single rollback's inverse-effects list
+        // is split into N rows sharing one {@code operation_id}, with
+        // {@code chunk_index} 0..N-1 and {@code chunk_count = N}. The
+        // pre-chunk shape (one row per rollback, multi-GB
+        // inverse_effects column at 10M scale) blew the CH parser's
+        // 1 GiB chunk-allocation limit during INSERT VALUES, even
+        // before MergeTree write. Chunked rows keep every individual
+        // INSERT value bounded (~20 MB BSON / ~27 MB base64 at the
+        // 100k-effects-per-chunk default) so the parser path never
+        // sees a multi-GB literal.
+        //
+        // Primary key includes operation_id and chunk_index so each
+        // chunk row is independently key'd. ReplacingMergeTree(deleted)
+        // still works for tombstones — a deleted=1 row inserted with
+        // the same key collapses on next merge; pop() uses FINAL on
+        // read for immediate visibility.
         return "CREATE TABLE IF NOT EXISTS " + undoHistoryTable(database) + " (\n"
-                + "    id UUID,\n"
+                + "    operation_id UUID,\n"
+                + "    chunk_index UInt32,\n"
+                + "    chunk_count UInt32,\n"
                 + "    player_id UUID,\n"
                 + "    created_at DateTime64(3, 'UTC'),\n"
                 + "    operation_type LowCardinality(String),\n"
@@ -228,7 +286,7 @@ final class ClickHouseSchema {
                 + "    deleted UInt8 DEFAULT 0\n"
                 + ") ENGINE = ReplacingMergeTree(deleted)\n"
                 + "PARTITION BY toYYYYMM(created_at)\n"
-                + "ORDER BY (player_id, created_at, id)\n"
+                + "ORDER BY (player_id, created_at, operation_id, chunk_index)\n"
                 + "TTL toDateTime(created_at) + INTERVAL 1 DAY\n"
                 + "SETTINGS index_granularity = 8192";
     }
