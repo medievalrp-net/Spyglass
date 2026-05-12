@@ -52,8 +52,7 @@ public final class RollbackService {
     private final Logger logger;
     private final RollbackJobQueue jobQueue;
     private final RollbackResumeStore resumeStore;
-    /** Per-job parsed request, kept until the job runs (queue may
-     *  delay a job behind another). Removed inside {@link #runJob}. */
+    // Parsed request for each queued job, popped when the job runs.
     private final Map<UUID, JobContext> pendingContexts = new ConcurrentHashMap<>();
 
     public RollbackService(SpyglassApi api,
@@ -80,23 +79,12 @@ public final class RollbackService {
         this.resumeStore = resumeStore;
     }
 
-    /** Set up the queue's runner — must be called once after
-     *  construction so the queue can call back into us when a job
-     *  is dispatched. Done at plugin startup in {@code SpyglassPlugin}. */
     public void wireQueue() {
         jobQueue.setRunner(this::runJob);
     }
 
-    /**
-     * Re-submit a previously-interrupted rollback as a fresh job.
-     * The original query is re-parsed and dispatched through the
-     * queue. Idempotent: cells already rolled back skip with
-     * "block changed", remaining cells apply.
-     *
-     * <p>Returns true on successful enqueue. The saved marker is
-     * deleted only when the new job's normal terminal cleanup
-     * fires.
-     */
+    // Re-submit an interrupted rollback as a fresh job. Idempotent:
+    // already-applied cells skip with "block changed" on the re-run.
     public boolean resumeFromSaved(RollbackResumeStore.Saved saved, CommandSender sender) {
         QueryRequest request;
         try {
@@ -109,23 +97,15 @@ public final class RollbackService {
                     "Resume failed: " + ex.getMessage() + " (query: " + saved.query() + ")"));
             return false;
         }
-        // Treat the saved as a fresh job — new id, current sender
-        // gets the progress messages even if the original operator
-        // is offline. The resume marker for the OLD id is removed
-        // separately by the rbqueue handler so re-run failures
-        // don't lose the marker.
+        // Fresh job id so the current sender (which may differ from
+        // the original operator) gets progress messages.
         UUID operatorId = sender instanceof Player p ? p.getUniqueId() : null;
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operatorId, sender.getName(),
                 saved.query(), saved.mode(), Instant.now(), sender);
         RollbackMode rmode = saved.mode() == RollbackJob.Mode.RESTORE
                 ? RollbackMode.RESTORE : RollbackMode.ROLLBACK;
-        // Pass the saved cursor + counters so the new job picks up
-        // where the old one left off instead of re-running from the
-        // start. The engine's "block changed" precondition still
-        // skips already-applied cells, so it's idempotent — but
-        // re-querying the whole record set on a 2M-block rollback
-        // wastes a lot of ClickHouse work; the saved cursor jumps
-        // past those records entirely.
+        // Resume from the saved cursor so we don't re-query the
+        // already-applied prefix on big rollbacks.
         net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor = null;
         if (saved.cursor() != null) {
             startCursor = new net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor(
@@ -139,8 +119,7 @@ public final class RollbackService {
             sender.sendMessage(Feedback.bonus(
                     "Resume queued at position " + position + " (id " + job.shortId() + ")."));
         }
-        // Old marker drop — once the new job is queued / running we
-        // no longer need the resume entry for the old id.
+        // Drop the old marker now that the new job has taken over.
         resumeStore.markFinish(saved.id());
         return true;
     }
@@ -163,12 +142,8 @@ public final class RollbackService {
             return;
         }
 
-        // Wrap in a RollbackJob and submit to the queue. If no other
-        // rollback is in flight, the queue immediately calls runJob;
-        // otherwise the job waits its turn and the operator gets a
-        // "queued at position N" message. Concurrency control means
-        // two operators can't trip over each other writing the same
-        // chunk through different rollbacks at once.
+        // Queue serializes rollbacks so two operators can't trip
+        // over each other writing the same chunk.
         UUID operatorId = sender instanceof Player p ? p.getUniqueId() : null;
         RollbackJob.Mode jobMode = mode == RollbackMode.RESTORE
                 ? RollbackJob.Mode.RESTORE
@@ -177,12 +152,8 @@ public final class RollbackService {
                 raw, jobMode, Instant.now(), sender);
         pendingContexts.put(job.id, new JobContext(request, mode));
 
-        // Persist BEFORE submitting to the queue. This way pending
-        // jobs also have a marker — if the JVM dies while the job
-        // is queued behind another, the marker survives and the
-        // operator can /sg rbqueue resume it on restart. The marker
-        // is updated with cursor + counters as pages complete in
-        // streamPagesAndApply, and deleted when the job terminates.
+        // Persist before queueing so pending jobs also survive a
+        // restart and show up as resumable.
         resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
 
         int position = jobQueue.submit(job);
@@ -190,51 +161,33 @@ public final class RollbackService {
             sender.sendMessage(Feedback.bonus("Rollback queued at position " + position
                     + " (id " + job.shortId() + "). View / cancel with /sg rbqueue."));
         }
-        // position == 0 → the queue's runner has already invoked
-        // runJob, which sends the standard "Querying..." line.
     }
 
-    /**
-     * Queue runner callback — invoked by {@link RollbackJobQueue}
-     * when a submitted job is ready to execute. Pulls the parsed
-     * request, flushes the recorder, kicks off the streaming page
-     * loop, and tells the queue when the job terminates so the next
-     * one can dispatch.
-     */
     public void runJob(RollbackJob job) {
         JobContext ctx = pendingContexts.remove(job.id);
         if (ctx == null) {
-            // Defensive: shouldn't happen unless someone submits a
-            // job without going through execute(). Drop it.
+            // Job was submitted outside execute(); drop it.
             jobQueue.finish(job, RollbackJob.State.FAILED);
             return;
         }
         job.sender.sendMessage(Feedback.querying());
-        // Crash-resume marker: write at start, delete at end (any
-        // terminal state). If the JVM dies mid-rollback, the file
-        // persists and shows up in the next /sg rbqueue list as a
-        // pending resume entry.
         resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
         net.medievalrp.spyglass.api.util.Duration flushTimeout =
                 config.limits().rollbackFlushTimeout();
-        // Streaming rollback path. The recorder is flushed first so the
-        // store has caught up to in-flight events (the read-your-writes
-        // gap that caused "pixelated grain" rollbacks against slow
-        // ClickHouse). Then we keyset-paginate through the store one
-        // page at a time, applying each page through the per-tick
-        // chunked engine before fetching the next. Memory is O(pageSize)
-        // instead of O(matchSet).
+        // Flush the recorder first so the store has caught up to
+        // in-flight events, then keyset-paginate and apply each page
+        // before fetching the next. Memory stays O(pageSize).
         support.onAsyncThread(() -> {
             try {
                 boolean drained = recorder.flush(flushTimeout);
                 if (!drained) {
                     support.onMainThread(() -> job.sender.sendMessage(Feedback.bonus(
-                            "Recorder still draining — rollback may miss the most recent events.")));
+                            "Recorder still draining; rollback may miss the most recent events.")));
                 }
                 streamPagesAndApply(job, ctx.request(), ctx.mode(),
                         ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped());
-                // Terminal state: cancelled wins over done if the
-                // operator hit /sg rbqueue cancel mid-flight.
+                // Cancellation wins over done if the operator hit
+                // /sg rbqueue cancel mid-flight.
                 jobQueue.finish(job, job.cancelFlag.get()
                         ? RollbackJob.State.CANCELLED
                         : RollbackJob.State.DONE);
@@ -243,20 +196,14 @@ public final class RollbackService {
                 logger.warning("Spyglass rollback job " + job.shortId() + " failed: " + thrown);
                 job.failureMessage = thrown.getMessage();
                 jobQueue.finish(job, RollbackJob.State.FAILED);
-                // Failed jobs leave the resume marker behind so
-                // operators can decide whether to re-run.
+                // Leave the resume marker so the operator can re-run.
             }
         });
     }
 
-    /**
-     * Page through the store with keyset pagination, applying each
-     * page through {@link RollbackEngine#applyAllChunked}. Runs on the
-     * async thread that called us — the apply step bounces work to the
-     * main thread itself, and we block here on its completion future
-     * before fetching the next page so memory never holds more than
-     * one page's worth of effects.
-     */
+    // Keyset-paginate through the store and apply each page through
+    // the chunked engine. The apply future blocks here before we
+    // fetch the next page, keeping heap bounded.
     private void streamPagesAndApply(RollbackJob job, QueryRequest request, RollbackMode mode,
                                      @org.jetbrains.annotations.Nullable
                                      net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
@@ -269,37 +216,27 @@ public final class RollbackService {
         int hardLimit = request.limit();
         int totalApplied = initialApplied;
         int totalSkipped = initialSkipped;
-        int totalErrors = 0;  // Skipped with a real engine Error reason
+        int totalErrors = 0;
         int totalSeen = 0;
-        // Chunks touched across all pages — keyed (worldId, chunkX, chunkZ)
-        // packed as a string. Reported in the summary so the operator
-        // sees the spatial scope, not just block count.
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
-        // Inverses are accumulated for the undo stack push at the end.
-        // For huge rollbacks this list can itself dominate heap (200B
-        // per inverse × 1M = ~200 MB), so we cap it: if applied count
-        // exceeds {@code rollback-undo-cap}, we drop further inverses
-        // and tell the operator their undo isn't available. The
-        // rollback itself still completes — only the undo is sacrificed.
+        // Past undoCap inverses we drop the rest. The rollback still
+        // applies; only /spyglass undo is sacrificed. Without this a
+        // 1M-block rollback eats ~200 MB just holding inverses.
         int undoCap = Math.max(0, config.limits().rollbackUndoCap());
         List<RollbackEffect> inverses = new ArrayList<>();
         boolean undoTruncated = false;
 
         net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursor = startCursor;
         if (startCursor != null) {
-            // Resumed mid-rollback. Tell the operator how far the
-            // previous run got so they know whether to expect a
-            // small or large continuation.
             support.onMainThread(() -> sender.sendMessage(Feedback.bonus(
-                    "Resuming from cursor — " + initialApplied + " applied + "
+                    "Resuming from cursor: " + initialApplied + " applied + "
                             + initialSkipped + " skipped before crash.")));
         }
         try {
             while (totalSeen < hardLimit) {
-                // Cancellation: checked between pages so the current
-                // page's per-chunk apply finishes (no half-page state)
-                // but the next page is never fetched.
+                // Cancellation is checked between pages so the
+                // current page finishes cleanly.
                 if (cancelFlag.get()) {
                     break;
                 }
@@ -327,11 +264,9 @@ public final class RollbackService {
                     }
                     continue;
                 }
-                // Pre-warm chunks for the page off-thread, then apply.
-                // The apply future completes once every per-tick batch
-                // in this page has run, so blocking here keeps heap
-                // bounded — the next page can't be fetched until this
-                // page's effects are released.
+                // Pre-warm chunks off-thread, then apply. Blocking
+                // on the apply future before fetching the next page
+                // keeps heap bounded to one page's effects.
                 preWarmChunksForRecords(page.records()).join();
                 List<RollbackResult> results;
                 try {
@@ -352,8 +287,6 @@ public final class RollbackService {
                             Feedback.error(mode.label() + " failed: " + msg)));
                     return;
                 }
-                // Tally and harvest inverses + count distinct chunks
-                // touched (only Applied counts toward chunks).
                 for (RollbackResult r : results) {
                     if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
@@ -370,24 +303,16 @@ public final class RollbackService {
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
                         skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
-                        // "Real" errors come through as RollbackReason.Error
-                        // — distinct from BlockChanged (a normal "world
-                        // moved on" skip) and InvalidLocation (chunk
-                        // unloaded). Surfaced in the summary so the
-                        // operator sees rollback failures separately
-                        // from benign skips.
+                        // RollbackReason.Error is a real failure;
+                        // BlockChanged / InvalidLocation are benign.
                         if (skipped.reason()
                                 instanceof net.medievalrp.spyglass.api.rollback.RollbackReason.Error) {
                             totalErrors++;
                         }
                     }
                 }
-                // Update job's progress counters so /sg rbqueue can
-                // show live status.
                 job.appliedCount.set(totalApplied);
                 job.skippedCount.set(totalSkipped);
-                // Progress ping every page so the operator sees the
-                // rollback isn't stuck on a long run.
                 if (sender instanceof Player progressTarget) {
                     int appliedSoFar = totalApplied;
                     int skippedSoFar = totalSkipped;
@@ -396,11 +321,8 @@ public final class RollbackService {
                                     "Rolling back: " + appliedSoFar + " applied, " + skippedSoFar + " skipped")));
                 }
                 cursor = page.next();
-                // Checkpoint the cursor + counters in the resume
-                // marker so a crash can resume from this exact point
-                // instead of re-querying from the start. One file
-                // write per page (≤200 writes for a 1M-block job),
-                // <1 KB each — negligible overhead.
+                // Checkpoint to the resume marker so a crash picks
+                // up from here rather than re-querying from the start.
                 RollbackResumeStore.Cursor resumeCursor = cursor == null ? null
                         : new RollbackResumeStore.Cursor(cursor.occurred(), cursor.id());
                 resumeStore.markProgress(job.id, job.operatorName, job.operatorId,
@@ -423,9 +345,6 @@ public final class RollbackService {
             return;
         }
 
-        // Bounce the summary delivery to the main thread for the chat
-        // sends + the optional undo-stack push (the latter goes back to
-        // async inside deliverStreamingSummary).
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,
                 chunkKeys.size(), elapsedMs, inverses);
@@ -433,13 +352,9 @@ public final class RollbackService {
         support.onMainThread(() -> deliverStreamingSummary(sender, mode, summary, skipCounts, truncated));
     }
 
-    /**
-     * Pre-warm chunks for a page of records via the Bukkit async chunk
-     * loader. By the time the page's apply phase runs on the main
-     * thread, the chunks are already resident — no chunk-load stall
-     * inside the per-tick budget. Tolerates a missing Bukkit
-     * environment for tests.
-     */
+    // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
+    // pay a chunk-load stall inside its tick budget. No-op outside
+    // a live Bukkit server (tests).
     private CompletableFuture<Void> preWarmChunksForRecords(List<EventRecord> records) {
         try {
             Map<UUID, Set<Long>> byWorld = new HashMap<>();
@@ -511,9 +426,6 @@ public final class RollbackService {
         }
     }
 
-    /** Pull a {@link BlockLocation} out of any RollbackEffect. All of
-     *  the sealed subtypes carry one. Used for the chunk-touched count
-     *  in the summary. */
     private static BlockLocation locationOf(RollbackEffect effect) {
         return switch (effect) {
             case RollbackEffect.BlockReplace br -> br.location();
@@ -560,22 +472,6 @@ public final class RollbackService {
         return mm + "m" + ss + "s";
     }
 
-    /**
-     * Result of a streaming rollback / restore. Beyond the existing
-     * applied + skipped + inverses, also surfaces:
-     * <ul>
-     *   <li>{@code chunks} — distinct chunks where Spyglass actually
-     *       wrote at least one block. Tells the operator the spatial
-     *       footprint of the op.</li>
-     *   <li>{@code errors} — skipped effects whose reason was a real
-     *       engine {@code Error}, not a benign "block changed" /
-     *       "invalid location". Surfaced separately so a successful
-     *       summary doesn't hide failures.</li>
-     *   <li>{@code elapsedMs} — wall time from the first page query
-     *       to the last page apply, as observed by the streaming
-     *       loop. Doesn't include the undo-stack push at the end.</li>
-     * </ul>
-     */
     public record Summary(int applied, int skipped, int errors,
                           int chunks, long elapsedMs,
                           List<RollbackEffect> inverses) {
@@ -584,8 +480,6 @@ public final class RollbackService {
             inverses = List.copyOf(inverses);
         }
 
-        /** Back-compat ctor for callers that still build with just
-         *  applied/skipped/inverses (e.g. {@link UndoService}). */
         public Summary(int applied, int skipped, List<RollbackEffect> inverses) {
             this(applied, skipped, 0, 0, 0L, inverses);
         }

@@ -8,21 +8,9 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 import org.jetbrains.annotations.ApiStatus;
 
-/**
- * Per-player rollback ledger.
- *
- * <p>The plugin invokes {@link #push} every time a rollback / restore
- * operation lands successfully, recording the inverse effects so the
- * player can issue {@code /spyglass undo} and walk one step back. {@link
- * #pop} returns the most recent operation for that player and removes
- * it from the ledger. Implementations choose their own retention
- * window (24 h for the default Mongo and ClickHouse backends).
- *
- * <p>Two implementations: {@link MongoUndoStack} for Mongo
- * deployments and {@link ClickHouseUndoStack} for ClickHouse
- * deployments. The plugin picks one at startup based on
- * {@code database.backend}.
- */
+// Per-player rollback ledger. push() records inverse effects after a
+// successful rollback; pop() drains the most recent op for /spyglass
+// undo. Both Mongo and ClickHouse backends retain entries for 24h.
 @ApiStatus.Internal
 public interface UndoStack {
 
@@ -30,10 +18,8 @@ public interface UndoStack {
 
     Optional<UndoOperation> pop(UUID playerId);
 
-    /** {@code @BsonProperty} stays on the type-safe record because the
-     *  Mongo backend's POJO codec uses it. The ClickHouse backend
-     *  builds the record directly from columns and ignores the
-     *  annotation. */
+    // @BsonProperty is read by Mongo's POJO codec; the ClickHouse
+    // backend builds the record from columns and ignores it.
     record UndoOperation(
             @BsonProperty("_id") UUID id,
             UUID playerId,

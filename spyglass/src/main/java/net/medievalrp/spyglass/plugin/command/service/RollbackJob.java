@@ -8,17 +8,8 @@ import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * One rollback or restore job in the queue. Carries the operator
- * identity, the query that defined the op, mutable progress counters
- * the engine updates as it walks through chunks, and a cancellation
- * flag the engine checks at chunk boundaries.
- *
- * <p>Lives in {@link RollbackJobQueue}; created when a player or the
- * console submits {@code /sg rollback ...}. The job's lifecycle:
- * {@code PENDING} → {@code RUNNING} → {@code DONE} | {@code CANCELLED}
- * | {@code FAILED}.
- */
+// One rollback or restore job. Lifecycle:
+// PENDING -> RUNNING -> DONE / CANCELLED / FAILED.
 @ApiStatus.Internal
 public final class RollbackJob {
 
@@ -28,10 +19,10 @@ public final class RollbackJob {
     public final UUID id;
     public final UUID operatorId;       // null for console
     public final String operatorName;
-    public final String query;          // raw query string for display
+    public final String query;
     public final Mode mode;
     public final Instant submitTime;
-    public final CommandSender sender;  // weak-ish — may go offline mid-job
+    public final CommandSender sender;  // may go offline mid-job
 
     public final AtomicBoolean cancelFlag = new AtomicBoolean(false);
     public final AtomicInteger appliedCount = new AtomicInteger(0);
@@ -54,7 +45,6 @@ public final class RollbackJob {
         this.sender = sender;
     }
 
-    /** Short-id for display: the first 8 hex chars of the UUID. */
     public String shortId() {
         return id.toString().substring(0, 8);
     }
