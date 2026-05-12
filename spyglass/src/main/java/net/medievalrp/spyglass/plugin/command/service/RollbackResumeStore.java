@@ -13,29 +13,16 @@ import java.util.logging.Logger;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * Crash-resume backing store for in-flight rollback jobs.
- *
- * <p>When a rollback starts, write a small file naming the job id +
- * raw query + operator + mode + timestamp into the plugin data
- * folder. When the rollback finishes (any terminal state, including
- * cancellation), delete the file. If the JVM crashes mid-rollback,
- * the file persists; on next plugin enable the file is detected,
- * logged, and surfaced via {@code /sg rbqueue} so the operator can
- * resume.
- *
- * <p>Why not store the remaining-effect-list itself: that's millions
- * of {@link net.medievalrp.spyglass.api.rollback.RollbackEffect}s for
- * a big rollback — the file size + write cost is prohibitive on
- * every batch boundary. Storing the original query is enough: the
- * engine's "block changed" precondition skips already-applied cells
- * on a re-run, so the same {@code /sg rollback} is idempotent and
- * picks up where the crash left off.
- *
- * <p>File format: one file per saved rollback, named
- * {@code <shortId>.resume}. Plain-text key=value pairs to keep
- * decode trivial (no JSON dependency on the hot path).
- */
+// Crash-resume store for in-flight rollback jobs.
+//
+// On start we write a small key=value file naming the job id, raw
+// query, operator, mode, and timestamp. On any terminal state we
+// delete it. If the JVM crashes, the file persists and the next
+// plugin enable surfaces it through /sg rbqueue.
+//
+// We store the query, not the remaining effect list: re-running the
+// same /sg rollback is idempotent thanks to the engine's "block
+// changed" precondition, so the file stays small.
 @ApiStatus.Internal
 public final class RollbackResumeStore {
 
@@ -49,12 +36,12 @@ public final class RollbackResumeStore {
             Files.createDirectories(baseDir);
         } catch (IOException ex) {
             logger.log(Level.WARNING, "Spyglass: could not create resume dir " + baseDir
-                    + " — crash-resume disabled", ex);
+                    + "; crash-resume disabled", ex);
         }
     }
 
-    /** Write a marker for a freshly-started rollback. Best-effort —
-     *  failure here logs but doesn't abort the rollback. */
+    // Best-effort: a write failure here logs but does not abort the
+    // rollback.
     public void markStart(UUID jobId, String operatorName, @Nullable UUID operatorId,
                           String query, RollbackJob.Mode mode) {
         Path file = baseDir.resolve(filename(jobId));
@@ -68,16 +55,8 @@ public final class RollbackResumeStore {
         }
     }
 
-    /**
-     * Update the marker with the latest cursor + progress counters
-     * after a page completes. On a crash, resume re-queries from
-     * this cursor instead of from the start, so a 2M-block rollback
-     * that crashed at 75% only re-applies the remaining 25%.
-     *
-     * <p>Best-effort: failure here logs but doesn't abort the rollback.
-     * One file write per page (≤200 writes for a 1M-block rollback);
-     * each write is &lt;1 KB so disk overhead is negligible.
-     */
+    // Updates the marker with cursor and counters after each page
+    // completes so a crash resumes from here rather than the start.
     public void markProgress(UUID jobId, String operatorName, @Nullable UUID operatorId,
                              String query, RollbackJob.Mode mode, Instant startedAt,
                              @Nullable Cursor cursor, int appliedSoFar, int skippedSoFar) {
@@ -114,12 +93,11 @@ public final class RollbackResumeStore {
         return sb.toString();
     }
 
-    /** Cursor structure mirrors {@code QueryPage.Cursor}; held here
-     *  to avoid spyglass-api ↔ spyglass-core import noise. */
+    // Mirrors QueryPage.Cursor; kept here to avoid pulling the
+    // storage package into this one.
     public record Cursor(Instant occurred, UUID id) {
     }
 
-    /** Delete the marker for a finished rollback. Idempotent. */
     public void markFinish(UUID jobId) {
         Path file = baseDir.resolve(filename(jobId));
         try {
@@ -130,9 +108,7 @@ public final class RollbackResumeStore {
         }
     }
 
-    /** Scan the resume dir for leftover markers. Each entry
-     *  represents an in-flight rollback that was interrupted by a
-     *  crash, restart, or hard-kill. */
+    // Lists markers left behind by interrupted rollbacks.
     public List<Saved> listPending() {
         List<Saved> out = new ArrayList<>();
         if (!Files.isDirectory(baseDir)) return out;
@@ -174,12 +150,12 @@ public final class RollbackResumeStore {
                     case "cursor.id" -> cursorId = UUID.fromString(v);
                     case "appliedSoFar" -> applied = Integer.parseInt(v);
                     case "skippedSoFar" -> skipped = Integer.parseInt(v);
-                    default -> { /* unknown — forward-compat */ }
+                    default -> { /* unknown key; forward-compat */ }
                 }
             }
             if (id == null || query == null || operatorName == null || startedAt == null) {
                 logger.warning("Spyglass: incomplete resume marker " + file.getFileName()
-                        + " — skipping");
+                        + "; skipping");
                 return null;
             }
             Cursor cursor = (cursorOccurred != null && cursorId != null)
@@ -209,7 +185,6 @@ public final class RollbackResumeStore {
     }
 
     private static String unescape(String s) {
-        // Tiny: only \\ and \n round-trip
         StringBuilder sb = new StringBuilder(s.length());
         boolean esc = false;
         for (char c : s.toCharArray()) {

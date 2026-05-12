@@ -10,18 +10,11 @@ import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.ApiStatus;
 
-/**
- * Backs the {@code /sg rbqueue} command. Subcommands:
- * <ul>
- *   <li>{@code /sg rbqueue} (or {@code /sg rbqueue list}) — show
- *       in-flight + pending + recent finished jobs.</li>
- *   <li>{@code /sg rbqueue cancel <id>} — cancel a pending job by
- *       short id, or send a stop signal to the in-flight job. The
- *       engine sees the flag at the next chunk boundary and stops.</li>
- *   <li>{@code /sg rbqueue stop} — convenience for cancelling the
- *       in-flight job without typing its id.</li>
- * </ul>
- */
+// Backs /sg rbqueue. Subcommands:
+//   list           - show in-flight, pending, and recent jobs
+//   stop           - cancel the in-flight job
+//   cancel <id>    - cancel a pending or in-flight job by short id
+//   resume <id>    - re-run an interrupted rollback
 @ApiStatus.Internal
 public final class RbqueueService {
 
@@ -77,7 +70,7 @@ public final class RbqueueService {
             for (var s : resumePending) {
                 sender.sendMessage(Component.text(
                         "  " + s.shortId() + " (" + s.mode() + ") by " + s.operatorName()
-                                + " — query: " + s.query() + " — started " + s.startedAt())
+                                + " - query: " + s.query() + " - started " + s.startedAt())
                         .color(NamedTextColor.RED));
             }
             sender.sendMessage(Component.text(
@@ -136,7 +129,7 @@ public final class RbqueueService {
 
     private void cancel(CommandSender sender, String idArg) {
         UUID jobId = resolveShortId(idArg);
-        // Match resume entries first (operator may want to discard one)
+        // Resume entries first; cancel here means "discard".
         if (jobId != null) {
             for (var saved : resumeStore.listPending()) {
                 if (saved.id().equals(jobId)) {
@@ -160,11 +153,8 @@ public final class RbqueueService {
         }
         RollbackJob job = cancelled.get();
         if (job.state == RollbackJob.State.CANCELLED) {
-            // Pending → cancelled. The resume marker was written at
-            // submit time (so pending jobs survive restart); since
-            // the job never ran, runJob's normal cleanup never fires.
-            // Delete the marker explicitly so it doesn't show up as
-            // resumable on next startup.
+            // The pending->cancelled path skips runJob's cleanup, so
+            // delete the resume marker explicitly.
             resumeStore.markFinish(job.id);
             sender.sendMessage(Component.text(
                     "Removed " + job.shortId() + " from queue.")
@@ -192,10 +182,9 @@ public final class RbqueueService {
                 + ". Use /sg rbqueue list to see resumables."));
     }
 
-    /** Resolve an 8-char short id (or full UUID) against the live
-     *  in-flight + pending + recent set. Returns null on no match. */
+    // Accepts an 8-char short id or a full UUID, matching against
+    // the live in-flight, pending, and recent sets.
     private UUID resolveShortId(String idArg) {
-        // Allow either short (8 hex) or full UUID
         if (idArg.length() == 36) {
             try { return UUID.fromString(idArg); } catch (IllegalArgumentException ignored) { return null; }
         }

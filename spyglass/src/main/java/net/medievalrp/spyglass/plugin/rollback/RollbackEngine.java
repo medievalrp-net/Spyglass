@@ -59,55 +59,22 @@ public final class RollbackEngine {
             type -> java.util.Optional.empty();
     private RollbackPhysicsBlocker physicsBlocker;
 
-    /**
-     * Per-tick budget for {@link #applyChunkByChunk}. Wired from
-     * {@code limits.rollback-tick-budget-ms}; default 15 ms (~30% of
-     * a tick) so server TPS stays at or near 20 even during a
-     * multi-million-block rollback. The earlier hardcoded 45 ms
-     * dragged TPS to 11 during 1M+ rollbacks because we consumed 90%
-     * of every tick. Configurable via
-     * {@link #setTickBudgetMs(long)}.
-     */
+    // Per-tick budget for the apply loop, in ms. Sourced from
+    // limits.rollback-tick-budget-ms. 45 ms ate 90% of every tick
+    // and tanked TPS on big rollbacks; 15 ms keeps the server
+    // responsive at the cost of wall time.
     private volatile long tickBudgetMs = 15L;
 
-    /**
-     * Single-thread executor for off-main-thread palette writes. The
-     * apply phase splits per chunk into:
-     * <ul>
-     *   <li>OFF main thread (this executor): the bulk per-block
-     *       {@code LevelChunkSection.setBlockState} loop. Mojang's
-     *       {@code PalettedContainer} acquires its own per-section
-     *       lock on writes so concurrent main-thread reads (player
-     *       chunk views) get serialized cleanly.</li>
-     *   <li>ON main thread (post-processing): chunk-update packet via
-     *       {@link net.medievalrp.spyglass.plugin.util.ChunkResender},
-     *       tile-entity state for non-simple blocks (chests / signs /
-     *       banners), and the {@link RollbackResult.Applied} +
-     *       inverse allocation.</li>
-     * </ul>
-     *
-     * <p>Result: main thread spends ~2 ms per chunk on post-processing
-     * (down from ~50 ms doing every block's palette write) and the
-     * server TPS stays at or near 20 throughout the rollback. Set to
-     * {@code null} (or replaced via {@link #setWorldWriteExecutor})
-     * the path falls back to the legacy synchronous main-thread loop.
-     */
+    // Off-main executor for the per-block palette writes. When set,
+    // the bulk setBlockState loop runs here while the main thread
+    // only handles tile-entity state and the chunk-update packet.
+    // PalettedContainer is per-section locked so concurrent reads
+    // from the main thread stay consistent. Null = sync fallback.
     private volatile java.util.concurrent.Executor worldWriteExecutor;
 
-    /**
-     * Static cache of {@link org.bukkit.block.data.BlockData} parsed from
-     * the canonical block-data string ("minecraft:stone",
-     * "minecraft:oak_log[axis=y]"). Rollbacks have few distinct block
-     * types per call (typical mining rollback: stone+air; typical
-     * landscape: a dozen materials). Parsing the string via
-     * {@link Bukkit#createBlockData(String)} is ~5-10 us each call —
-     * easily the largest single per-block cost in the rollback hot
-     * loop. Caching converts that to one parse per unique string per
-     * JVM lifetime, plus a {@link java.util.concurrent.ConcurrentHashMap}
-     * lookup per block. {@link org.bukkit.block.data.BlockData} is
-     * documented immutable, so sharing instances across rollbacks is
-     * safe.
-     */
+    // Parsed BlockData is shared across rollbacks. createBlockData is
+    // ~5-10us per call and BlockData is immutable, so caching one
+    // instance per unique spec string is a big win on the hot loop.
     private static final java.util.concurrent.ConcurrentHashMap<String, org.bukkit.block.data.BlockData> BLOCK_DATA_CACHE =
             new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -117,153 +84,56 @@ public final class RollbackEngine {
             return cached;
         }
         org.bukkit.block.data.BlockData parsed = Bukkit.createBlockData(spec);
-        // putIfAbsent: a concurrent rollback might have parsed the same
-        // spec; either copy is fine since BlockData is immutable, but
-        // we want to converge on one shared instance.
         org.bukkit.block.data.BlockData prior = BLOCK_DATA_CACHE.putIfAbsent(spec, parsed);
         return prior == null ? parsed : prior;
     }
 
-    /** Test-friendly default: no rollback-source records emitted. */
     public RollbackEngine() {
         this(null, null);
     }
 
-    /**
-     * Production constructor. When {@code recorder} and {@code support}
-     * are non-null, every successfully-applied effect ALSO emits a
-     * {@link BlockPlaceRecord} stamped with {@link Origin#rollback} and a
-     * {@code "ROLLBACK"} environment source — so the wand on a rolled-
-     * back block reads "ROLLBACK placed STONE" rather than nothing.
-     */
+    // With a non-null recorder/support, every applied effect also
+    // emits a lightweight ROLLBACK record so the wand reads
+    // "ROLLBACK placed STONE" on the rolled block.
     public RollbackEngine(Recorder recorder, RecordingSupport support) {
         this.recorder = recorder;
         this.support = support;
     }
 
-    /**
-     * Wire the lookup the engine uses to dispatch
-     * {@link RollbackEffect.Custom} payloads to third-party handlers.
-     * Set during plugin {@code onEnable}; tests leave the default
-     * lookup (no handlers) in place.
-     */
     public void setCustomEffectLookup(java.util.function.Function<String, java.util.Optional<RollbackEffectHandler>> lookup) {
         this.handlerLookup = lookup == null
                 ? type -> java.util.Optional.empty()
                 : lookup;
     }
 
-    /**
-     * Wire the falling-block physics blocker. While a rollback runs, the
-     * blocker cancels {@link org.bukkit.event.entity.EntityChangeBlockEvent}
-     * inside the rollback's bounding box so just-restored sand/gravel
-     * doesn't fall on the next tick.
-     */
     public void setPhysicsBlocker(RollbackPhysicsBlocker blocker) {
         this.physicsBlocker = blocker;
     }
 
-    /**
-     * Set the per-tick budget for the apply phase. Lower values keep
-     * server TPS smooth at the cost of total wall-clock; higher values
-     * finish faster but consume more of each tick.
-     */
     public void setTickBudgetMs(long ms) {
         this.tickBudgetMs = Math.max(1L, ms);
     }
 
-    /**
-     * Wire the off-thread palette-write executor. {@code null} reverts
-     * to the legacy main-thread sync loop (used by tests).
-     */
     public void setWorldWriteExecutor(java.util.concurrent.Executor exec) {
         this.worldWriteExecutor = exec;
     }
 
-    /**
-     * Plugin reference used by the async pipeline to add and release
-     * plugin chunk tickets around each chunk's writes. Without this
-     * the chunk system is free to unload a chunk between our
-     * snapshot-on-main-thread step and the worker thread's palette
-     * writes — those writes would silently no-op because
-     * {@code prepareChunk} returns null on an unloaded chunk. Holding
-     * a ticket per (world, cx, cz) for the lifetime of one chunk's
-     * apply pins it loaded.
-     */
+    // Holds a plugin chunk ticket per (world, cx, cz) while the
+    // worker thread writes the chunk. Without it the chunk system
+    // can unload between our main-thread snapshot and the worker's
+    // writes, silently no-opping them.
     private volatile org.bukkit.plugin.Plugin chunkTicketHolder;
 
     public void setChunkTicketHolder(org.bukkit.plugin.Plugin plugin) {
         this.chunkTicketHolder = plugin;
     }
 
-    /**
-     * Synchronous entry point — used by tests and by external callers that
-     * already control their own scheduling. Wraps {@link #applyAllChunked}
-     * with a {@link ServiceSupport#synchronous() synchronous} scheduler and
-     * an unbounded batch so everything happens in a single call.
-     *
-     * <p>For production use, {@code RollbackService} calls
-     * {@link #applyAllChunked} directly so the per-block apply phase can
-     * yield between batches and stay under Paper's tick watchdog.
-     */
+    // Synchronous entry point for tests. Production uses applyAllChunked
+    // directly so the apply loop can yield between ticks.
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
         return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
     }
 
-    /**
-     * Apply a rollback split across ticks.
-     *
-     * <p>Earlier revisions did the entire rollback in one main-thread call.
-     * On the FAWE-less slow path each {@code BlockState.update} costs a few
-     * ms; for a 2 000-block rollback that's tens of seconds in one tick,
-     * which trips Paper's 60 s watchdog and crashes the server. Worse, the
-     * synchronous flood of {@code rolled-place}/{@code rolled-break}
-     * recorder events to ClickHouse OOM-killed CH at the same time, so the
-     * data layer would tear down with the world half-rolled (the visible
-     * "diagonal lines / 4×4 chunks" pattern operators reported).
-     *
-     * <p>This method now:
-     * <ol>
-     *   <li>Runs Phase 1 (precondition check) and Phase 2 (FAWE batch
-     *       submit) inline — both are fast: Phase 1 is just block reads,
-     *       Phase 2 hands the whole list to FAWE which schedules its own
-     *       chunk-batched writes off-tick.</li>
-     *   <li>Splits Phase 3 (per-block {@code BlockState.update}) into
-     *       batches of {@code batchSize} effects per tick, yielding back
-     *       to the main thread between batches via
-     *       {@link ServiceSupport#onMainThreadLater}. Each batch also
-     *       emits its own {@code rolled-*} recorder events, which keeps
-     *       the ClickHouse insert rate proportional to the rollback
-     *       throughput instead of dumping everything at once.</li>
-     *   <li>Runs Phase 4 (container-slot batches) in one tick — small N
-     *       (one batch per chest, not per slot) and already cheap.</li>
-     *   <li>Splits Phase 5 (entity ops + custom handlers) the same way
-     *       Phase 3 does.</li>
-     * </ol>
-     *
-     * Returns a future that completes once every batch has run. The
-     * caller (RollbackService) chains the summary line and undo-stack push
-     * onto completion so the player gets feedback once everything's
-     * actually applied — not when the work is just queued.
-     *
-     * <p>Must be invoked on the main thread (Phase 1 reads block state).
-     * Subsequent batches are re-entered on the main thread by the
-     * scheduler.
-     *
-     * @param effects   ordered list of rollback effects (already sorted
-     *                  newest-first for ROLLBACK / oldest-first for RESTORE
-     *                  by the caller)
-     * @param sender    the operator running the command; receives action
-     *                  bar progress messages once batching kicks in
-     * @param scheduler bridges {@code Bukkit.getScheduler().runTaskLater}
-     *                  for production and {@code Runnable.run()} for tests
-     * @param batchSize number of effects to apply per tick before yielding;
-     *                  {@link Integer#MAX_VALUE} = "do everything now"
-     */
-    /**
-     * Backwards-compatible overload — delegates to the cancel-aware
-     * variant with a no-op cancel flag.
-     */
     public CompletableFuture<List<RollbackResult>> applyAllChunked(
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize) {
@@ -287,31 +157,9 @@ public final class RollbackEngine {
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
         boolean useFawe = FaweRollback.isAvailable();
 
-        // Two-stage rollback contract:
-        //   STAGE 1 — pure compute: filter to BlockReplace, compute
-        //             physics-blocker bounding box, register the
-        //             physics-blocker region, allocate the parallel
-        //             arrays, sort by chunk. None of this touches
-        //             Bukkit/Mojang state — it's lists, primitive
-        //             arrays, and a ConcurrentHashMap put on the
-        //             physics blocker. Run off main thread when the
-        //             worker executor is wired.
-        //
-        //   STAGE 2 — Bukkit-touching: applyChunkByChunk + per-chunk
-        //             tile-entity state, chunk packet broadcast,
-        //             scheduler tick yields. These have hard
-        //             main-thread requirements (Bukkit BlockState
-        //             API, ChunkHolder packet system) and stay on
-        //             the server thread by hopping back via
-        //             scheduler.onMainThread.
-        //
-        // At 10M effects, stage 1 alone is hundreds of ms of pure
-        // CPU on lists / sort — far too long for the server tick.
-        // The 1.94% main-thread cost the spark profile flagged was
-        // the sort; the filter+bbox loops are the same shape and
-        // would also have been visible at scale. With this split,
-        // stage 1 cost on the server thread drops to ~zero
-        // (dispatch + scheduling overhead).
+        // Stage 1 is pure compute (filter, bbox, sort) and runs off
+        // the main thread when an executor is wired. Stage 2 touches
+        // Bukkit and hops back to the server thread.
         Runnable stageOne = () -> {
             List<Integer> faweCandidateIndices = new ArrayList<>();
             List<RollbackEffect.BlockReplace> faweCandidateEffects = new ArrayList<>();
@@ -342,7 +190,6 @@ public final class RollbackEngine {
             boolean[] faweApplied = new boolean[faweCandidateEffects.size()];
             sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
 
-            // Hop to main thread for stage 2.
             scheduler.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
                     faweCandidateIndices, faweCandidateEffects, faweApplied,
                     useFawe, sender, scheduler, batchSize, done, cancelFlag));
@@ -351,27 +198,15 @@ public final class RollbackEngine {
         if (worldWriteExecutor != null) {
             java.util.concurrent.CompletableFuture.runAsync(stageOne, worldWriteExecutor);
         } else {
-            // Sync fallback (tests / engine without an executor wired).
-            // scheduler.onMainThread under SynchronousServiceSupport
-            // runs inline, so this remains a single-threaded chain
-            // that completes the future before returning.
             stageOne.run();
         }
         return done;
     }
 
-    /**
-     * Cluster the parallel arrays so consecutive entries share a chunk,
-     * and within a chunk apply from low Y to high Y. The Y ordering is
-     * the gravel/sand fix: when we restore a column where the bottom
-     * supporting block was destroyed and gravel above it fell, we need
-     * the support to be in place before we set the gravel, otherwise
-     * Bukkit's gravity check converts the gravel back to a falling-
-     * block entity on the next world tick. Bottom-up restore sidesteps
-     * the issue. Stable on the (worldId, chunkX, chunkZ, y) key — falls
-     * back to input order for true ties (same cell broken twice in the
-     * window, the rare case).
-     */
+    // Group entries by chunk and apply low Y first within each chunk.
+    // Bottom-up matters: if we restore gravel before its support block,
+    // the gravity check on the next tick turns the gravel back into a
+    // falling entity.
     private static void sortParallelByChunk(List<Integer> indices,
                                             List<RollbackEffect.BlockReplace> effects,
                                             boolean[] applied) {
@@ -390,11 +225,10 @@ public final class RollbackEngine {
             if (c != 0) return c;
             c = Integer.compare(la.z() >> 4, lb.z() >> 4);
             if (c != 0) return c;
-            c = Integer.compare(la.y(), lb.y());  // bottom-up within chunk
+            c = Integer.compare(la.y(), lb.y());
             if (c != 0) return c;
-            return Integer.compare(a, b); // stable: preserve input order on full ties
+            return Integer.compare(a, b);
         });
-        // Rewrite arrays under the new permutation.
         Integer[] newIndices = new Integer[n];
         @SuppressWarnings("unchecked")
         RollbackEffect.BlockReplace[] newEffects = new RollbackEffect.BlockReplace[n];
@@ -411,59 +245,14 @@ public final class RollbackEngine {
         }
     }
 
-/** Tick-budget cap for one batch of chunk apply. Soft target: yield
-     *  to the next tick once we've spent this many ms in this turn.
-     *
-     *  <p>A Minecraft tick is 50 ms. The earlier value (25 ms = half a
-     *  tick) left ~64% of every tick idle waiting for the next yield —
-     *  visible as a 2× rollback slowdown at scale. 45 ms uses 90% of
-     *  the tick for rollback work, dropping the wait fraction to ~10%.
-     *
-     *  <p>Trade-off: while the rollback is running the server thread
-     *  has only ~5 ms of headroom per tick for vanilla physics + other
-     *  plugins. For the duration of a big rollback (30 s+ for 1 M
-     *  blocks) other plugins notice latency. The chunk-finalize work
-     *  inside the budget already runs without scheduled ticks /
-     *  physics so the server itself isn't doing meaningful background
-     *  work for those chunks; the headroom is mainly for player
-     *  movement, network I/O, other plugins' tick handlers. Operators
-     *  who run mass rollbacks while the server is busy can lower this
-     *  via config — see the {@code limits.rollback-tick-budget-ms}
-     *  knob. */
-    // Legacy hardcoded fallback (the field {@link #tickBudgetMs} is
-    // the live value). Kept only for the rare path where the engine
-    // is constructed before configuration is wired; the production
-    // flow always sets the field from limits.rollback-tick-budget-ms.
+    // Fallback used only when the engine is constructed before
+    // config-wiring sets tickBudgetMs.
     private static final long TICK_BUDGET_MS = 45L;
 
-    /**
-     * Apply chunks in a tight loop until the per-tick budget
-     * ({@link #TICK_BUDGET_MS}) is consumed, then yield to the next
-     * tick and resume.
-     *
-     * <p>Per chunk:
-     * <ol>
-     *   <li>Walk the chunk's effects writing each block via
-     *       {@code Block.setBlockData(data, false)} — no physics
-     *       propagation, no scheduled neighbor ticks. The
-     *       falling-block tick that {@code Block.onPlace} schedules
-     *       on sand/gravel is suppressed by
-     *       {@link RollbackPhysicsBlocker}.</li>
-     *   <li>For non-simple blocks (containers, signs, banners,
-     *       jukeboxes, decorated pots), apply tile-entity state via
-     *       {@link #applyTileEntityState}.</li>
-     * </ol>
-     *
-     * <p>Paper's chunk-update queue coalesces all same-tick block
-     * changes into multi-block-change packets per chunk section
-     * (or full chunk-data packets when 64+ blocks changed in one
-     * section), broadcast at end-of-tick. No manual packet sending
-     * needed.
-     *
-     * <p>{@code batchSize} is the absolute upper bound on per-call
-     * work as a watchdog safeguard; the tick-budget normally trips
-     * first.
-     */
+    // Walk chunks until the tick budget is spent, then yield. Per
+    // chunk: write blocks via setBlockData with physics off (gravity
+    // ticks suppressed by RollbackPhysicsBlocker), then apply
+    // tile-entity state for containers/signs/banners/etc.
     private void applyChunkByChunk(int from,
                                    List<RollbackEffect> effects,
                                    RollbackResult[] resultArray,
@@ -477,11 +266,9 @@ public final class RollbackEngine {
                                    CompletableFuture<List<RollbackResult>> done,
                                    java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         int total = faweCandidateIndices.size();
-        // Cancellation: checked at the entry of each batch, so the
-        // current chunk finishes (no half-applied chunks) but no
-        // further chunks start. Unprocessed effects are marked
-        // Skipped so the result array stays fully populated for
-        // {@link RollbackService}'s summary.
+        // Cancellation check happens between chunks, never mid-chunk.
+        // Anything not yet touched gets marked Skipped so the result
+        // array stays dense for the summary.
         if (cancelFlag.get()) {
             for (int j = from; j < total; j++) {
                 int targetIndex = faweCandidateIndices.get(j);
@@ -491,7 +278,6 @@ public final class RollbackEngine {
                             new RollbackReason.Error("Cancelled by operator"));
                 }
             }
-            // Skip Phase 4/5 too — nothing user-meaningful to do.
             done.complete(List.of(resultArray));
             return;
         }
@@ -500,12 +286,6 @@ public final class RollbackEngine {
             return;
         }
 
-        // Off-main-thread fast path: when a world-write executor is
-        // wired, hand the per-chunk palette writes to it and keep the
-        // main thread busy only with the brief post-processing
-        // (tile-entity state, chunk packet, inverse build). Server TPS
-        // stays at ~20 even on multi-million-block rollbacks because
-        // we no longer monopolize the main thread for the bulk loop.
         if (worldWriteExecutor != null) {
             applyOneChunkAsync(from, effects, resultArray, faweCandidateIndices,
                     faweCandidateEffects, faweApplied, useFawe,
@@ -519,9 +299,6 @@ public final class RollbackEngine {
         int i = from;
 
         while (i < total) {
-            // Walk forward to the next chunk boundary. Effects are
-            // sorted by (worldId, chunkX, chunkZ, y) so all entries
-            // for one chunk are contiguous.
             BlockLocation startLoc = faweCandidateEffects.get(i).location();
             UUID worldId = startLoc.worldId();
             int cx = startLoc.x() >> 4;
@@ -546,13 +323,8 @@ public final class RollbackEngine {
                             new RollbackReason.InvalidLocation(eff.location()));
                 }
             } else {
-                // Hoist NMS chunk lookups out of the per-block loop:
-                // resolve serverLevel + levelChunk once for this whole
-                // batch of writes (typically thousands of blocks per
-                // chunk), then writeBlock only re-resolves the
-                // LevelChunkSection when y crosses a 16-block vertical
-                // boundary. Per-block reflective work drops from 7
-                // invokes to 2 (cached getState + setBlockState).
+                // Resolve serverLevel + levelChunk once per chunk so
+                // writeBlock only re-resolves the section on Y crossings.
                 ChunkDirectWriter.ChunkContext chunkCtx =
                         ChunkDirectWriter.prepareChunk(world, cx, cz);
 
@@ -582,10 +354,8 @@ public final class RollbackEngine {
                     }
                 }
                 ChunkDirectWriter.finishChunk(chunkCtx);
-                // One chunk-data packet per chunk — the NMS direct
-                // write doesn't queue per-block client packets, so we
-                // push the new state to viewers in a single
-                // ClientboundLevelChunkWithLightPacket per chunk.
+                // Direct NMS writes skip the per-block packet queue,
+                // so push the new chunk to viewers ourselves.
                 try {
                     ChunkResender.resend(world, cx, cz);
                 } catch (RuntimeException ignored) {
@@ -595,8 +365,6 @@ public final class RollbackEngine {
             blocksThisTick += chunkEnd - i;
             i = chunkEnd;
 
-            // Yield once we've spent the tick-budget OR hit the
-            // hard batchSize cap (watchdog safeguard).
             if (System.nanoTime() - tickStart >= budgetNanos
                     || blocksThisTick >= batchSize) {
                 break;
@@ -617,35 +385,10 @@ public final class RollbackEngine {
         }
     }
 
-    /**
-     * Off-main-thread variant of the per-chunk apply. Invoked from
-     * {@link #applyChunkByChunk} when a {@link #worldWriteExecutor} is
-     * wired.
-     *
-     * <p>Per chunk:
-     * <ol>
-     *   <li><b>Main thread (this method entry):</b> walk to the chunk
-     *       boundary, snapshot the per-block (x, y, z, BlockData)
-     *       arrays — fast, ~1 ms even for thousands of blocks.</li>
-     *   <li><b>Worker thread (executor):</b> resolve the chunk via
-     *       {@link ChunkDirectWriter#prepareChunk} and run the
-     *       per-block {@code LevelChunkSection.setBlockState} loop.
-     *       This is the bulk of per-chunk compute (5-50 ms).
-     *       PalettedContainer's per-section lock serializes against
-     *       any concurrent main-thread reads.</li>
-     *   <li><b>Main thread (post-processing on the next tick):</b>
-     *       apply tile-entity state for non-simple blocks (chests /
-     *       signs / banners), call {@link ChunkDirectWriter#finishChunk}
-     *       (markUnsaved), broadcast a chunk-update packet via
-     *       {@link ChunkResender}, build inverses + Applied results.
-     *       ~2 ms per chunk.</li>
-     *   <li>Recurse to the next chunk via the main-thread scheduler.</li>
-     * </ol>
-     *
-     * <p>Net main-thread cost per chunk: ~2 ms (post-processing) — a
-     * 24× drop from ~50 ms when palette writes ran on main. Server TPS
-     * during a 2M rollback stays at or near 20.
-     */
+    // Off-main variant of applyChunkByChunk. Main thread enters and
+    // walks to the chunk boundary, then the worker runs the bulk
+    // setBlockState loop, then we hop back to main for tile-entity
+    // state and the chunk packet.
     private void applyOneChunkAsync(int from,
                                     List<RollbackEffect> effects,
                                     RollbackResult[] resultArray,
@@ -659,25 +402,6 @@ public final class RollbackEngine {
                                     CompletableFuture<List<RollbackResult>> done,
                                     java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         int total = faweCandidateIndices.size();
-        // Two-stage per-chunk pipeline:
-        //   STAGE 1 — pure compute / NMS palette write. Runs on
-        //             worldWriteExecutor. Walks chunk boundary,
-        //             Bukkit.getWorld lookup (thread-safe), per-block
-        //             BlockData resolution via blockDataFor cache,
-        //             addPluginChunkTicket (thread-safe per Paper),
-        //             prepareChunk + N×LevelChunkSection.setBlockState
-        //             (PalettedContainer is per-section locked).
-        //
-        //   STAGE 2 — Bukkit-touching post-processing. Hops to main
-        //             thread for: applyTileEntityState (BlockState
-        //             API), ChunkResender packet broadcast,
-        //             scheduleNextChunk (Bukkit scheduler), the
-        //             optional player action bar update.
-        //
-        // Server-thread cost per chunk drops to whatever the post
-        // loop needs (~2 ms typical: tile entity dispatch + packet
-        // build + N×Applied alloc). Everything else runs on the
-        // worker.
         final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
         java.util.concurrent.CompletableFuture
                 .supplyAsync(() -> {
@@ -698,10 +422,8 @@ public final class RollbackEngine {
 
                     World world = Bukkit.getWorld(worldId);
                     if (world == null) {
-                        // Mark all skipped from the worker — resultArray
-                        // writes are visible to main thread after the
-                        // future completes (happens-before on
-                        // future.complete → whenComplete callback).
+                        // Worker writes to resultArray are visible
+                        // on main after future.complete (happens-before).
                         for (int j = from; j < chunkEnd; j++) {
                             int targetIndex = faweCandidateIndices.get(j);
                             RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
@@ -723,10 +445,8 @@ public final class RollbackEngine {
                         }
                     }
 
-                    // Pin the chunk loaded for the lifetime of this
-                    // chunk's apply. Paper documents addPluginChunkTicket
-                    // as thread-safe (uses the chunk system's own
-                    // per-chunk lock). Released in stage 2.
+                    // Pin the chunk loaded for this chunk's apply.
+                    // addPluginChunkTicket is thread-safe per Paper.
                     boolean ticketAdded = false;
                     if (ticketHolder != null) {
                         try {
@@ -735,20 +455,9 @@ public final class RollbackEngine {
                         }
                     }
 
-                    // Bulk palette writes + Applied/inverse build for
-                    // simple blocks (the 99%+ case). PalettedContainer
-                    // is internally locked per section so concurrent
-                    // main-thread reads stay consistent.
-                    //
-                    // The fold-in here is the optimization the recent
-                    // spark profile hinted at — calling
-                    // FaweRollback.isSimple on the main thread for 10M
-                    // blocks lit up signFront() / containerItems() /
-                    // bannerPatterns() etc. as hot non-inlinable
-                    // method-chains on the server tick. By doing the
-                    // isSimple check + Applied/inverse alloc here on
-                    // the worker, main thread only sees the small set
-                    // of blocks that actually need tile-entity work.
+                    // Do the isSimple check and Applied/inverse alloc
+                    // here on the worker so main thread only handles
+                    // the small slice of blocks with tile-entity state.
                     ChunkDirectWriter.ChunkContext ctx =
                             ChunkDirectWriter.prepareChunk(world, cx, cz);
                     java.util.BitSet nonSimpleMask = new java.util.BitSet(chunkSize);
@@ -766,29 +475,22 @@ public final class RollbackEngine {
                             ctx.writeBlock(loc.x(), loc.y(), loc.z(), writes[j]);
                         }
                         if (FaweRollback.isSimple(replacement)) {
-                            // No tile-entity state to round-trip — the
-                            // palette write above is the whole apply.
-                            // Build the inverse + Applied result here so
-                            // main thread doesn't have to.
+                            // No tile entity to apply; palette write
+                            // is the whole apply. Build Applied here.
                             RollbackEffect inverse = new RollbackEffect.BlockReplace(
                                     loc, replacement, effect.expectedCurrent());
                             resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
                         } else {
-                            // Container / sign / banner / jukebox /
-                            // decorated pot — main thread has to call
-                            // BlockState.update for the tile-entity
-                            // payload. Defer to stage 3.
+                            // Needs BlockState.update on main thread.
                             nonSimpleMask.set(j);
                         }
                     }
 
                     return new ChunkPipelineResult(world, cx, cz, chunkEnd, ctx, writes, ticketAdded, nonSimpleMask);
                 }, worldWriteExecutor)
-                // Hop back to main for stage 2.
                 .whenComplete((result, throwable) -> scheduler.onMainThread(() -> {
                     if (result == null || result.world() == null) {
-                        // Worker either threw or marked the whole chunk
-                        // skipped — either way, just advance.
+                        // Worker threw or marked the chunk skipped.
                         int next = result != null ? result.chunkEnd() : from + 1;
                         scheduleNextChunk(next, effects, resultArray, faweCandidateIndices,
                                 faweCandidateEffects, faweApplied, useFawe,
@@ -803,13 +505,9 @@ public final class RollbackEngine {
                     org.bukkit.block.data.BlockData[] writes = result.writes();
                     java.util.BitSet nonSimpleMask = result.nonSimpleMask();
                     try {
-                        // Only iterate the (typically empty) set of
-                        // non-simple blocks: containers, signs,
-                        // banners, jukeboxes, decorated pots. Worker
-                        // already wrote palette + Applied for every
-                        // simple block. Main thread does only the
-                        // BlockState.update tile-entity round-trip
-                        // here.
+                        // Worker already handled every simple block.
+                        // Only iterate the ones that need tile-entity
+                        // state applied here.
                         for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
                                 j = nonSimpleMask.nextSetBit(j + 1)) {
                             int targetIndex = faweCandidateIndices.get(from + j);
@@ -818,9 +516,8 @@ public final class RollbackEngine {
                             BlockLocation loc = effect.location();
                             try {
                                 if (ctx == null) {
-                                    // prepareChunk failed on worker —
-                                    // legacy single-block fallback on
-                                    // main thread for this cell.
+                                    // Worker's prepareChunk failed; fall
+                                    // back to a single-block write here.
                                     ChunkDirectWriter.writeBlock(
                                             world, loc.x(), loc.y(), loc.z(), writes[j]);
                                 }
@@ -856,20 +553,9 @@ public final class RollbackEngine {
                 }));
     }
 
-    /**
-     * Result handed from the worker thread back to main thread for a
-     * single chunk's apply. Carries everything stage 3 needs for the
-     * narrow set of Bukkit-API operations that have to run on the
-     * server tick — tile-entity state for non-simple blocks (the
-     * indices of which are the only set bits in {@code nonSimpleMask}),
-     * the chunk-update packet broadcast, the {@code finishChunk}
-     * markUnsaved, and the per-chunk ticket release.
-     *
-     * <p>Field {@code world} is null when the worker bailed because
-     * the world is no longer loaded (already-marked-skipped blocks);
-     * main thread fast-paths through to scheduleNextChunk in that
-     * case.
-     */
+    // Carries one chunk's apply state from worker back to main.
+    // world is null when the worker bailed (unloaded world); main
+    // thread then just advances to the next chunk.
     private record ChunkPipelineResult(
             World world,
             int cx,
@@ -881,11 +567,6 @@ public final class RollbackEngine {
             java.util.BitSet nonSimpleMask) {
     }
 
-    /**
-     * Schedule the next chunk's apply for the next tick. Both the
-     * sync and async paths funnel through this so cancellation +
-     * Phase 4/5 transition stays uniform.
-     */
     private void scheduleNextChunk(int next,
                                    List<RollbackEffect> effects,
                                    RollbackResult[] resultArray,
@@ -904,20 +585,14 @@ public final class RollbackEngine {
     }
 
 
-    /**
-     * Phase 4 (containers, single-tick) → Phase 5 (entity ops + custom
-     * handlers, chunked the same way Phase 3 is). Called once Phase 3 has
-     * fully drained.
-     */
+    // Containers (one batched apply per chest) then leftover entity
+    // ops and custom handlers. Called once the block phase drains.
     private void runContainerAndLeftover(List<RollbackEffect> effects,
                                          RollbackResult[] resultArray,
                                          CommandSender sender,
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done) {
-        // Phase 4 — group ContainerSlotWrites by location and apply each
-        // chest in a single getState/update cycle. Typically <100
-        // locations even on big rollbacks; one tick is enough.
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -936,11 +611,9 @@ public final class RollbackEngine {
                     resultArray);
         }
 
-        // Phase 5 — leftover effects (entity spawn/remove, custom).
         applyLeftoverBatch(0, effects, resultArray, sender, scheduler, batchSize, done);
     }
 
-    /** Phase 5 batched the same way Phase 3 is. */
     private void applyLeftoverBatch(int from,
                                     List<RollbackEffect> effects,
                                     RollbackResult[] resultArray,
@@ -973,13 +646,8 @@ public final class RollbackEngine {
         }
     }
 
-    /**
-     * Apply ONLY the tile-entity portion of {@code snapshot} to
-     * {@code block} — assumes the material + blockdata are already
-     * correct (e.g. just written by FAWE). Calls {@code BlockState.update}
-     * with physics off; skips the redundant {@code block.setType} and
-     * {@code state.setBlockData} that {@link #applySnapshot} performs.
-     */
+    // Apply only the tile-entity payload, assuming material and
+    // blockdata are already correct.
     private void applyTileEntityState(Block block, BlockSnapshot snapshot) {
         BlockState state = block.getState();
 
@@ -1005,14 +673,10 @@ public final class RollbackEngine {
         }
 
         if (state instanceof Jukebox) {
-            // Don't write through the snapshot inventory — Paper's
-            // snapshot Jukebox has a detached BlockEntity (this.level
-            // == null), and the underlying setItem path eventually
-            // calls Level.registryAccess() to resolve the disc's
-            // sound registry, which NPEs. Get the LIVE state and
-            // setRecord on that — the live wrapper holds a real
-            // Level reference. Wrapped in a try so a failure here
-            // doesn't kill the whole rollback's apply step.
+            // Paper's snapshot Jukebox has a detached BlockEntity
+            // (level == null) and setItem NPEs when it tries to
+            // resolve the disc's sound registry. Use the live state
+            // instead so we have a real Level reference.
             try {
                 org.bukkit.block.BlockState live = block.getState(false);
                 if (live instanceof Jukebox liveJukebox) {
@@ -1024,7 +688,6 @@ public final class RollbackEngine {
                 }
             } catch (Throwable jukeboxFailure) {
                 // Disc lost; block stays a jukebox without its record.
-                // Acceptable — rare path, not worth aborting the rollback.
             }
         }
 
@@ -1036,12 +699,8 @@ public final class RollbackEngine {
         state.update(true, false);
     }
 
-    /**
-     * Restore the 4 sides of a decorated pot from the captured names.
-     * Order matches {@link org.bukkit.block.DecoratedPot.Side} enum
-     * declaration; the snapshot list is built the same way in
-     * {@link BlockSnapshots#capture}.
-     */
+    // Order matches DecoratedPot.Side enum declaration; the snapshot
+    // list is built the same way in BlockSnapshots.capture.
     private void applyPotSherds(org.bukkit.block.DecoratedPot pot, List<String> names) {
         org.bukkit.block.DecoratedPot.Side[] sides = org.bukkit.block.DecoratedPot.Side.values();
         for (int i = 0; i < sides.length && i < names.size(); i++) {
@@ -1049,18 +708,13 @@ public final class RollbackEngine {
                 Material material = Material.valueOf(names.get(i));
                 pot.setSherd(sides[i], material);
             } catch (IllegalArgumentException ignored) {
-                // Stored material name no longer exists in this MC
-                // version; leave that face at default (brick).
+                // Material name gone in this MC version; leave default.
             }
         }
     }
 
-    /**
-     * Apply every {@code ContainerSlotWrite} for one location in a single
-     * {@code getState}/{@code update} cycle. Each slot still gets its
-     * own precondition check + per-slot skip reason; only the surrounding
-     * Bukkit roundtrips collapse.
-     */
+    // Apply every slot write for one location in one getState/update
+    // cycle. Per-slot precondition checks still run individually.
     private void applyContainerBatch(BlockLocation location,
                                      List<Integer> indices,
                                      List<RollbackEffect.ContainerSlotWrite> writes,
@@ -1116,23 +770,11 @@ public final class RollbackEngine {
         }
     }
 
-    /**
-     * Emit a lightweight rollback-source record so the wand and search
-     * show "ROLLBACK placed STONE" / "ROLLBACK broke STONE" at the
-     * affected block. Uses {@link BlockUseRecord} (just context + target
-     * material) rather than a {@link BlockPlaceRecord} that would carry
-     * heavy {@link BlockSnapshot} before/after blobs — for a 150-block
-     * rollback that's the difference between 150 lightweight records and
-     * 150 records each holding two snapshots, which (combined with FAWE's
-     * write buffer) was enough to push the JVM heap into FAWE's "slow
-     * down to avoid OOM" mode and watchdog the tick.
-     *
-     * <p>Event name flips on the replacement: AIR target reads as
-     * {@code "rolledBreak"} (undo of a place / restore-to-air), non-AIR
-     * reads as {@code "rolledPlace"} (rollback of a break / restore from
-     * air). Past-tense rendering is configured in {@code config.conf}
-     * under {@code events.rolledBreak} / {@code events.rolledPlace}.
-     */
+    // Emit a lightweight wand-attribution record on a rolled block so
+    // searches show "ROLLBACK placed STONE". BlockUseRecord avoids
+    // carrying the before/after snapshot blobs that BlockPlaceRecord
+    // would, which mattered: at 150 blocks the snapshot pairs combined
+    // with FAWE's write buffer were enough to tip the heap into OOM.
     private void emitRollbackSourceRecord(CommandSender sender, BlockLocation location, BlockSnapshot after) {
         if (recorder == null || support == null) {
             return;
@@ -1141,20 +783,16 @@ public final class RollbackEngine {
         Instant occurred = support.now();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operatorName);
-        // Build RecordContext directly with a fast-random UUID rather
-        // than going through {@code support.context} which delegates to
-        // {@link RecordContext#fresh} (uses SecureRandom). 150 rollback
-        // blocks = 150 entropy reads on the main thread otherwise.
+        // Skip support.context (which uses SecureRandom) to avoid
+        // entropy reads on the main thread for every rolled block.
         RecordContext ctx = new RecordContext(
                 RecordingSupport.fastRandomUUID(),
                 occurred,
                 support.expiresAt(occurred),
                 origin, source, location, support.serverName());
         boolean toAir = after == null || after.material() == Material.AIR;
-        // Lowercase + hyphenated names match {@code shulker-open} et al
-        // and dodge the case-sensitivity quirk in {@link
-        // net.medievalrp.spyglass.api.event.EventCatalog#recordClassOf}
-        // (it lowercases on lookup but the map preserves case).
+        // Lowercase-hyphenated form matches shulker-open etc. and
+        // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
         String event = toAir ? "rolled-break" : "rolled-place";
         String target = (after == null ? Material.AIR : after.material()).name();
         recorder.record(new BlockUseRecord(
@@ -1264,13 +902,10 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Target is no longer a container."));
         }
 
-        // Some Bukkit inventory events report slot = -1 when the
-        // change wasn't tied to a specific slot (auto-stacking, drag
-        // drops, etc.) and the original container is sometimes wider
-        // than the current one (player downgraded chest -> hopper).
-        // Validate the slot against the live inventory size before
-        // calling getItem(), which throws IndexOutOfBoundsException
-        // for out-of-range indices.
+        // Some Bukkit inventory events fire with slot = -1 (drag /
+        // auto-stack) and the recorded container may be wider than
+        // the live one (chest -> hopper downgrade). Range-check
+        // before getItem to avoid IndexOutOfBoundsException.
         int slot = effect.slot();
         int size = container.getInventory().getSize();
         if (slot < 0 || slot >= size) {
@@ -1318,14 +953,10 @@ public final class RollbackEngine {
         }
 
         if (state instanceof Jukebox) {
-            // Don't write through the snapshot inventory — Paper's
-            // snapshot Jukebox has a detached BlockEntity (this.level
-            // == null), and the underlying setItem path eventually
-            // calls Level.registryAccess() to resolve the disc's
-            // sound registry, which NPEs. Get the LIVE state and
-            // setRecord on that — the live wrapper holds a real
-            // Level reference. Wrapped in a try so a failure here
-            // doesn't kill the whole rollback's apply step.
+            // Paper's snapshot Jukebox has a detached BlockEntity
+            // (level == null) and setItem NPEs when it tries to
+            // resolve the disc's sound registry. Use the live state
+            // instead so we have a real Level reference.
             try {
                 org.bukkit.block.BlockState live = block.getState(false);
                 if (live instanceof Jukebox liveJukebox) {
@@ -1337,7 +968,6 @@ public final class RollbackEngine {
                 }
             } catch (Throwable jukeboxFailure) {
                 // Disc lost; block stays a jukebox without its record.
-                // Acceptable — rare path, not worth aborting the rollback.
             }
         }
 
