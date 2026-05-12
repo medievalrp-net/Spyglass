@@ -24,23 +24,17 @@ public sealed interface RollbackEffect permits
     }
 
     /**
-     * Third-party rollback effect dispatched through a registered
-     * {@link RollbackEffectHandler}. The {@code type} is the handler
-     * key; {@code payload} is whatever the handler chose to encode
-     * (treated as opaque bytes by Spyglass's storage and undo
-     * layers).
+     * Third-party rollback effect routed to a registered
+     * {@link RollbackEffectHandler}. Use this for state your plugin
+     * owns that Spyglass's built-in effects can't model (faction
+     * territory, custom-block bridges, plugin-managed NPCs).
      *
-     * <p>Use this for restoring or reversing state your plugin owns
-     * (faction territory, custom-block bridges, plugin-managed NPCs,
-     * etc.) — anything Spyglass's built-in effects can't model.
-     *
-     * @param type handler key (e.g. {@code "faction-territory"}); must
-     *     match a {@link RollbackEffectHandler#type()} registered at
-     *     restore time, otherwise the effect is skipped with reason
-     *     {@code NotSupported}
-     * @param location best-effort location for display / wand
+     * @param type handler key; must match a registered
+     *     {@link RollbackEffectHandler#type()} at restore time or the
+     *     effect is skipped with {@code NotSupported}
+     * @param location best-effort location for display and wand
      *     attribution; may be {@code null}
-     * @param payload handler-defined byte payload; never {@code null}
+     * @param payload handler-defined bytes; never {@code null}
      */
     record Custom(String type, BlockLocation location, byte[] payload) implements RollbackEffect {
         public Custom {
