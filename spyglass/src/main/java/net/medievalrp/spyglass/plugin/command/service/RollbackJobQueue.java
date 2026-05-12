@@ -12,23 +12,14 @@ import java.util.function.Consumer;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * FIFO queue of rollback / restore jobs. One job runs at a time —
- * concurrent {@code /sg rollback} commands enqueue and wait their
- * turn. Provides cancellation (pending or in-flight) and a recent-
- * history ring buffer for {@code /sg rbqueue} visibility.
- *
- * <p>The queue is in-memory only — restart wipes pending and recent.
- * Crash-resume of an in-flight job is handled separately via
- * {@code RollbackResumeStore} (writes the in-flight job's query to
- * disk so a restart can offer to re-run it).
- *
- * <p>Thread-safety: all methods are guarded by a single
- * {@link ReentrantLock}. State transitions ({@code start, finish,
- * cancel}) and queue mutations need the lock; the per-job
- * {@code AtomicBoolean cancelFlag} is read by the engine off-lock to
- * avoid blocking the apply loop.
- */
+// FIFO queue of rollback/restore jobs. One runs at a time;
+// concurrent commands enqueue and wait. In-memory only; pending and
+// recent are wiped by restart. Crash-resume of an interrupted job is
+// handled by RollbackResumeStore.
+//
+// Thread-safety: a single ReentrantLock guards state transitions and
+// queue mutations. The engine reads the per-job cancelFlag off-lock
+// so the apply loop doesn't block.
 @ApiStatus.Internal
 public final class RollbackJobQueue {
 
@@ -43,25 +34,16 @@ public final class RollbackJobQueue {
     public RollbackJobQueue() {
     }
 
-    /**
-     * Wire the runner that gets called when a job is ready to start.
-     * Called once at plugin startup after the {@link RollbackService}
-     * exists (the queue and the service have a circular reference —
-     * service submits jobs to queue, queue calls service to run
-     * them — so the runner is set after both are constructed).
-     *
-     * <p>Invoked under the queue's internal lock — the runner should
-     * kick off async work and return quickly. The runner MUST
-     * eventually call {@link #finish} on the job so the queue can
-     * dispatch the next pending one.
-     */
+    // Wired at plugin startup; the queue and service have a circular
+    // ref so the runner gets set after both are constructed. The
+    // runner is invoked under the lock, so it must kick off async
+    // work and return quickly, and it must eventually call finish().
     public void setRunner(Consumer<RollbackJob> runner) {
         this.runner = runner;
     }
 
-    /** Submit a new job. Starts immediately if no other is in flight,
-     *  otherwise queues. Returns the queue position (0 = running,
-     *  >0 = N-th in line) so the operator can be told. */
+    // Returns 0 if the job is running immediately, otherwise the
+    // queue position.
     public int submit(RollbackJob job) {
         if (runner == null) {
             throw new IllegalStateException(
@@ -83,16 +65,11 @@ public final class RollbackJobQueue {
         }
     }
 
-    /** Called by the runner when a job finishes (any terminal state).
-     *  Moves the job to recent, dispatches the next pending job if
-     *  any. */
     public void finish(RollbackJob job, RollbackJob.State terminalState) {
         lock.lock();
         try {
             if (inFlight != job) {
-                // Out-of-band finish (e.g. cancelled while still
-                // pending). No-op for the in-flight slot; just file
-                // it away in recent.
+                // Job was cancelled while still pending; just file it.
                 job.state = terminalState;
                 if (job.endTime == null) job.endTime = Instant.now();
                 pushRecent(job);
@@ -102,7 +79,6 @@ public final class RollbackJobQueue {
             job.state = terminalState;
             if (job.endTime == null) job.endTime = Instant.now();
             pushRecent(job);
-            // Drain to next pending
             RollbackJob next = pending.pollFirst();
             if (next != null && runner != null) {
                 inFlight = next;
@@ -115,10 +91,8 @@ public final class RollbackJobQueue {
         }
     }
 
-    /** Cancel a job by id. If pending, removes from the queue and
-     *  marks CANCELLED. If in-flight, sets the cancel flag — the
-     *  engine sees it at the next chunk boundary and stops. Returns
-     *  the affected job, or empty if no match. */
+    // Pending jobs are removed and marked CANCELLED. In-flight jobs
+    // get a flag the engine reads at the next chunk boundary.
     public Optional<RollbackJob> cancel(UUID jobId) {
         lock.lock();
         try {
@@ -141,8 +115,6 @@ public final class RollbackJobQueue {
         }
     }
 
-    /** Convenience: cancel the in-flight job (the most common
-     *  "stop the rollback" action). */
     public Optional<RollbackJob> cancelInFlight() {
         lock.lock();
         try {
@@ -154,7 +126,6 @@ public final class RollbackJobQueue {
         }
     }
 
-    /** Snapshot the current queue state for {@code /sg rbqueue list}. */
     public Snapshot snapshot() {
         lock.lock();
         try {
