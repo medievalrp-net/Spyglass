@@ -34,9 +34,8 @@ public final class UndoService {
             sender.sendMessage(Feedback.error("You must be a player to use this command"));
             return;
         }
-        // Pop runs a ClickHouse query + tombstone insert; both are
-        // synchronous HTTP. Bouncing off the main thread keeps the tick
-        // alive — same pattern as {@link RollbackService}'s push.
+        // pop() does a CH query plus tombstone insert over sync HTTP,
+        // so run it off the main thread to keep ticks alive.
         sender.sendMessage(Feedback.querying());
         support.onAsyncThread(() -> {
             Optional<UndoStack.UndoOperation> popped;
@@ -54,18 +53,9 @@ public final class UndoService {
             }
             List<RollbackEffect> effects = popped.get().inverseEffects();
             int batchSize = config.limits().rollbackBatchSize();
-            // Hand the apply phase off to the chunked engine path so a
-            // big undo (e.g. reversing a million-block rollback) yields
-            // between chunks under the same tick budget the rollback
-            // does — no main-thread spike, no TPS drop, identical
-            // visual behavior to a fresh rollback.
-            //
-            // applyAllChunked must be invoked on the main thread (it
-            // asserts {@code Bukkit.isPrimaryThread()}), so we bounce
-            // there to start; the engine's continuations then run on
-            // their own scheduled ticks. The future completes on
-            // whichever thread the last batch finished on (main thread
-            // in practice); thenAccept handles the summary send safely.
+            // Run the apply through the chunked engine so a large
+            // undo yields between chunks like a regular rollback.
+            // applyAllChunked must start on the main thread.
             support.onMainThread(() -> {
                 long startNanos = System.nanoTime();
                 engine.applyAllChunked(effects, player, support, batchSize)
