@@ -203,7 +203,7 @@ public final class ClickHouseRecordStore implements RecordStore {
                 .addEndpoint((ssl ? "https" : "http") + "://" + host + ":" + port)
                 .setUsername(user)
                 .setPassword(password == null ? "" : password)
-                .setDefaultDatabase("default")
+                .setDefaultDatabase(database)
                 // LZ4 on insert traffic only — request bodies are
                 // big and compress well, but small query responses
                 // pay decompression-setup cost without much win.
