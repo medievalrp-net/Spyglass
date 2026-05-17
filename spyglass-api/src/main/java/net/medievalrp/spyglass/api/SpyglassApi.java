@@ -166,6 +166,18 @@ public interface SpyglassApi {
     SpyglassLimits limits();
 
     /**
+     * Identifier the recording server stamps onto every {@link
+     * net.medievalrp.spyglass.api.event.EventRecord} it emits, drawn
+     * from {@code server.name} in Spyglass's config. External recorders
+     * (other plugins pushing events through {@link
+     * #record(net.medievalrp.spyglass.api.event.EventRecord)}) must
+     * pass this same value into {@link
+     * net.medievalrp.spyglass.api.event.RecordContext#fresh} so their
+     * records line up with the host server's in cross-server queries.
+     */
+    String serverName();
+
+    /**
      * The Spyglass plugin's logger. Use this for diagnostics that
      * should appear under the Spyglass log scope rather than your
      * own (e.g. when a custom flag handler rejects malformed config

@@ -36,6 +36,7 @@ public final class SpyglassApiImpl implements SpyglassApi {
     private final Map<String, RollbackEffectHandler> effectHandlers = new LinkedHashMap<>();
     private final Set<String> enabledEvents;
     private final SpyglassLimits limits;
+    private final String serverName;
     private final Logger logger;
 
     public SpyglassApiImpl(Recorder recorder,
@@ -43,12 +44,14 @@ public final class SpyglassApiImpl implements SpyglassApi {
                                Executor queryExecutor,
                                Set<String> enabledEvents,
                                SpyglassLimits limits,
+                               String serverName,
                                Logger logger) {
         this.recorder = recorder;
         this.recordStore = recordStore;
         this.queryExecutor = queryExecutor;
         this.enabledEvents = Set.copyOf(enabledEvents);
         this.limits = limits;
+        this.serverName = serverName;
         this.logger = logger;
     }
 
@@ -135,6 +138,11 @@ public final class SpyglassApiImpl implements SpyglassApi {
     @Override
     public SpyglassLimits limits() {
         return limits;
+    }
+
+    @Override
+    public String serverName() {
+        return serverName;
     }
 
     @Override
