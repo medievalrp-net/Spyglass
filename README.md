@@ -209,3 +209,54 @@ If the JVM crashes mid-rollback, on next startup `/sg rbqueue` shows the interru
 - MongoDB Java driver (POJO codec) or ClickHouse client v2
 - Kyori Adventure for chat rendering
 - Incendo Cloud 2.x for the command framework
+
+## How it works
+
+Event flow, end to end:
+
+1. Bukkit listeners (`spyglass/.../listener/`, ~40 files) hook every interesting event at `EventPriority.MONITOR, ignoreCancelled=true`. Each listener builds an immutable `EventRecord` and hands it to `Recorder.record()`.
+2. `AsyncRecorder` (`spyglass/.../pipeline/AsyncRecorder.java`) puts the record onto an unbounded `LinkedBlockingDeque` and returns immediately. No I/O on the main thread. A `RecordCommittedEvent` is published synchronously to the calling thread so reactive integrations can hook it without coupling to the recorder.
+3. A virtual-thread drain (`spyglass-drain`) polls the queue, batches up to 10 000 records, optionally fsyncs the batch to a per-batch WAL file (`<plugindata>/wal/pending/<uuid>.wal`), then pushes the batch to the configured `RecordStore`. Save failures retry with exponential backoff; the WAL file is deleted only after the DB ack.
+4. The store is either `MongoRecordStore` (single polymorphic collection, codec-dispatched on the `event` field) or `ClickHouseRecordStore` (wide flat table, ReplacingMergeTree, deep snapshots stored as ZSTD-compressed BSON blobs). Both implement keyset pagination so the rollback engine can stream million-row result sets without OOM.
+5. Queries flow the other way: `QueryStringParser` parses `key:value` tokens against `QueryParamHandler`s registered on `SpyglassApiImpl`, builds a `QueryRequest`, and hands it to the store. Mongo uses `PredicateToBson`, ClickHouse uses `PredicateToSql` (values inlined with explicit string-escaping, no `LIKE %x%` user-supplied wildcards).
+
+Rollback adds a second pipeline on top of that:
+
+1. `RollbackService.execute()` parses the same query, builds a `RollbackJob`, persists a `<jobId>.resume` marker (key=value text file at `<plugindata>/resume/`), and submits to `RollbackJobQueue` (in-memory FIFO, one job in flight at a time).
+2. `streamPagesAndApply()` runs on a virtual thread. It flushes the recorder, keyset-paginates the store one page at a time, hands each page's effects to `RollbackEngine.applyAllChunked()`, blocks on the page's apply future before fetching the next page, and updates the resume marker with the cursor after each page.
+3. `RollbackEngine` groups effects by chunk, then alternates: worker thread does the bulk `LevelChunk` palette writes, hops to the main thread for tile-entity state and the chunk-update packet. The main-thread phase is tick-budgeted (default 15 ms) and yields between chunks.
+4. `RollbackPhysicsBlocker` suppresses gravity/cascade ticks inside the rollback bounding box. A plugin chunk ticket is held per chunk for the duration of its write.
+5. Each successful apply emits a lightweight `rolled-place` / `rolled-break` record so the wand can attribute rolled blocks. Inverses are collected (up to `limits.rollback-undo-cap`) and pushed to the per-player undo stack on completion.
+
+Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL batches into the recorder before listeners come online, and `RollbackResumeStore.listPending()` surfaces interrupted rollback markers. The operator runs `/sg rbqueue resume <id>` to re-execute the original query from the saved cursor. The engine's "block hasn't changed" precondition keeps the re-run idempotent.
+
+## Operations / production notes
+
+**Log volume.** A single Paper backend at typical RP load (~30 players) writes ~200-600 events/sec sustained. WorldEdit pastes and TNT bursts spike to 100k+ events/sec for short windows. At the default 4-week `storage.retention`, expect 100-300 GB on Mongo or 20-60 GB on ClickHouse (ZSTD compression on the heavy snapshot columns wins ~5x over Mongo).
+
+**Retention.** A TTL index on `expires_at` ages records out automatically (Mongo runs it every 60 s; ClickHouse drops parts at merge time). `expires_at` is stamped at record time from `storage.retention`, so changing the retention only affects records written after the change - old records keep their original TTL. To force-shrink an existing log, lower the retention, then write a one-off update across the collection (Mongo) or run `OPTIMIZE TABLE ... FINAL` after the TTL fires (ClickHouse).
+
+**Durability.** Default is `storage.durability = "ram"` - fast, but a hard JVM kill loses the in-flight queue (typically <250 ms of events). Set to `"wal-batched"` for any server you care about; the per-batch fsync amortizes to one fsync per 850 ms of events at our peak rate, and recovery on next startup is automatic. The WAL directory is at `<plugindata>/wal/pending/`; if files accumulate across restarts, the drain is failing - check DB reachability before bouncing the plugin.
+
+**Backpressure.** The ingest queue is intentionally unbounded - the plugin will not drop events at intake even when the DB is unreachable. Heap pressure is your early-warning signal, surfaced via the `recorder queue depth ...` WARNING. `storage.queue-capacity` is the warn threshold, not a ceiling; size it to 10x your steady-state peak rate (100 000 is fine for MedievalRP-scale).
+
+**Performance tuning knobs.**
+- `limits.rollback-tick-budget-ms` (default 15) - per-tick budget for the main-thread phase of a rollback. Raise to 30 for faster wall-clock during a maintenance window; the off-main palette write keeps TPS healthy regardless.
+- `limits.rollback-page-size` (default 20 000) - how many records a single store query pulls. Smaller pages bound heap; larger pages reduce round-trips. On ClickHouse, a larger page wins more (CH pays a fixed query-setup cost).
+- `limits.rollback-batch-size` (default 4 000) - effects processed per tick within a page.
+- `limits.rollback-undo-cap` (default 5 000 000) - inverses retained for `/sg undo`. Past this point the rollback still applies; undo is silently dropped.
+- `defaults.radius` - set to 0 to make bare `/sg search` global by default (operator opt-in; the full-table scan is what you asked for).
+
+**Multi-server.** Each backend stamps its `server.name` onto every record (`server` BSON field / CH column). The Velocity proxy module reads the same store and exposes `/sgv` for cross-server search; it never writes records or rolls back. Set `server.name` per backend (`survival`, `lobby`, `creative`, etc.) before pointing more than one backend at the same DB - otherwise records collide on the default name.
+
+**Indexes (Mongo).** `IndexManager.ensureRecordIndexes` creates four compound indexes on every startup: `(source.playerId, occurred desc)`, `(event, occurred desc)`, `(world, x, z, y, occurred desc)`, and a TTL index on `expires_at`. A query that doesn't hit one of these (e.g. unfiltered `iname:` substring search) is a full collection scan - expect minutes on a multi-million-doc store.
+
+**ClickHouse dedup window.** After a WAL replay, the same record id may appear twice in `event_records` until the next part merge (typically seconds to minutes). Plain `count()` queries can over-count; append `FINAL` for strict dedup, or run `OPTIMIZE TABLE spyglass.event_records FINAL DEDUPLICATE` as a one-off. Mongo dedups immediately via `_id`.
+
+**Schema migrations.** ClickHouse: `ClickHouseSchema.ensure()` runs `CREATE TABLE IF NOT EXISTS` plus `ADD COLUMN IF NOT EXISTS` on every boot, and one-shot drops `undo_history` when it detects the pre-chunked layout (dropping the in-flight 24-hour undo window). Mongo: indexes are created idempotently; no destructive migrations.
+
+**WorldEdit / FAWE.** Soft dependency. Without either, `-we` and FAWE bulk-paste capture are unavailable but every other feature works. `WorldEditLifecycleListener` wires up recording mid-session if WE is hot-loaded via `/plugman load`.
+
+**Permissions.** Rollback is destructive; `spyglass.rollback` grants `/sg rollback`, `/sg restore`, `/sg undo`, and `/sg rbqueue` (including `resume` and `cancel`). Default is `op`. Scope it through your permissions plugin before staff grow comfortable using it.
+
+**See also.** `docs/operations.md` for the full runbook (log lines, WAL recovery sequence, ClickHouse dedup, backpressure tuning). The `commands.md` quick-reference is concise; `API.md` covers the integration surface for third-party plugins.
