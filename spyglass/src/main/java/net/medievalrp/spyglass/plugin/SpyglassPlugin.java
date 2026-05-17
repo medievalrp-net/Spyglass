@@ -277,7 +277,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 config.defaults().time(),
                 config.storage().retention());
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(
-                recorder, recordStore, queryExecutor, enabledEvents, apiLimits, getLogger());
+                recorder, recordStore, queryExecutor, enabledEvents, apiLimits,
+                config.server().name(), getLogger());
         apiImpl.registerQueryParamHandler(new PlayerParam());
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
