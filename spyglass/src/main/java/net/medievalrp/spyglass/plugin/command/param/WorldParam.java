@@ -34,10 +34,10 @@ public final class WorldParam implements QueryParamHandler {
 
     @Override
     public List<String> suggestions(CommandSender sender, String input) {
-        String lower = input.toLowerCase();
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
         return Bukkit.getWorlds().stream()
                 .map(World::getName)
-                .filter(name -> name.toLowerCase().startsWith(lower))
+                .filter(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith(lower))
                 .toList();
     }
 }

@@ -649,8 +649,15 @@ public final class RollbackEngine {
     // Apply only the tile-entity payload, assuming material and
     // blockdata are already correct.
     private void applyTileEntityState(Block block, BlockSnapshot snapshot) {
-        BlockState state = block.getState();
+        applyTilePayload(block, block.getState(), snapshot);
+    }
 
+    // Apply the tile-entity payload — container items, sign text, banner
+    // patterns, jukebox disc, decorated-pot sherds — onto an already-typed
+    // block, then push the state. Shared by applyTileEntityState (block
+    // already written by ChunkDirectWriter) and applySnapshot (which sets
+    // material + blockdata first).
+    private void applyTilePayload(Block block, BlockState state, BlockSnapshot snapshot) {
         if (state instanceof Container container) {
             Inventory inventory = container.getSnapshotInventory();
             inventory.clear();
@@ -930,53 +937,7 @@ public final class RollbackEngine {
         block.setType(snapshot.material(), false);
         BlockState state = block.getState();
         state.setBlockData(Bukkit.createBlockData(snapshot.blockData()));
-
-        if (state instanceof Container container) {
-            Inventory inventory = container.getSnapshotInventory();
-            inventory.clear();
-            for (StoredItem item : snapshot.containerItems()) {
-                inventory.setItem(item.slot(), ItemSerialization.decode(item.data()));
-            }
-        }
-
-        if (state instanceof Sign sign) {
-            writeSign(sign, Side.FRONT, snapshot.signFront());
-            writeSign(sign, Side.BACK, snapshot.signBack());
-        }
-
-        if (state instanceof Banner banner) {
-            List<Pattern> patterns = snapshot.bannerPatterns().stream()
-                    .map(this::parsePattern)
-                    .flatMap(Optional::stream)
-                    .toList();
-            banner.setPatterns(patterns);
-        }
-
-        if (state instanceof Jukebox) {
-            // Paper's snapshot Jukebox has a detached BlockEntity
-            // (level == null) and setItem NPEs when it tries to
-            // resolve the disc's sound registry. Use the live state
-            // instead so we have a real Level reference.
-            try {
-                org.bukkit.block.BlockState live = block.getState(false);
-                if (live instanceof Jukebox liveJukebox) {
-                    org.bukkit.inventory.ItemStack disc =
-                            ItemSerialization.decode(snapshot.jukeboxRecord());
-                    if (disc != null) {
-                        liveJukebox.setRecord(disc);
-                    }
-                }
-            } catch (Throwable jukeboxFailure) {
-                // Disc lost; block stays a jukebox without its record.
-            }
-        }
-
-        if (state instanceof org.bukkit.block.DecoratedPot pot
-                && !snapshot.potSherds().isEmpty()) {
-            applyPotSherds(pot, snapshot.potSherds());
-        }
-
-        state.update(true, false);
+        applyTilePayload(block, state, snapshot);
     }
 
     private boolean matches(BlockSnapshot expected, BlockSnapshot actual) {

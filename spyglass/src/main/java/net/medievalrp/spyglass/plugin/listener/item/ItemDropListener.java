@@ -66,8 +66,8 @@ public final class ItemDropListener implements RecordingListener {
         Block block = event.getBlock();
         String blockName = block.getType().name();
         BlockLocation location = BlockLocations.fromLocation(block.getLocation());
-        Origin origin = support.environmentOrigin(blockName.toLowerCase());
-        Source source = support.environmentSource(blockName.toLowerCase());
+        Origin origin = support.environmentOrigin(blockName.toLowerCase(java.util.Locale.ROOT));
+        Source source = support.environmentSource(blockName.toLowerCase(java.util.Locale.ROOT));
         RecordContext ctx = support.context(origin, source, location);
         recorder.record(ItemDropRecord.of(ctx, stack.getType().name(), stack.getAmount(), stored));
     }
