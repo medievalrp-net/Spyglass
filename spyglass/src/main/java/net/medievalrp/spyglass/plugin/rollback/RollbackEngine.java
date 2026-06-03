@@ -564,7 +564,18 @@ public final class RollbackEngine {
                                    int batchSize,
                                    CompletableFuture<List<RollbackResult>> done,
                                    java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
-        scheduler.onMainThreadLater(1L, () -> applyChunkByChunk(
+        // Dispatch the next chunk immediately (same tick) instead of
+        // burning a deliberate idle tick between chunks. We're already on
+        // the main thread here (the worker-completion block scheduled us),
+        // so onMainThread runs synchronously: it does this chunk's small
+        // post-processing, hands the next chunk's palette write to the
+        // off-main worker, and returns. The worker->main hop for each
+        // chunk's post still provides a natural ~1-tick yield, so the
+        // server keeps getting time between chunks. This is TPS-neutral —
+        // per-tick main-thread work is unchanged (~one chunk's post); it
+        // only removes the extra idle tick the engine used to insert,
+        // roughly halving the tick count of a multi-chunk rollback.
+        scheduler.onMainThread(() -> applyChunkByChunk(
                 next, effects, resultArray, blockReplaceIndices, blockReplaceEffects,
                 sender, scheduler, batchSize, done, cancelFlag));
     }
