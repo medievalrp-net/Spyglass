@@ -83,6 +83,16 @@ public final class RollbackService {
         jobQueue.setRunner(this::runJob);
     }
 
+    // The rollback record cap (limits.rollback-result). <= 0 means
+    // "no cap" — run until the page cursor is exhausted — so a large
+    // grief rollback isn't silently truncated at N records. (Same
+    // 0-means-unbounded convention as defaults.radius=0 => global.)
+    // Mapped to MAX_VALUE so the streaming loop's hardLimit never trips.
+    private int rollbackResultLimit() {
+        int configured = config.limits().rollbackResult();
+        return configured <= 0 ? Integer.MAX_VALUE : configured;
+    }
+
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
     // already-applied cells skip with "block changed" on the re-run.
     public boolean resumeFromSaved(RollbackResumeStore.Saved saved, CommandSender sender) {
@@ -91,7 +101,7 @@ public final class RollbackService {
             RollbackMode mode = saved.mode() == RollbackJob.Mode.RESTORE
                     ? RollbackMode.RESTORE : RollbackMode.ROLLBACK;
             request = forceNoGroup(parser.parse(sender, saved.query(),
-                    config.limits().rollbackResult()), mode);
+                    rollbackResultLimit()), mode);
         } catch (ParamParseException ex) {
             sender.sendMessage(Feedback.error(
                     "Resume failed: " + ex.getMessage() + " (query: " + saved.query() + ")"));
@@ -136,7 +146,7 @@ public final class RollbackService {
     public void execute(CommandSender sender, String raw, RollbackMode mode) {
         QueryRequest request;
         try {
-            request = forceNoGroup(parser.parse(sender, raw, config.limits().rollbackResult()), mode);
+            request = forceNoGroup(parser.parse(sender, raw, rollbackResultLimit()), mode);
         } catch (ParamParseException ex) {
             sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
@@ -218,6 +228,13 @@ public final class RollbackService {
         int totalSkipped = initialSkipped;
         int totalErrors = 0;
         int totalSeen = 0;
+        // Wall-clock phase timers (#9): where a rollback's time actually
+        // goes. query = ClickHouse fetch + record decode; collect = build
+        // effects; prewarm = chunk load; apply = the chunked engine run
+        // (off-main writes + main post-processing + inter-tick yields +
+        // the audit emit).
+        long queryNanos = 0L, collectNanos = 0L, prewarmNanos = 0L, applyNanos = 0L;
+        int pageCount = 0;
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         // Past undoCap inverses we drop the rest. The rollback still
@@ -243,6 +260,7 @@ public final class RollbackService {
                 int remaining = hardLimit - totalSeen;
                 int thisPage = Math.min(pageSize, remaining);
                 net.medievalrp.spyglass.plugin.storage.QueryPage page;
+                long tQuery = System.nanoTime();
                 try {
                     page = store.queryPage(request, cursor, thisPage);
                 } catch (RuntimeException storeFailure) {
@@ -252,11 +270,15 @@ public final class RollbackService {
                             Feedback.error(mode.label() + " failed: " + msg)));
                     return;
                 }
+                queryNanos += System.nanoTime() - tQuery;
+                pageCount++;
                 if (page.records().isEmpty()) {
                     break;
                 }
                 totalSeen += page.records().size();
+                long tCollect = System.nanoTime();
                 List<RollbackEffect> effects = collectEffectsFromRecords(page.records(), mode);
+                collectNanos += System.nanoTime() - tCollect;
                 if (effects.isEmpty()) {
                     cursor = page.next();
                     if (cursor == null) {
@@ -267,8 +289,11 @@ public final class RollbackService {
                 // Pre-warm chunks off-thread, then apply. Blocking
                 // on the apply future before fetching the next page
                 // keeps heap bounded to one page's effects.
+                long tPrewarm = System.nanoTime();
                 preWarmChunksForRecords(page.records()).join();
+                prewarmNanos += System.nanoTime() - tPrewarm;
                 List<RollbackResult> results;
+                long tApply = System.nanoTime();
                 try {
                     java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
                             new java.util.concurrent.CompletableFuture<>();
@@ -287,6 +312,7 @@ public final class RollbackService {
                             Feedback.error(mode.label() + " failed: " + msg)));
                     return;
                 }
+                applyNanos += System.nanoTime() - tApply;
                 for (RollbackResult r : results) {
                     if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
@@ -346,6 +372,13 @@ public final class RollbackService {
         }
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+        logger.info(String.format(
+                "Spyglass %s %s timings: query=%dms collect=%dms prewarm=%dms apply=%dms"
+                        + " | %d pages, %d chunks, %d applied, %dms total",
+                mode.label(), job.shortId(),
+                queryNanos / 1_000_000L, collectNanos / 1_000_000L,
+                prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
+                pageCount, chunkKeys.size(), totalApplied, elapsedMs));
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,
                 chunkKeys.size(), elapsedMs, inverses);
         boolean truncated = undoTruncated;
