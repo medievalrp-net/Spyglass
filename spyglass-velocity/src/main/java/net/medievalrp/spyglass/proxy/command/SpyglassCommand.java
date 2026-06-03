@@ -89,7 +89,7 @@ public final class SpyglassCommand implements SimpleCommand {
             return;
         }
 
-        String sub = args[0].toLowerCase();
+        String sub = args[0].toLowerCase(java.util.Locale.ROOT);
         String[] rest = Arrays.copyOfRange(args, 1, args.length);
 
         switch (sub) {
