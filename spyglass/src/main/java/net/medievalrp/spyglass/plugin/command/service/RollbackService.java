@@ -93,6 +93,15 @@ public final class RollbackService {
         return configured <= 0 ? Integer.MAX_VALUE : configured;
     }
 
+    // Submit a page read to the prefetch executor so it overlaps the
+    // previous page's apply. cur is a parameter (not the loop's mutable
+    // cursor) so the lambda capture stays effectively-final.
+    private java.util.concurrent.Future<net.medievalrp.spyglass.plugin.storage.QueryPage> submitQuery(
+            java.util.concurrent.ExecutorService exec, QueryRequest req,
+            net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cur, int size) {
+        return exec.submit(() -> store.queryPage(req, cur, size));
+    }
+
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
     // already-applied cells skip with "block changed" on the re-run.
     public boolean resumeFromSaved(RollbackResumeStore.Saved saved, CommandSender sender) {
@@ -250,40 +259,64 @@ public final class RollbackService {
                     "Resuming from cursor: " + initialApplied + " applied + "
                             + initialSkipped + " skipped before crash.")));
         }
+        // Prefetch pipeline: the next page's ClickHouse read runs on this
+        // executor while the current page applies, so the query phase (the
+        // timings show it is ~half the rollback wall-clock) overlaps the
+        // off-main apply instead of running serially before it. At most one
+        // read is in flight, so heap holds ~two pages of records.
+        java.util.concurrent.ExecutorService prefetch =
+                java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r, "Spyglass-RollbackPrefetch");
+                    t.setDaemon(true);
+                    return t;
+                });
+        java.util.concurrent.Future<net.medievalrp.spyglass.plugin.storage.QueryPage> pending =
+                submitQuery(prefetch, request, cursor, Math.min(pageSize, hardLimit));
         try {
-            while (totalSeen < hardLimit) {
+            while (pending != null) {
                 // Cancellation is checked between pages so the
                 // current page finishes cleanly.
                 if (cancelFlag.get()) {
                     break;
                 }
-                int remaining = hardLimit - totalSeen;
-                int thisPage = Math.min(pageSize, remaining);
                 net.medievalrp.spyglass.plugin.storage.QueryPage page;
                 long tQuery = System.nanoTime();
                 try {
-                    page = store.queryPage(request, cursor, thisPage);
-                } catch (RuntimeException storeFailure) {
-                    logger.warning("Spyglass " + mode.label() + " query page failed: " + storeFailure);
-                    final String msg = storeFailure.getMessage();
+                    page = pending.get();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (java.util.concurrent.ExecutionException ee) {
+                    Throwable cause = ee.getCause() == null ? ee : ee.getCause();
+                    logger.warning("Spyglass " + mode.label() + " query page failed: " + cause);
+                    final String msg = cause.getMessage();
                     support.onMainThread(() -> sender.sendMessage(
                             Feedback.error(mode.label() + " failed: " + msg)));
                     return;
                 }
+                // tQuery now measures only the *wait* for the prefetch — ~0
+                // once the pipeline is warm, because the read completed during
+                // the previous page's apply.
                 queryNanos += System.nanoTime() - tQuery;
                 pageCount++;
                 if (page.records().isEmpty()) {
                     break;
                 }
                 totalSeen += page.records().size();
+                net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor next = page.next();
+                // Kick off the next page's read now, so it runs during this
+                // page's apply rather than after it.
+                if (next != null && totalSeen < hardLimit) {
+                    pending = submitQuery(prefetch, request, next,
+                            Math.min(pageSize, hardLimit - totalSeen));
+                } else {
+                    pending = null;
+                }
                 long tCollect = System.nanoTime();
                 List<RollbackEffect> effects = collectEffectsFromRecords(page.records(), mode);
                 collectNanos += System.nanoTime() - tCollect;
                 if (effects.isEmpty()) {
-                    cursor = page.next();
-                    if (cursor == null) {
-                        break;
-                    }
+                    cursor = next;
                     continue;
                 }
                 // Pre-warm chunks off-thread, then apply. Blocking
@@ -346,7 +379,7 @@ public final class RollbackService {
                             net.kyori.adventure.text.Component.text(
                                     "Rolling back: " + appliedSoFar + " applied, " + skippedSoFar + " skipped")));
                 }
-                cursor = page.next();
+                cursor = next;
                 // Checkpoint to the resume marker so a crash picks
                 // up from here rather than re-querying from the start.
                 RollbackResumeStore.Cursor resumeCursor = cursor == null ? null
@@ -364,6 +397,11 @@ public final class RollbackService {
             support.onMainThread(() -> sender.sendMessage(
                     Feedback.error(mode.label() + " failed: " + msg)));
             return;
+        } finally {
+            // Tear down the prefetch thread on every exit path (normal,
+            // early-return, or exception); shutdownNow interrupts an
+            // in-flight read that the loop already broke away from.
+            prefetch.shutdownNow();
         }
 
         if (totalSeen == 0) {
