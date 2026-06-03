@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
-import net.medievalrp.spyglass.api.rollback.RollbackReason;
 import net.medievalrp.spyglass.api.rollback.RollbackResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bukkit.Bukkit;
@@ -24,19 +23,22 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 /**
- * Chaos tests for {@link RollbackEngine}'s conflict-detection path.
- * Simulates the "world changed between query and apply" scenario by
- * presenting batches where some effects' expected snapshots match
- * the live block state and others do not. Verifies that:
+ * Chaos tests for {@link RollbackEngine}'s bulk apply path.
+ *
+ * <p>Spyglass rolls back by <b>force-overwrite</b>: the chunked apply
+ * path restores every effect to its logged state without first checking
+ * whether the live block still matches what was recorded. (Conflict
+ * detection — skip-if-changed — was an Spyglass behaviour that the
+ * NMS-direct-section rewrite intentionally dropped; transparency comes
+ * from the rolled-place / rolled-break audit records instead.) These
+ * tests pin that contract:
  *
  * <ul>
- *   <li>matching effects are reported as Applied with a correct
- *       inverse,</li>
- *   <li>mismatched effects are reported as Skipped with a
- *       {@link RollbackReason.BlockChanged} reason carrying the live
- *       state,</li>
- *   <li>per-effect results are positionally aligned with the input
- *       list — no cross-talk under batches of 50+ entries.</li>
+ *   <li>every effect is reported {@link RollbackResult.Applied}, even
+ *       when the live block has diverged from the recorded snapshot,</li>
+ *   <li>per-effect results stay positionally aligned with the input
+ *       list — no cross-talk under batches of 50+ entries,</li>
+ *   <li>the engine refuses to run off the main server thread.</li>
  * </ul>
  */
 class RollbackEngineChaosTest {
@@ -44,12 +46,14 @@ class RollbackEngineChaosTest {
     private static final UUID WORLD_ID = UUID.fromString("77777777-7777-7777-7777-777777777777");
 
     @Test
-    void mixedBatchProducesPerEffectAppliedOrBlockChanged() {
+    void forceOverwriteAppliesEveryEffectRegardlessOfLiveState() {
         int total = 50;
-        // Even indices: live state matches expected (rollback-able).
-        // Odd indices: live state diverged (must skip with
-        // BlockChanged). Alternating layout proves the engine
-        // doesn't misalign results under mixed input.
+        // Every effect rolls STONE back over the current block. The odd
+        // indices are wired so the *live* block has diverged to
+        // GRASS_BLOCK — under conflict detection those would skip, but
+        // force-overwrite restores them anyway. The alternating layout
+        // also proves the engine doesn't misalign results under mixed
+        // input.
         List<RollbackEffect> effects = new ArrayList<>();
         for (int i = 0; i < total; i++) {
             BlockLocation loc = new BlockLocation(WORLD_ID, "world", i, 64, 0);
@@ -63,14 +67,17 @@ class RollbackEngineChaosTest {
         when(world.getUID()).thenReturn(WORLD_ID);
         when(world.getName()).thenReturn("world");
 
-        // Per-effect block mocks: even index → matches, odd → doesn't.
+        // Per-effect block mocks: even index → live state matches the
+        // recorded snapshot, odd index → live state has diverged. The
+        // engine never reads these for a conflict check (force-overwrite),
+        // so both must still come back Applied.
         for (int i = 0; i < total; i++) {
-            boolean shouldMatch = (i % 2) == 0;
+            boolean liveMatches = (i % 2) == 0;
             Block block = mock(Block.class);
-            when(block.getType()).thenReturn(shouldMatch ? Material.STONE : Material.GRASS_BLOCK);
+            when(block.getType()).thenReturn(liveMatches ? Material.STONE : Material.GRASS_BLOCK);
             BlockData blockData = mock(BlockData.class);
             when(blockData.getAsString()).thenReturn(
-                    shouldMatch ? "minecraft:stone" : "minecraft:grass_block");
+                    liveMatches ? "minecraft:stone" : "minecraft:grass_block");
             when(block.getBlockData()).thenReturn(blockData);
             when(world.getBlockAt(i, 64, 0)).thenReturn(block);
         }
@@ -84,10 +91,9 @@ class RollbackEngineChaosTest {
             bukkit.when(Bukkit::getPluginManager).thenReturn(pm);
             bukkit.when(() -> Bukkit.getWorld(WORLD_ID)).thenReturn(world);
             bukkit.when(() -> Bukkit.getWorld("world")).thenReturn(world);
-            // The Applied path calls Bukkit.createBlockData when it
-            // pushes the replacement; for the chaos batch we only
-            // care that the engine doesn't blow up. Return a stub
-            // BlockData; the engine doesn't introspect it further.
+            // The apply path calls Bukkit.createBlockData when it pushes
+            // the replacement; return a stub BlockData — the engine
+            // doesn't introspect it further on this path.
             BlockData replacementData = mock(BlockData.class);
             bukkit.when(() -> Bukkit.createBlockData(org.mockito.ArgumentMatchers.anyString()))
                     .thenReturn(replacementData);
@@ -98,51 +104,24 @@ class RollbackEngineChaosTest {
 
             assertThat(results).hasSize(total);
 
-            int appliedCount = 0;
-            int skippedCount = 0;
+            // Force-overwrite: every effect is Applied, including the
+            // odd-indexed blocks whose live state diverged. Nothing is
+            // Skipped for a "block changed" reason — the engine doesn't
+            // conflict-check before writing. Positional alignment is the
+            // load-bearing assertion: results[i] <-> effects[i].
             for (int i = 0; i < total; i++) {
                 RollbackResult result = results.get(i);
-                if ((i % 2) == 0) {
-                    // Even indices matched — expect Applied or
-                    // a benign Error from the apply step (the mock
-                    // BlockData isn't a real one). Either way, NOT
-                    // BlockChanged: Phase 1 conflict-detection saw
-                    // the live state agreed with expected.
-                    if (result instanceof RollbackResult.Applied) {
-                        appliedCount++;
-                    } else if (result instanceof RollbackResult.Skipped skipped) {
-                        assertThat(skipped.reason())
-                                .as("matching effect %d must not be reported as BlockChanged", i)
-                                .isNotInstanceOf(RollbackReason.BlockChanged.class);
-                    }
-                } else {
-                    // Odd indices diverged — must be Skipped
-                    // with BlockChanged.
-                    assertThat(result)
-                            .as("effect %d must be Skipped (live state diverged)", i)
-                            .isInstanceOf(RollbackResult.Skipped.class);
-                    RollbackResult.Skipped skipped = (RollbackResult.Skipped) result;
-                    assertThat(skipped.reason())
-                            .as("effect %d skip reason must be BlockChanged", i)
-                            .isInstanceOf(RollbackReason.BlockChanged.class);
-                    RollbackReason.BlockChanged bc = (RollbackReason.BlockChanged) skipped.reason();
-                    assertThat(bc.actual().material())
-                            .as("BlockChanged.actual must carry the live (mismatched) state")
-                            .isEqualTo(Material.GRASS_BLOCK);
-                    assertThat(bc.expected().material())
-                            .as("BlockChanged.expected echoes the rolled-back snapshot")
-                            .isEqualTo(Material.STONE);
-                    skippedCount++;
-                }
+                assertThat(result)
+                        .as("effect %d must be Applied (force-overwrite ignores live state)", i)
+                        .isInstanceOf(RollbackResult.Applied.class);
+                RollbackResult.Applied applied = (RollbackResult.Applied) result;
+                assertThat(applied.effect())
+                        .as("result %d must carry its original BlockReplace effect", i)
+                        .isInstanceOf(RollbackEffect.BlockReplace.class);
+                assertThat(((RollbackEffect.BlockReplace) applied.effect()).location().x())
+                        .as("result %d must align positionally with its input effect", i)
+                        .isEqualTo(i);
             }
-
-            assertThat(skippedCount)
-                    .as("every odd-indexed effect should skip with BlockChanged")
-                    .isEqualTo(total / 2);
-            // Applied count is best-effort — depends on whether the
-            // mocked apply path succeeded. The skipped count is the
-            // load-bearing assertion of this test.
-            assertThat(appliedCount + skippedCount).isLessThanOrEqualTo(total);
         }
     }
 

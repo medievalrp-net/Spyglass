@@ -5,6 +5,6 @@ public enum RollbackMode {
     RESTORE;
 
     public String label() {
-        return name().toLowerCase();
+        return name().toLowerCase(java.util.Locale.ROOT);
     }
 }

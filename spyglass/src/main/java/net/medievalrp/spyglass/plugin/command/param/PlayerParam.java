@@ -73,7 +73,7 @@ public final class PlayerParam implements QueryParamHandler {
     public List<String> suggestions(CommandSender sender, String input) {
         return Bukkit.getOnlinePlayers().stream()
                 .map(player -> player.getName())
-                .filter(name -> name.toLowerCase().startsWith(input.toLowerCase()))
+                .filter(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith(input.toLowerCase(java.util.Locale.ROOT)))
                 .toList();
     }
 

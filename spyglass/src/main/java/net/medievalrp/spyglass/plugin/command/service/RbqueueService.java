@@ -40,15 +40,15 @@ public final class RbqueueService {
             stop(sender);
             return;
         }
-        if (trimmed.toLowerCase().startsWith("cancel ")) {
+        if (trimmed.toLowerCase(java.util.Locale.ROOT).startsWith("cancel ")) {
             cancel(sender, trimmed.substring("cancel ".length()).trim());
             return;
         }
-        if (trimmed.toLowerCase().startsWith("cancel")) {
+        if (trimmed.toLowerCase(java.util.Locale.ROOT).startsWith("cancel")) {
             stop(sender);
             return;
         }
-        if (trimmed.toLowerCase().startsWith("resume ")) {
+        if (trimmed.toLowerCase(java.util.Locale.ROOT).startsWith("resume ")) {
             resume(sender, trimmed.substring("resume ".length()).trim());
             return;
         }
@@ -168,7 +168,7 @@ public final class RbqueueService {
 
     private void resume(CommandSender sender, String idArg) {
         for (var saved : resumeStore.listPending()) {
-            if (saved.id().toString().toLowerCase().startsWith(idArg.toLowerCase())
+            if (saved.id().toString().toLowerCase(java.util.Locale.ROOT).startsWith(idArg.toLowerCase(java.util.Locale.ROOT))
                     || saved.shortId().equalsIgnoreCase(idArg)) {
                 if (rollbackService.resumeFromSaved(saved, sender)) {
                     sender.sendMessage(Component.text(
@@ -188,10 +188,10 @@ public final class RbqueueService {
         if (idArg.length() == 36) {
             try { return UUID.fromString(idArg); } catch (IllegalArgumentException ignored) { return null; }
         }
-        String prefix = idArg.toLowerCase();
+        String prefix = idArg.toLowerCase(java.util.Locale.ROOT);
         RollbackJobQueue.Snapshot snap = queue.snapshot();
         for (RollbackJob j : allJobs(snap)) {
-            if (j.id.toString().toLowerCase().startsWith(prefix)) {
+            if (j.id.toString().toLowerCase(java.util.Locale.ROOT).startsWith(prefix)) {
                 return j.id;
             }
         }

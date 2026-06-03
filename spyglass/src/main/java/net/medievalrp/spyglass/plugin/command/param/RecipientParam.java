@@ -54,10 +54,10 @@ public final class RecipientParam implements QueryParamHandler {
 
     @Override
     public List<String> suggestions(CommandSender sender, String input) {
-        String lower = input.toLowerCase();
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
         return Bukkit.getOnlinePlayers().stream()
                 .map(p -> p.getName())
-                .filter(name -> name.toLowerCase().startsWith(lower))
+                .filter(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith(lower))
                 .toList();
     }
 

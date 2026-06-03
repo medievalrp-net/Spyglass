@@ -228,7 +228,7 @@ Rollback adds a second pipeline on top of that:
 4. `RollbackPhysicsBlocker` suppresses gravity/cascade ticks inside the rollback bounding box. A plugin chunk ticket is held per chunk for the duration of its write.
 5. Each successful apply emits a lightweight `rolled-place` / `rolled-break` record so the wand can attribute rolled blocks. Inverses are collected (up to `limits.rollback-undo-cap`) and pushed to the per-player undo stack on completion.
 
-Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL batches into the recorder before listeners come online, and `RollbackResumeStore.listPending()` surfaces interrupted rollback markers. The operator runs `/sg rbqueue resume <id>` to re-execute the original query from the saved cursor. The engine's "block hasn't changed" precondition keeps the re-run idempotent.
+Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL batches into the recorder before listeners come online, and `RollbackResumeStore.listPending()` surfaces interrupted rollback markers. The operator runs `/sg rbqueue resume <id>` to re-execute the original query from the saved cursor. Rollback force-restores each matched block to its logged state - it does not skip blocks that changed since the event - so re-applying the already-completed prefix is a no-op in outcome (re-writing a block to the value it already holds changes nothing), and the resumed run converges on the same result as an uninterrupted one. Every restored block is itself logged as a `rolled-place` / `rolled-break` record, so the audit trail shows exactly what the rollback touched.
 
 ## Operations / production notes
 
