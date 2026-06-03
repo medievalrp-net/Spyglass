@@ -46,7 +46,7 @@ public final class QueryStringParser {
                     continue;
                 }
                 if (token.startsWith("-")) {
-                    String name = token.substring(1).toLowerCase();
+                    String name = token.substring(1).toLowerCase(java.util.Locale.ROOT);
                     String flagValue = null;
                     int eq = name.indexOf('=');
                     if (eq >= 0) {
@@ -64,7 +64,7 @@ public final class QueryStringParser {
                     alias = "p";
                     value = token;
                 } else {
-                    alias = token.substring(0, colon).toLowerCase();
+                    alias = token.substring(0, colon).toLowerCase(java.util.Locale.ROOT);
                     value = token.substring(colon + 1);
                 }
 
@@ -110,7 +110,7 @@ public final class QueryStringParser {
                     // Hint, not an error: tell the player the default kicked in
                     // and how to override. Operators upgrading from v1 muscle-
                     // memory used to type bare /spyglass search expecting global
-                    // and got 5-block radius back; this nudge preempts the
+                    // and got the default radius back; this nudge preempts the
                     // "why are there no results" follow-up. Suppressed when
                     // defaults.radius=0, which is the operator's "I want
                     // global by default" opt-out.

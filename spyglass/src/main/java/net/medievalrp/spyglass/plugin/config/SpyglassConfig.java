@@ -48,7 +48,7 @@ public record SpyglassConfig(
                         value.node("enabled").getBoolean(true),
                         value.node("past-tense").getString(String.valueOf(key)))));
 
-        String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase();
+        String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
             case "clickhouse" -> Backend.CLICKHOUSE;
             case "mongo", "mongodb" -> Backend.MONGO;
@@ -76,8 +76,8 @@ public record SpyglassConfig(
                         parseDurability(root.node("storage", "durability").getString("ram"))),
                 new Defaults(
                         root.node("defaults", "enabled").getBoolean(true),
-                        root.node("defaults", "radius").getInt(5),
-                        Duration.parse(root.node("defaults", "time").getString("3d"))),
+                        root.node("defaults", "radius").getInt(250),
+                        Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
                         root.node("limits", "max-radius").getInt(250),
                         root.node("limits", "search-result").getInt(1_000),
@@ -198,7 +198,7 @@ public record SpyglassConfig(
     }
 
     private static Durability parseDurability(String raw) {
-        String key = raw == null ? "" : raw.trim().toLowerCase().replace('-', '_');
+        String key = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
         return switch (key) {
             case "wal_batched", "wal" -> Durability.WAL_BATCHED;
             case "ram", "" -> Durability.RAM;

@@ -33,7 +33,7 @@ public final class CustomItemParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("cu requires y or n.");
         }
-        String v = value.trim().toLowerCase();
+        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
         boolean want;
         if (v.equals("y") || v.equals("yes") || v.equals("true") || v.equals("1")) {
             want = true;
@@ -51,7 +51,7 @@ public final class CustomItemParam implements QueryParamHandler {
         if (input == null || input.isEmpty()) {
             return List.of("y", "n");
         }
-        String lower = input.toLowerCase();
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
         List<String> all = List.of("y", "yes", "n", "no");
         return all.stream().filter(s -> s.startsWith(lower)).toList();
     }
