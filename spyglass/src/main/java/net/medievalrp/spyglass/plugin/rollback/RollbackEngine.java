@@ -279,12 +279,79 @@ public final class RollbackEngine {
     // Bottom-up matters: if we restore gravel before its support block,
     // the gravity check on the next tick turns the gravel back into a
     // falling entity.
-    private static void sortParallelByChunk(List<Integer> indices,
-                                            List<RollbackEffect.BlockReplace> effects) {
+    // Package-private for the equivalence test.
+    static void sortParallelByChunk(List<Integer> indices,
+                                    List<RollbackEffect.BlockReplace> effects) {
         int n = indices.size();
         if (n <= 1) {
             return;
         }
+        // Fast path: single world with a coordinate span small enough to
+        // pack (relCx, relCz, y, originalIndex) into one long, then sort a
+        // primitive long[]. No Integer boxing and no per-comparison
+        // List.get / location() / UUID compare — on a ~600K-effect page
+        // the boxed comparator sort was the dominant, GC-spiking cost of
+        // the apply. The original index in the low bits is a stable
+        // tie-break identical to the comparator's Integer.compare(a, b).
+        // Multi-world or a span too wide to pack falls back to the
+        // comparator sort below (same ordering, just slower).
+        UUID world = effects.get(0).location().worldId();
+        int minCx = Integer.MAX_VALUE, maxCx = Integer.MIN_VALUE;
+        int minCz = Integer.MAX_VALUE, maxCz = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
+        boolean singleWorld = true;
+        for (int i = 0; i < n; i++) {
+            BlockLocation l = effects.get(i).location();
+            if (!l.worldId().equals(world)) {
+                singleWorld = false;
+                break;
+            }
+            int cx = l.x() >> 4, cz = l.z() >> 4, y = l.y();
+            if (cx < minCx) minCx = cx;
+            if (cx > maxCx) maxCx = cx;
+            if (cz < minCz) minCz = cz;
+            if (cz > maxCz) maxCz = cz;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+        if (singleWorld) {
+            int cxBits = bitsFor((long) maxCx - minCx);
+            int czBits = bitsFor((long) maxCz - minCz);
+            int yBits = bitsFor((long) maxY - minY);
+            int idxBits = bitsFor(n - 1);
+            if (cxBits + czBits + yBits + idxBits <= 62) {
+                int yPos = idxBits;
+                int czPos = yPos + yBits;
+                int cxPos = czPos + czBits;
+                long idxMask = (1L << idxBits) - 1L;
+                long[] composite = new long[n];
+                for (int i = 0; i < n; i++) {
+                    BlockLocation l = effects.get(i).location();
+                    long relCx = (long) ((l.x() >> 4) - minCx);
+                    long relCz = (long) ((l.z() >> 4) - minCz);
+                    long relY = (long) (l.y() - minY);
+                    composite[i] = (relCx << cxPos) | (relCz << czPos) | (relY << yPos) | (long) i;
+                }
+                java.util.Arrays.sort(composite);
+                int[] order = new int[n];
+                for (int i = 0; i < n; i++) {
+                    order[i] = (int) (composite[i] & idxMask);
+                }
+                applyOrder(indices, effects, order);
+                return;
+            }
+        }
+        sortByComparator(indices, effects);
+    }
+
+    // Bits needed to hold values in [0, span]; 0 when span <= 0.
+    private static int bitsFor(long span) {
+        return span <= 0L ? 0 : 64 - Long.numberOfLeadingZeros(span);
+    }
+
+    private static void sortByComparator(List<Integer> indices,
+                                         List<RollbackEffect.BlockReplace> effects) {
+        int n = indices.size();
         Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) order[i] = i;
         java.util.Arrays.sort(order, (a, b) -> {
@@ -300,8 +367,15 @@ public final class RollbackEngine {
             if (c != 0) return c;
             return Integer.compare(a, b);
         });
+        int[] o = new int[n];
+        for (int i = 0; i < n; i++) o[i] = order[i];
+        applyOrder(indices, effects, o);
+    }
+
+    private static void applyOrder(List<Integer> indices,
+                                   List<RollbackEffect.BlockReplace> effects, int[] order) {
+        int n = order.length;
         Integer[] newIndices = new Integer[n];
-        @SuppressWarnings("unchecked")
         RollbackEffect.BlockReplace[] newEffects = new RollbackEffect.BlockReplace[n];
         for (int i = 0; i < n; i++) {
             newIndices[i] = indices.get(order[i]);
