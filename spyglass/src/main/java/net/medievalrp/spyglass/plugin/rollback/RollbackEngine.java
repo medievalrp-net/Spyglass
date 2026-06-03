@@ -239,10 +239,6 @@ public final class RollbackEngine {
         }
     }
 
-    // Fallback used only when the engine is constructed before
-    // config-wiring sets tickBudgetMs.
-    private static final long TICK_BUDGET_MS = 45L;
-
     // Walk chunks until the tick budget is spent, then yield. Per
     // chunk: write blocks via setBlockData with physics off (gravity
     // ticks suppressed by RollbackPhysicsBlocker), then apply
