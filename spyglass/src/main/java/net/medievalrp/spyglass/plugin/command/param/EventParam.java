@@ -28,7 +28,7 @@ public final class EventParam implements QueryParamHandler {
         String[] parts = value.split(",");
         List<String> names = new java.util.ArrayList<>();
         for (String raw : parts) {
-            String name = raw.trim().toLowerCase();
+            String name = raw.trim().toLowerCase(java.util.Locale.ROOT);
             if (name.isEmpty()) {
                 continue;
             }
@@ -49,7 +49,7 @@ public final class EventParam implements QueryParamHandler {
     @Override
     public List<String> suggestions(CommandSender sender, String input) {
         return enabledEvents.stream()
-                .filter(name -> name.startsWith(input.toLowerCase()))
+                .filter(name -> name.startsWith(input.toLowerCase(java.util.Locale.ROOT)))
                 .sorted()
                 .toList();
     }

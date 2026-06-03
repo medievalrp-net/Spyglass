@@ -43,7 +43,7 @@ public final class SpyglassSuggestions {
 
     private List<String> suggestFor(CommandSender sender, String token) {
         if (token.startsWith("-")) {
-            String lower = token.toLowerCase();
+            String lower = token.toLowerCase(java.util.Locale.ROOT);
             // After the dash there may be `=value` — split on first
             // `=` so that completion against a custom flag's value-side
             // works the same as for built-ins.
@@ -73,7 +73,7 @@ public final class SpyglassSuggestions {
         }
         int colon = token.indexOf(':');
         if (colon > 0) {
-            String alias = token.substring(0, colon).toLowerCase();
+            String alias = token.substring(0, colon).toLowerCase(java.util.Locale.ROOT);
             String partialValue = token.substring(colon + 1);
             Optional<QueryParamHandler> handler = api.queryParam(alias);
             if (handler.isEmpty()) {

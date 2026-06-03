@@ -82,12 +82,12 @@ public final class SpyglassApiImpl implements SpyglassApi {
 
     @Override
     public void registerQueryParamHandler(QueryParamHandler handler) {
-        handler.aliases().forEach(alias -> params.put(alias.toLowerCase(), handler));
+        handler.aliases().forEach(alias -> params.put(alias.toLowerCase(java.util.Locale.ROOT), handler));
     }
 
     @Override
     public Optional<QueryParamHandler> queryParam(String alias) {
-        return Optional.ofNullable(params.get(alias.toLowerCase()));
+        return Optional.ofNullable(params.get(alias.toLowerCase(java.util.Locale.ROOT)));
     }
 
     @Override
@@ -97,12 +97,12 @@ public final class SpyglassApiImpl implements SpyglassApi {
 
     @Override
     public void registerFlagHandler(FlagHandler handler) {
-        handler.aliases().forEach(alias -> flagHandlers.put(alias.toLowerCase(), handler));
+        handler.aliases().forEach(alias -> flagHandlers.put(alias.toLowerCase(java.util.Locale.ROOT), handler));
     }
 
     @Override
     public Optional<FlagHandler> flag(String alias) {
-        return Optional.ofNullable(flagHandlers.get(alias.toLowerCase()));
+        return Optional.ofNullable(flagHandlers.get(alias.toLowerCase(java.util.Locale.ROOT)));
     }
 
     @Override
@@ -112,22 +112,22 @@ public final class SpyglassApiImpl implements SpyglassApi {
 
     @Override
     public void registerDisplayRenderer(String eventName, DisplayRenderer renderer) {
-        renderers.put(eventName.toLowerCase(), renderer);
+        renderers.put(eventName.toLowerCase(java.util.Locale.ROOT), renderer);
     }
 
     @Override
     public Optional<DisplayRenderer> displayRenderer(String eventName) {
-        return Optional.ofNullable(renderers.get(eventName.toLowerCase()));
+        return Optional.ofNullable(renderers.get(eventName.toLowerCase(java.util.Locale.ROOT)));
     }
 
     @Override
     public void registerRollbackEffectHandler(RollbackEffectHandler handler) {
-        effectHandlers.put(handler.type().toLowerCase(), handler);
+        effectHandlers.put(handler.type().toLowerCase(java.util.Locale.ROOT), handler);
     }
 
     @Override
     public Optional<RollbackEffectHandler> rollbackEffectHandler(String type) {
-        return type == null ? Optional.empty() : Optional.ofNullable(effectHandlers.get(type.toLowerCase()));
+        return type == null ? Optional.empty() : Optional.ofNullable(effectHandlers.get(type.toLowerCase(java.util.Locale.ROOT)));
     }
 
     @Override

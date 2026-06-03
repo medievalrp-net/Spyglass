@@ -155,26 +155,25 @@ public final class RollbackEngine {
         }
 
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
-        boolean useFawe = FaweRollback.isAvailable();
 
         // Stage 1 is pure compute (filter, bbox, sort) and runs off
         // the main thread when an executor is wired. Stage 2 touches
         // Bukkit and hops back to the server thread.
         Runnable stageOne = () -> {
-            List<Integer> faweCandidateIndices = new ArrayList<>();
-            List<RollbackEffect.BlockReplace> faweCandidateEffects = new ArrayList<>();
+            List<Integer> blockReplaceIndices = new ArrayList<>();
+            List<RollbackEffect.BlockReplace> blockReplaceEffects = new ArrayList<>();
             for (int index = 0; index < effects.size(); index++) {
                 if (effects.get(index) instanceof RollbackEffect.BlockReplace br) {
-                    faweCandidateIndices.add(index);
-                    faweCandidateEffects.add(br);
+                    blockReplaceIndices.add(index);
+                    blockReplaceEffects.add(br);
                 }
             }
 
-            if (physicsBlocker != null && !faweCandidateEffects.isEmpty()) {
+            if (physicsBlocker != null && !blockReplaceEffects.isEmpty()) {
                 int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
                 int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-                UUID worldId = faweCandidateEffects.get(0).location().worldId();
-                for (RollbackEffect.BlockReplace br : faweCandidateEffects) {
+                UUID worldId = blockReplaceEffects.get(0).location().worldId();
+                for (RollbackEffect.BlockReplace br : blockReplaceEffects) {
                     BlockLocation l = br.location();
                     if (l.x() < minX) minX = l.x();
                     if (l.y() < minY) minY = l.y();
@@ -187,12 +186,11 @@ public final class RollbackEngine {
                 done.whenComplete((r, t) -> physicsBlocker.exit(handle));
             }
 
-            boolean[] faweApplied = new boolean[faweCandidateEffects.size()];
-            sortParallelByChunk(faweCandidateIndices, faweCandidateEffects, faweApplied);
+            sortParallelByChunk(blockReplaceIndices, blockReplaceEffects);
 
             scheduler.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
-                    faweCandidateIndices, faweCandidateEffects, faweApplied,
-                    useFawe, sender, scheduler, batchSize, done, cancelFlag));
+                    blockReplaceIndices, blockReplaceEffects,
+ sender, scheduler, batchSize, done, cancelFlag));
         };
 
         if (worldWriteExecutor != null) {
@@ -208,8 +206,7 @@ public final class RollbackEngine {
     // the gravity check on the next tick turns the gravel back into a
     // falling entity.
     private static void sortParallelByChunk(List<Integer> indices,
-                                            List<RollbackEffect.BlockReplace> effects,
-                                            boolean[] applied) {
+                                            List<RollbackEffect.BlockReplace> effects) {
         int n = indices.size();
         if (n <= 1) {
             return;
@@ -232,22 +229,15 @@ public final class RollbackEngine {
         Integer[] newIndices = new Integer[n];
         @SuppressWarnings("unchecked")
         RollbackEffect.BlockReplace[] newEffects = new RollbackEffect.BlockReplace[n];
-        boolean[] newApplied = new boolean[n];
         for (int i = 0; i < n; i++) {
             newIndices[i] = indices.get(order[i]);
             newEffects[i] = effects.get(order[i]);
-            newApplied[i] = applied[order[i]];
         }
         for (int i = 0; i < n; i++) {
             indices.set(i, newIndices[i]);
             effects.set(i, newEffects[i]);
-            applied[i] = newApplied[i];
         }
     }
-
-    // Fallback used only when the engine is constructed before
-    // config-wiring sets tickBudgetMs.
-    private static final long TICK_BUDGET_MS = 45L;
 
     // Walk chunks until the tick budget is spent, then yield. Per
     // chunk: write blocks via setBlockData with physics off (gravity
@@ -256,25 +246,23 @@ public final class RollbackEngine {
     private void applyChunkByChunk(int from,
                                    List<RollbackEffect> effects,
                                    RollbackResult[] resultArray,
-                                   List<Integer> faweCandidateIndices,
-                                   List<RollbackEffect.BlockReplace> faweCandidateEffects,
-                                   boolean[] faweApplied,
-                                   boolean useFawe,
+                                   List<Integer> blockReplaceIndices,
+                                   List<RollbackEffect.BlockReplace> blockReplaceEffects,
                                    CommandSender sender,
                                    ServiceSupport scheduler,
                                    int batchSize,
                                    CompletableFuture<List<RollbackResult>> done,
                                    java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
-        int total = faweCandidateIndices.size();
+        int total = blockReplaceIndices.size();
         // Cancellation check happens between chunks, never mid-chunk.
         // Anything not yet touched gets marked Skipped so the result
         // array stays dense for the summary.
         if (cancelFlag.get()) {
             for (int j = from; j < total; j++) {
-                int targetIndex = faweCandidateIndices.get(j);
+                int targetIndex = blockReplaceIndices.get(j);
                 if (resultArray[targetIndex] == null) {
                     resultArray[targetIndex] = new RollbackResult.Skipped(
-                            faweCandidateEffects.get(j),
+                            blockReplaceEffects.get(j),
                             new RollbackReason.Error("Cancelled by operator"));
                 }
             }
@@ -287,8 +275,8 @@ public final class RollbackEngine {
         }
 
         if (worldWriteExecutor != null) {
-            applyOneChunkAsync(from, effects, resultArray, faweCandidateIndices,
-                    faweCandidateEffects, faweApplied, useFawe,
+            applyOneChunkAsync(from, effects, resultArray, blockReplaceIndices,
+                    blockReplaceEffects, 
                     sender, scheduler, batchSize, done, cancelFlag);
             return;
         }
@@ -299,13 +287,13 @@ public final class RollbackEngine {
         int i = from;
 
         while (i < total) {
-            BlockLocation startLoc = faweCandidateEffects.get(i).location();
+            BlockLocation startLoc = blockReplaceEffects.get(i).location();
             UUID worldId = startLoc.worldId();
             int cx = startLoc.x() >> 4;
             int cz = startLoc.z() >> 4;
             int chunkEnd = i + 1;
             while (chunkEnd < total) {
-                BlockLocation l = faweCandidateEffects.get(chunkEnd).location();
+                BlockLocation l = blockReplaceEffects.get(chunkEnd).location();
                 if (!l.worldId().equals(worldId)
                         || (l.x() >> 4) != cx
                         || (l.z() >> 4) != cz) {
@@ -317,8 +305,8 @@ public final class RollbackEngine {
             World world = Bukkit.getWorld(worldId);
             if (world == null) {
                 for (int j = i; j < chunkEnd; j++) {
-                    int targetIndex = faweCandidateIndices.get(j);
-                    RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
+                    int targetIndex = blockReplaceIndices.get(j);
+                    RollbackEffect.BlockReplace eff = blockReplaceEffects.get(j);
                     resultArray[targetIndex] = new RollbackResult.Skipped(eff,
                             new RollbackReason.InvalidLocation(eff.location()));
                 }
@@ -329,8 +317,8 @@ public final class RollbackEngine {
                         ChunkDirectWriter.prepareChunk(world, cx, cz);
 
                 for (int j = i; j < chunkEnd; j++) {
-                    int targetIndex = faweCandidateIndices.get(j);
-                    RollbackEffect.BlockReplace effect = faweCandidateEffects.get(j);
+                    int targetIndex = blockReplaceIndices.get(j);
+                    RollbackEffect.BlockReplace effect = blockReplaceEffects.get(j);
                     BlockSnapshot replacement = effect.replacement();
                     BlockLocation loc = effect.location();
                     try {
@@ -341,7 +329,7 @@ public final class RollbackEngine {
                         } else {
                             ChunkDirectWriter.writeBlock(world, loc.x(), loc.y(), loc.z(), bd);
                         }
-                        if (!FaweRollback.isSimple(replacement)) {
+                        if (!replacement.simple()) {
                             Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                             applyTileEntityState(block, replacement);
                         }
@@ -378,8 +366,8 @@ public final class RollbackEngine {
         if (i < total) {
             int next = i;
             scheduler.onMainThreadLater(1L, () -> applyChunkByChunk(
-                    next, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                    faweApplied, useFawe, sender, scheduler, batchSize, done, cancelFlag));
+                    next, effects, resultArray, blockReplaceIndices, blockReplaceEffects,
+                    sender, scheduler, batchSize, done, cancelFlag));
         } else {
             runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
         }
@@ -392,26 +380,24 @@ public final class RollbackEngine {
     private void applyOneChunkAsync(int from,
                                     List<RollbackEffect> effects,
                                     RollbackResult[] resultArray,
-                                    List<Integer> faweCandidateIndices,
-                                    List<RollbackEffect.BlockReplace> faweCandidateEffects,
-                                    boolean[] faweApplied,
-                                    boolean useFawe,
+                                    List<Integer> blockReplaceIndices,
+                                    List<RollbackEffect.BlockReplace> blockReplaceEffects,
                                     CommandSender sender,
                                     ServiceSupport scheduler,
                                     int batchSize,
                                     CompletableFuture<List<RollbackResult>> done,
                                     java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
-        int total = faweCandidateIndices.size();
+        int total = blockReplaceIndices.size();
         final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
         java.util.concurrent.CompletableFuture
                 .supplyAsync(() -> {
-                    BlockLocation startLoc = faweCandidateEffects.get(from).location();
+                    BlockLocation startLoc = blockReplaceEffects.get(from).location();
                     UUID worldId = startLoc.worldId();
                     int cx = startLoc.x() >> 4;
                     int cz = startLoc.z() >> 4;
                     int chunkEnd = from + 1;
                     while (chunkEnd < total) {
-                        BlockLocation l = faweCandidateEffects.get(chunkEnd).location();
+                        BlockLocation l = blockReplaceEffects.get(chunkEnd).location();
                         if (!l.worldId().equals(worldId)
                                 || (l.x() >> 4) != cx
                                 || (l.z() >> 4) != cz) {
@@ -425,8 +411,8 @@ public final class RollbackEngine {
                         // Worker writes to resultArray are visible
                         // on main after future.complete (happens-before).
                         for (int j = from; j < chunkEnd; j++) {
-                            int targetIndex = faweCandidateIndices.get(j);
-                            RollbackEffect.BlockReplace eff = faweCandidateEffects.get(j);
+                            int targetIndex = blockReplaceIndices.get(j);
+                            RollbackEffect.BlockReplace eff = blockReplaceEffects.get(j);
                             resultArray[targetIndex] = new RollbackResult.Skipped(eff,
                                     new RollbackReason.InvalidLocation(eff.location()));
                         }
@@ -439,7 +425,7 @@ public final class RollbackEngine {
                     for (int j = 0; j < chunkSize; j++) {
                         try {
                             writes[j] = blockDataFor(
-                                    faweCandidateEffects.get(from + j).replacement().blockData());
+                                    blockReplaceEffects.get(from + j).replacement().blockData());
                         } catch (RuntimeException thrown) {
                             writes[j] = null;
                         }
@@ -462,8 +448,8 @@ public final class RollbackEngine {
                             ChunkDirectWriter.prepareChunk(world, cx, cz);
                     java.util.BitSet nonSimpleMask = new java.util.BitSet(chunkSize);
                     for (int j = 0; j < chunkSize; j++) {
-                        int targetIndex = faweCandidateIndices.get(from + j);
-                        RollbackEffect.BlockReplace effect = faweCandidateEffects.get(from + j);
+                        int targetIndex = blockReplaceIndices.get(from + j);
+                        RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
                         if (writes[j] == null) {
                             resultArray[targetIndex] = new RollbackResult.Skipped(effect,
                                     new RollbackReason.Error("Unparseable blockdata"));
@@ -474,7 +460,7 @@ public final class RollbackEngine {
                         if (ctx != null) {
                             ctx.writeBlock(loc.x(), loc.y(), loc.z(), writes[j]);
                         }
-                        if (FaweRollback.isSimple(replacement)) {
+                        if (replacement.simple()) {
                             // No tile entity to apply; palette write
                             // is the whole apply. Build Applied here.
                             RollbackEffect inverse = new RollbackEffect.BlockReplace(
@@ -492,8 +478,8 @@ public final class RollbackEngine {
                     if (result == null || result.world() == null) {
                         // Worker threw or marked the chunk skipped.
                         int next = result != null ? result.chunkEnd() : from + 1;
-                        scheduleNextChunk(next, effects, resultArray, faweCandidateIndices,
-                                faweCandidateEffects, faweApplied, useFawe,
+                        scheduleNextChunk(next, effects, resultArray, blockReplaceIndices,
+                                blockReplaceEffects, 
                                 sender, scheduler, batchSize, done, cancelFlag);
                         return;
                     }
@@ -510,8 +496,8 @@ public final class RollbackEngine {
                         // state applied here.
                         for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
                                 j = nonSimpleMask.nextSetBit(j + 1)) {
-                            int targetIndex = faweCandidateIndices.get(from + j);
-                            RollbackEffect.BlockReplace effect = faweCandidateEffects.get(from + j);
+                            int targetIndex = blockReplaceIndices.get(from + j);
+                            RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
                             BlockSnapshot replacement = effect.replacement();
                             BlockLocation loc = effect.location();
                             try {
@@ -546,8 +532,8 @@ public final class RollbackEngine {
                             } catch (Throwable ignored) {
                             }
                         }
-                        scheduleNextChunk(chunkEnd, effects, resultArray, faweCandidateIndices,
-                                faweCandidateEffects, faweApplied, useFawe,
+                        scheduleNextChunk(chunkEnd, effects, resultArray, blockReplaceIndices,
+                                blockReplaceEffects, 
                                 sender, scheduler, batchSize, done, cancelFlag);
                     }
                 }));
@@ -570,18 +556,16 @@ public final class RollbackEngine {
     private void scheduleNextChunk(int next,
                                    List<RollbackEffect> effects,
                                    RollbackResult[] resultArray,
-                                   List<Integer> faweCandidateIndices,
-                                   List<RollbackEffect.BlockReplace> faweCandidateEffects,
-                                   boolean[] faweApplied,
-                                   boolean useFawe,
+                                   List<Integer> blockReplaceIndices,
+                                   List<RollbackEffect.BlockReplace> blockReplaceEffects,
                                    CommandSender sender,
                                    ServiceSupport scheduler,
                                    int batchSize,
                                    CompletableFuture<List<RollbackResult>> done,
                                    java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         scheduler.onMainThreadLater(1L, () -> applyChunkByChunk(
-                next, effects, resultArray, faweCandidateIndices, faweCandidateEffects,
-                faweApplied, useFawe, sender, scheduler, batchSize, done, cancelFlag));
+                next, effects, resultArray, blockReplaceIndices, blockReplaceEffects,
+                sender, scheduler, batchSize, done, cancelFlag));
     }
 
 
@@ -593,6 +577,22 @@ public final class RollbackEngine {
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done) {
+        // Audit trail: emit a lightweight rolled-place / rolled-break
+        // record for every block this rollback restored, so the wand
+        // reads "ROLLBACK placed/broke X" and a:rolled-place queries
+        // surface what the rollback touched. This method always runs on
+        // the main thread, so firing the committed-hook (a Bukkit event)
+        // here is safe. recorder/support are null in unit tests, making
+        // this a no-op there. Restores the per-block emission Spyglass
+        // did before the NMS-direct-section rewrite dropped the call site.
+        if (recorder != null && support != null) {
+            for (RollbackResult r : resultArray) {
+                if (r instanceof RollbackResult.Applied applied
+                        && applied.effect() instanceof RollbackEffect.BlockReplace br) {
+                    emitRollbackSourceRecord(sender, br.location(), br.replacement());
+                }
+            }
+        }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -649,8 +649,15 @@ public final class RollbackEngine {
     // Apply only the tile-entity payload, assuming material and
     // blockdata are already correct.
     private void applyTileEntityState(Block block, BlockSnapshot snapshot) {
-        BlockState state = block.getState();
+        applyTilePayload(block, block.getState(), snapshot);
+    }
 
+    // Apply the tile-entity payload — container items, sign text, banner
+    // patterns, jukebox disc, decorated-pot sherds — onto an already-typed
+    // block, then push the state. Shared by applyTileEntityState (block
+    // already written by ChunkDirectWriter) and applySnapshot (which sets
+    // material + blockdata first).
+    private void applyTilePayload(Block block, BlockState state, BlockSnapshot snapshot) {
         if (state instanceof Container container) {
             Inventory inventory = container.getSnapshotInventory();
             inventory.clear();
@@ -930,53 +937,7 @@ public final class RollbackEngine {
         block.setType(snapshot.material(), false);
         BlockState state = block.getState();
         state.setBlockData(Bukkit.createBlockData(snapshot.blockData()));
-
-        if (state instanceof Container container) {
-            Inventory inventory = container.getSnapshotInventory();
-            inventory.clear();
-            for (StoredItem item : snapshot.containerItems()) {
-                inventory.setItem(item.slot(), ItemSerialization.decode(item.data()));
-            }
-        }
-
-        if (state instanceof Sign sign) {
-            writeSign(sign, Side.FRONT, snapshot.signFront());
-            writeSign(sign, Side.BACK, snapshot.signBack());
-        }
-
-        if (state instanceof Banner banner) {
-            List<Pattern> patterns = snapshot.bannerPatterns().stream()
-                    .map(this::parsePattern)
-                    .flatMap(Optional::stream)
-                    .toList();
-            banner.setPatterns(patterns);
-        }
-
-        if (state instanceof Jukebox) {
-            // Paper's snapshot Jukebox has a detached BlockEntity
-            // (level == null) and setItem NPEs when it tries to
-            // resolve the disc's sound registry. Use the live state
-            // instead so we have a real Level reference.
-            try {
-                org.bukkit.block.BlockState live = block.getState(false);
-                if (live instanceof Jukebox liveJukebox) {
-                    org.bukkit.inventory.ItemStack disc =
-                            ItemSerialization.decode(snapshot.jukeboxRecord());
-                    if (disc != null) {
-                        liveJukebox.setRecord(disc);
-                    }
-                }
-            } catch (Throwable jukeboxFailure) {
-                // Disc lost; block stays a jukebox without its record.
-            }
-        }
-
-        if (state instanceof org.bukkit.block.DecoratedPot pot
-                && !snapshot.potSherds().isEmpty()) {
-            applyPotSherds(pot, snapshot.potSherds());
-        }
-
-        state.update(true, false);
+        applyTilePayload(block, state, snapshot);
     }
 
     private boolean matches(BlockSnapshot expected, BlockSnapshot actual) {
