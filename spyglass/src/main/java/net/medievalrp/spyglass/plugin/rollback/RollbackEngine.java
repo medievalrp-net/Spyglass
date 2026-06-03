@@ -593,6 +593,22 @@ public final class RollbackEngine {
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done) {
+        // Audit trail: emit a lightweight rolled-place / rolled-break
+        // record for every block this rollback restored, so the wand
+        // reads "ROLLBACK placed/broke X" and a:rolled-place queries
+        // surface what the rollback touched. This method always runs on
+        // the main thread, so firing the committed-hook (a Bukkit event)
+        // here is safe. recorder/support are null in unit tests, making
+        // this a no-op there. Restores the per-block emission Omniscience2
+        // did before the NMS-direct-section rewrite dropped the call site.
+        if (recorder != null && support != null) {
+            for (RollbackResult r : resultArray) {
+                if (r instanceof RollbackResult.Applied applied
+                        && applied.effect() instanceof RollbackEffect.BlockReplace br) {
+                    emitRollbackSourceRecord(sender, br.location(), br.replacement());
+                }
+            }
+        }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
