@@ -4,7 +4,6 @@ import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.command.CommandResponse;
 import com.clickhouse.client.api.query.GenericRecord;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -154,10 +153,5 @@ public final class ClickHouseUndoStack implements UndoStack {
             return "''";
         }
         return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'";
-    }
-
-    @SuppressWarnings("unused")
-    private static LocalDateTime toLocalDateTime(Instant instant) {
-        return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 }

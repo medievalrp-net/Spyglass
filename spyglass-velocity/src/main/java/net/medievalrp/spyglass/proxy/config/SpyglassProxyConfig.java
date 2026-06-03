@@ -32,7 +32,7 @@ public record SpyglassProxyConfig(
                 .build();
         ConfigurationNode root = loader.load();
 
-        String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase();
+        String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
             case "clickhouse" -> Backend.CLICKHOUSE;
             case "mongo", "mongodb" -> Backend.MONGO;

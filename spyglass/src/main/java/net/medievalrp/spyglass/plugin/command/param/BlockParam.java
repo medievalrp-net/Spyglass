@@ -37,10 +37,10 @@ public final class BlockParam implements QueryParamHandler {
 
     @Override
     public List<String> suggestions(CommandSender sender, String input) {
-        String lower = input.toLowerCase();
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
         return java.util.Arrays.stream(Material.values())
                 .filter(Material::isBlock)
-                .map(m -> m.name().toLowerCase())
+                .map(m -> m.name().toLowerCase(java.util.Locale.ROOT))
                 .filter(name -> name.startsWith(lower))
                 .limit(25)
                 .toList();

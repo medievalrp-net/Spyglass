@@ -23,7 +23,7 @@ public final class EntityParam implements QueryParamHandler {
         String[] parts = value.split(",");
         List<String> names = new ArrayList<>();
         for (String raw : parts) {
-            String trimmed = raw.trim().toUpperCase();
+            String trimmed = raw.trim().toUpperCase(java.util.Locale.ROOT);
             try {
                 EntityType type = EntityType.valueOf(trimmed);
                 names.add(type.name());
@@ -39,9 +39,9 @@ public final class EntityParam implements QueryParamHandler {
 
     @Override
     public List<String> suggestions(CommandSender sender, String input) {
-        String lower = input.toLowerCase();
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
         return java.util.Arrays.stream(EntityType.values())
-                .map(e -> e.name().toLowerCase())
+                .map(e -> e.name().toLowerCase(java.util.Locale.ROOT))
                 .filter(name -> name.startsWith(lower))
                 .limit(25)
                 .toList();

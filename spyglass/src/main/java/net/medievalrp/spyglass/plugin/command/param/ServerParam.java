@@ -47,8 +47,8 @@ public final class ServerParam implements QueryParamHandler {
         if (localServerName == null || localServerName.isBlank()) {
             return List.of();
         }
-        String lower = input.toLowerCase();
-        if (localServerName.toLowerCase().startsWith(lower)) {
+        String lower = input.toLowerCase(java.util.Locale.ROOT);
+        if (localServerName.toLowerCase(java.util.Locale.ROOT).startsWith(lower)) {
             return List.of(localServerName);
         }
         return List.of();

@@ -1,8 +1,6 @@
 package net.medievalrp.spyglass.plugin.storage;
 
 import com.mongodb.MongoClientSettings;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Base64;
@@ -322,15 +320,5 @@ public final class BsonBlobs {
             return null;
         }
         return Base64.getDecoder().decode(base64);
-    }
-
-    @SuppressWarnings("unused")
-    static ByteArrayInputStream wrap(byte[] bytes) {
-        return new ByteArrayInputStream(bytes);
-    }
-
-    @SuppressWarnings("unused")
-    static ByteArrayOutputStream newBuffer() {
-        return new ByteArrayOutputStream();
     }
 }
