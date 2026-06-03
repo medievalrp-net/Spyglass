@@ -54,6 +54,9 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class RollbackEngine {
 
+    private static final java.util.logging.Logger LOGGER =
+            java.util.logging.Logger.getLogger(RollbackEngine.class.getName());
+
     private final Recorder recorder;
     private final RecordingSupport support;
     private java.util.function.Function<String, java.util.Optional<RollbackEffectHandler>> handlerLookup =
@@ -78,6 +81,31 @@ public final class RollbackEngine {
     // size so every thread stays busy without queueing. 1 keeps the
     // legacy one-chunk-at-a-time behaviour (single-thread executor).
     private volatile int worldWriteParallelism = 1;
+
+    // How many chunks to resolve + dispatch per barrier. Decoupled from
+    // the pool size: a larger batch queues on the pool (pool-size run at
+    // once) and costs one main-thread hop. Measured: hop cost is cheap,
+    // so this stays modest to keep the per-tick main post (~1ms/chunk)
+    // well under the 50ms tick budget. The dominant apply cost was the
+    // per-block audit-record build, which now runs off-main.
+    private volatile int worldWriteBatchChunks = 16;
+
+    // Apply-phase breakdown (reset per applyAllChunked, logged on
+    // completion). writeNanos = wall-time the pool spends on palette
+    // writes (sum of per-batch barrier waits); postNanos = main-thread
+    // tile-entity/finish/resend; resolveNanos = main-thread getChunk +
+    // prepareChunk; batches = barrier count; the hop latency (idle ticks
+    // between batches) is total - write - post - resolve.
+    private final java.util.concurrent.atomic.AtomicLong applyResolveNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong applyWriteNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong applyPostNanos =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicInteger applyBatchCount =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger applyChunkApplies =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     // Parsed BlockData is shared across rollbacks. createBlockData is
     // ~5-10us per call and BlockData is immutable, so caching one
@@ -125,10 +153,17 @@ public final class RollbackEngine {
         this.worldWriteExecutor = exec;
     }
 
-    // Number of chunks to write concurrently per batch. Set to the
-    // worldWriteExecutor pool size by the plugin; clamped to >= 1.
+    // Number of pool threads available for concurrent palette writes.
+    // Set to the worldWriteExecutor pool size by the plugin; clamped to >= 1.
     public void setWorldWriteParallelism(int parallelism) {
         this.worldWriteParallelism = Math.max(1, parallelism);
+    }
+
+    // How many chunks to resolve + dispatch per main-thread hop. Larger
+    // = fewer tick-deferred hops (the dominant apply cost) at the price
+    // of a bigger per-tick post. Clamped to >= 1.
+    public void setWorldWriteBatchChunks(int chunks) {
+        this.worldWriteBatchChunks = Math.max(1, chunks);
     }
 
     // Holds a plugin chunk ticket per (world, cx, cz) while the
@@ -166,6 +201,32 @@ public final class RollbackEngine {
             done.complete(List.of());
             return done;
         }
+
+        // Reset + log the apply-phase breakdown for this run.
+        applyResolveNanos.set(0L);
+        applyWriteNanos.set(0L);
+        applyPostNanos.set(0L);
+        applyBatchCount.set(0);
+        applyChunkApplies.set(0);
+        long applyStart = System.nanoTime();
+        done.whenComplete((r, t) -> {
+            long totalMs = (System.nanoTime() - applyStart) / 1_000_000L;
+            long resolveMs = applyResolveNanos.get() / 1_000_000L;
+            long writeMs = applyWriteNanos.get() / 1_000_000L;
+            long postMs = applyPostNanos.get() / 1_000_000L;
+            int batches = applyBatchCount.get();
+            int chunkApplies = applyChunkApplies.get();
+            // Only the substantive pages — skip the small tail page so the
+            // log isn't spammed on routine rollbacks.
+            if (totalMs >= 200L) {
+                LOGGER.info(String.format(
+                        "Spyglass apply breakdown: resolve=%dms write=%dms post=%dms hop/idle=%dms"
+                                + " | %d batches, %d chunk-applies, %dms total",
+                        resolveMs, writeMs, postMs,
+                        Math.max(0L, totalMs - resolveMs - writeMs - postMs),
+                        batches, chunkApplies, totalMs));
+            }
+        });
 
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
 
@@ -419,9 +480,11 @@ public final class RollbackEngine {
         // Resolve up to `parallelism` chunks. getChunk + prepareChunk +
         // addPluginChunkTicket all run here on the main thread; the
         // workers only touch the per-section palette afterwards.
-        List<ChunkWork> batch = new ArrayList<>(parallelism);
+        int maxBatchChunks = Math.max(parallelism, worldWriteBatchChunks);
+        long tResolve = System.nanoTime();
+        List<ChunkWork> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
         int cursor = from;
-        while (cursor < total && batch.size() < parallelism) {
+        while (cursor < total && batch.size() < maxBatchChunks) {
             BlockLocation startLoc = blockReplaceEffects.get(cursor).location();
             UUID worldId = startLoc.worldId();
             int cx = startLoc.x() >> 4;
@@ -464,6 +527,7 @@ public final class RollbackEngine {
             batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
             cursor = chunkEnd;
         }
+        applyResolveNanos.addAndGet(System.nanoTime() - tResolve);
 
         // Whole scan was unloaded-world chunks (already marked Skipped).
         if (batch.isEmpty()) {
@@ -477,6 +541,8 @@ public final class RollbackEngine {
         }
 
         final int batchEnd = cursor;
+        final int batchChunks = batch.size();
+        final long tDispatch = System.nanoTime();
         // Fan the palette writes across the pool — one future per chunk.
         @SuppressWarnings("unchecked")
         CompletableFuture<Void>[] futures = new CompletableFuture[batch.size()];
@@ -488,14 +554,20 @@ public final class RollbackEngine {
         }
 
         java.util.concurrent.CompletableFuture.allOf(futures)
-                .whenComplete((v, throwable) -> scheduler.onMainThread(() -> {
+                .whenComplete((v, throwable) -> {
+                    applyWriteNanos.addAndGet(System.nanoTime() - tDispatch);
+                    applyBatchCount.incrementAndGet();
+                    applyChunkApplies.addAndGet(batchChunks);
+                    scheduler.onMainThread(() -> {
                     // Main-thread post for every chunk in the batch: the
                     // heavy palette writes already happened off-main, so
                     // this is just tile-entity state, finishChunk, the
                     // chunk packet, and the ticket release.
+                    long tPost = System.nanoTime();
                     for (ChunkWork work : batch) {
                         applyChunkPostMain(work, resultArray, blockReplaceIndices, blockReplaceEffects);
                     }
+                    applyPostNanos.addAndGet(System.nanoTime() - tPost);
                     if (sender instanceof Player p && total > 0) {
                         p.sendActionBar(Component.text("Rolling back " + batchEnd + " / " + total));
                     }
@@ -505,7 +577,8 @@ public final class RollbackEngine {
                     } else {
                         runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
                     }
-                }));
+                    });
+                });
     }
 
     // Worker-thread half: parse blockdata and write every block's palette
@@ -650,25 +723,41 @@ public final class RollbackEngine {
         // Audit trail: emit a lightweight rolled-place / rolled-break
         // record for every block this rollback restored, so the wand
         // reads "ROLLBACK placed/broke X" and a:rolled-place queries
-        // surface what the rollback touched. This method always runs on
-        // the main thread, so firing the committed-hook (a Bukkit event)
-        // here is safe. recorder/support are null in unit tests, making
-        // this a no-op there. Restores the per-block emission Omniscience2
-        // did before the NMS-direct-section rewrite dropped the call site.
+        // surface what the rollback touched. recorder/support are null in
+        // unit tests, making this a no-op there. Restores the per-block
+        // emission Omniscience2 did before the NMS-direct-section rewrite
+        // dropped the call site.
+        //
+        // Building one record per restored block (~hundreds of thousands
+        // on a big rollback) is pure data assembly — no Bukkit calls once
+        // the operator name is captured — so it runs off the main thread.
+        // That was the single largest main-thread cost in the apply
+        // critical path; recordAll bulk-queues without firing the
+        // per-record committed hook, so off-main hand-off is safe and the
+        // rollback completes without waiting on it.
         if (recorder != null && support != null) {
-            List<EventRecord> rolledRecords = new ArrayList<>();
-            for (RollbackResult r : resultArray) {
-                if (r instanceof RollbackResult.Applied applied
-                        && applied.effect() instanceof RollbackEffect.BlockReplace br) {
-                    rolledRecords.add(buildRollbackSourceRecord(sender, br.location(), br.replacement()));
+            final String operatorName = sender == null ? "console" : sender.getName();
+            final RollbackResult[] applied = resultArray;
+            Runnable buildAndEmit = () -> {
+                List<EventRecord> rolledRecords = new ArrayList<>();
+                // Reference reads are atomic; we only act on already-set
+                // BlockReplace results (stable after the block phase), so
+                // any concurrent leftover-phase writes to other indices
+                // are correctly skipped by the instanceof filter.
+                for (RollbackResult r : applied) {
+                    if (r instanceof RollbackResult.Applied a
+                            && a.effect() instanceof RollbackEffect.BlockReplace br) {
+                        rolledRecords.add(buildRollbackSourceRecord(
+                                operatorName, br.location(), br.replacement()));
+                    }
                 }
+                recorder.recordAll(rolledRecords);
+            };
+            if (worldWriteExecutor != null) {
+                worldWriteExecutor.execute(buildAndEmit);
+            } else {
+                buildAndEmit.run();
             }
-            // One bulk hand-off instead of N main-thread record() calls:
-            // each record() fires a Bukkit RecordCommittedEvent, so a
-            // 500K rollback was dispatching 500K events on the tick it
-            // completes on. recordAll queues them without the per-record
-            // hook.
-            recorder.recordAll(rolledRecords);
         }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
@@ -859,13 +948,12 @@ public final class RollbackEngine {
     // carrying the before/after snapshot blobs that BlockPlaceRecord
     // would, which mattered: at 150 blocks the snapshot pairs combined
     // with FAWE's write buffer were enough to tip the heap into OOM.
-    private EventRecord buildRollbackSourceRecord(CommandSender sender, BlockLocation location, BlockSnapshot after) {
-        String operatorName = sender == null ? "console" : sender.getName();
+    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location, BlockSnapshot after) {
         Instant occurred = support.now();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operatorName);
         // Skip support.context (which uses SecureRandom) to avoid
-        // entropy reads on the main thread for every rolled block.
+        // entropy reads for every rolled block.
         RecordContext ctx = new RecordContext(
                 RecordingSupport.fastRandomUUID(),
                 occurred,
