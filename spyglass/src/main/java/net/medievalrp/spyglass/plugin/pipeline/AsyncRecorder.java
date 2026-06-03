@@ -131,13 +131,35 @@ public final class AsyncRecorder implements Recorder {
         } catch (RuntimeException hookFailure) {
             logger.warning("Spyglass committed-hook threw: " + hookFailure);
         }
+        warnIfQueueDeep();
+    }
+
+    @Override
+    public void recordAll(List<EventRecord> records) {
+        if (records.isEmpty()) {
+            return;
+        }
+        // Bulk intake for synthesized records (the rollback audit
+        // trail). Deliberately skips the per-record committed hook:
+        // firing one Bukkit RecordCommittedEvent per rolled block on
+        // the main thread would cost more than the rollback that
+        // produced them, and no reactive integration needs a
+        // per-rolled-block notification. The DB save path is identical
+        // — these records drain and persist like any other.
+        for (EventRecord record : records) {
+            queue.offer(record);
+        }
+        warnIfQueueDeep();
+    }
+
+    // Fire once when we first cross the threshold, and again at each
+    // depth doubling past that, so a sustained outage produces a
+    // visible growth trail in the log without flooding it. atomic-CAS
+    // on lastWarnedDepth so concurrent callers don't duplicate the same
+    // warning. Not a ceiling — the queue stays unbounded.
+    private void warnIfQueueDeep() {
         int depth = queue.size();
         if (depth > warnThreshold) {
-            // Fire once when we first cross the threshold, and again at
-            // each depth doubling past that, so a sustained outage
-            // produces a visible growth trail in the log without
-            // flooding it. atomic-CAS on lastWarnedDepth so concurrent
-            // record() callers don't duplicate the same warning.
             long last = lastWarnedDepth.get();
             boolean firstCrossing = last == 0 && depth >= warnThreshold;
             boolean doubledSinceLast = last > 0 && depth >= last * 2;

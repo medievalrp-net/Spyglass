@@ -14,6 +14,7 @@ import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
+import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
@@ -586,12 +587,19 @@ public final class RollbackEngine {
         // this a no-op there. Restores the per-block emission Omniscience2
         // did before the NMS-direct-section rewrite dropped the call site.
         if (recorder != null && support != null) {
+            List<EventRecord> rolledRecords = new ArrayList<>();
             for (RollbackResult r : resultArray) {
                 if (r instanceof RollbackResult.Applied applied
                         && applied.effect() instanceof RollbackEffect.BlockReplace br) {
-                    emitRollbackSourceRecord(sender, br.location(), br.replacement());
+                    rolledRecords.add(buildRollbackSourceRecord(sender, br.location(), br.replacement()));
                 }
             }
+            // One bulk hand-off instead of N main-thread record() calls:
+            // each record() fires a Bukkit RecordCommittedEvent, so a
+            // 500K rollback was dispatching 500K events on the tick it
+            // completes on. recordAll queues them without the per-record
+            // hook.
+            recorder.recordAll(rolledRecords);
         }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
@@ -782,10 +790,7 @@ public final class RollbackEngine {
     // carrying the before/after snapshot blobs that BlockPlaceRecord
     // would, which mattered: at 150 blocks the snapshot pairs combined
     // with FAWE's write buffer were enough to tip the heap into OOM.
-    private void emitRollbackSourceRecord(CommandSender sender, BlockLocation location, BlockSnapshot after) {
-        if (recorder == null || support == null) {
-            return;
-        }
+    private EventRecord buildRollbackSourceRecord(CommandSender sender, BlockLocation location, BlockSnapshot after) {
         String operatorName = sender == null ? "console" : sender.getName();
         Instant occurred = support.now();
         Source source = Source.environment("ROLLBACK");
@@ -802,9 +807,9 @@ public final class RollbackEngine {
         // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
         String event = toAir ? "rolled-break" : "rolled-place";
         String target = (after == null ? Material.AIR : after.material()).name();
-        recorder.record(new BlockUseRecord(
+        return new BlockUseRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target));
+                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
     }
 
     public RollbackResult apply(RollbackEffect effect) {
