@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.storage;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.command.CommandResponse;
+import com.clickhouse.client.api.command.CommandSettings;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -57,7 +58,16 @@ final class ClickHouseSchema {
     }
 
     static void ensure(Client client, String database, String eventsTable) {
-        execute(client, "CREATE DATABASE IF NOT EXISTS " + quoteIdentifier(database));
+        // The client's session database is the configured one, which on a
+        // first install does not exist yet — and the server rejects any
+        // request whose session database is missing, including the very
+        // CREATE DATABASE that would create it. Run that one statement
+        // with the session pointed at `system` (always present); the
+        // session database only scopes unqualified table names, which
+        // the statement has none of.
+        CommandSettings bootstrap = new CommandSettings();
+        bootstrap.setDatabase("system");
+        execute(client, "CREATE DATABASE IF NOT EXISTS " + quoteIdentifier(database), bootstrap);
         execute(client, buildEventRecordsTable(database, eventsTable));
         // Idempotent ADD COLUMN for tables created by older Spyglass
         // versions: CH ignores ADD COLUMN IF NOT EXISTS when the column
@@ -110,7 +120,13 @@ final class ClickHouseSchema {
     }
 
     private static void execute(Client client, String sql) {
-        try (CommandResponse ignored = client.execute(sql).get(60, TimeUnit.SECONDS)) {
+        execute(client, sql, null);
+    }
+
+    private static void execute(Client client, String sql, CommandSettings settings) {
+        try (CommandResponse ignored = (settings == null
+                ? client.execute(sql)
+                : client.execute(sql, settings)).get(60, TimeUnit.SECONDS)) {
             // ack received
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
