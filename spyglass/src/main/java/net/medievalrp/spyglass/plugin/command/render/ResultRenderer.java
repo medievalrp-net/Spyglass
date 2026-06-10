@@ -27,6 +27,7 @@ import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.RollbackOpRecord;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
@@ -290,6 +291,9 @@ public final class ResultRenderer {
             case ContainerWithdrawRecord withdraw -> withContainer(withdraw.target(), withdraw.containerType());
             case ContainerInteractRecord interact -> interact.target();
             case BlockUseRecord use -> use.target();
+            // One row per rollback/restore/undo operation (#22); the
+            // mode rides in target. Renders "<operator> ran ROLLBACK".
+            case RollbackOpRecord op -> upperOrEmpty(op.mode());
             case ChatRecord chat -> chat.target();
             case CommandRecord command -> "/" + command.target();
             // Join's "target" in the data model is the player's own
@@ -335,10 +339,10 @@ public final class ResultRenderer {
         if (origin == null || origin.kind() == null) {
             return "";
         }
-        return switch (origin.kind().toLowerCase()) {
+        return switch (origin.kind().toLowerCase(java.util.Locale.ROOT)) {
             case Origin.WORLDEDIT -> "[WE]";
             case Origin.FAWE -> "[FAWE]";
-            case Origin.PLUGIN -> "[" + (origin.detail() == null ? "PL" : origin.detail().toUpperCase()) + "]";
+            case Origin.PLUGIN -> "[" + (origin.detail() == null ? "PL" : origin.detail()) + "]";
             default -> "";
         };
     }

@@ -64,7 +64,7 @@ class RollbackServiceTest {
         final QueryStringParser parser = mock(QueryStringParser.class);
         final RollbackEngine engine = mock(RollbackEngine.class);
         final UndoStack undoStack = mock(UndoStack.class);
-        final SpyglassConfig config = sampleConfig();
+        final SpyglassConfig config;
         final CommandSender sender = mock(CommandSender.class);
         final net.medievalrp.spyglass.plugin.pipeline.Recorder recorder =
                 mock(net.medievalrp.spyglass.plugin.pipeline.Recorder.class);
@@ -73,6 +73,11 @@ class RollbackServiceTest {
         final RollbackService subject;
 
         TestFixture() {
+            this(false);
+        }
+
+        TestFixture(boolean rolledAuditSynthesized) {
+            config = sampleConfig(rolledAuditSynthesized);
             when(recorder.flush(any(net.medievalrp.spyglass.api.util.Duration.class)))
                     .thenReturn(true);
             // Empty page → executes the "no results" branch and returns
@@ -100,6 +105,10 @@ class RollbackServiceTest {
         }
 
         private static SpyglassConfig sampleConfig() {
+            return sampleConfig(false);
+        }
+
+        private static SpyglassConfig sampleConfig(boolean rolledAuditSynthesized) {
             SpyglassConfig cfg = mock(SpyglassConfig.class);
             SpyglassConfig.Limits limits = mock(SpyglassConfig.Limits.class);
             when(limits.rollbackResult()).thenReturn(10_000);
@@ -109,6 +118,14 @@ class RollbackServiceTest {
             when(limits.rollbackFlushTimeout())
                     .thenReturn(new net.medievalrp.spyglass.api.util.Duration(30L));
             when(cfg.limits()).thenReturn(limits);
+            SpyglassConfig.Storage storage = mock(SpyglassConfig.Storage.class);
+            when(storage.rolledAuditSynthesized()).thenReturn(rolledAuditSynthesized);
+            when(storage.retention())
+                    .thenReturn(net.medievalrp.spyglass.api.util.Duration.parse("4w"));
+            when(cfg.storage()).thenReturn(storage);
+            SpyglassConfig.Server server = mock(SpyglassConfig.Server.class);
+            when(server.name()).thenReturn("test");
+            when(cfg.server()).thenReturn(server);
             return cfg;
         }
     }
@@ -199,6 +216,66 @@ class RollbackServiceTest {
 
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("0 reversals") && line.contains("1 skipped"));
+    }
+
+    @Test
+    void synthesizedModeEmitsOneDecodableOpRecord() throws Exception {
+        TestFixture fixture = new TestFixture(true);
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(operator.getName()).thenReturn("Operator");
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        org.mockito.ArgumentCaptor<net.medievalrp.spyglass.api.event.EventRecord> emitted =
+                org.mockito.ArgumentCaptor.forClass(net.medievalrp.spyglass.api.event.EventRecord.class);
+        verify(fixture.recorder).record(emitted.capture());
+        assertThat(emitted.getValue())
+                .isInstanceOf(net.medievalrp.spyglass.api.event.RollbackOpRecord.class);
+        var op = (net.medievalrp.spyglass.api.event.RollbackOpRecord) emitted.getValue();
+        assertThat(op.event()).isEqualTo("rollback-op");
+        assertThat(op.mode()).isEqualTo("ROLLBACK");
+        var decoded = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson
+                .decodeBase64(op.reference());
+        assertThat(decoded.applied()).isEqualTo(1);
+        assertThat(decoded.boxes()).hasSize(1);
+        assertThat(decoded.boxes().get(0).minX()).isEqualTo(r.location().x());
+    }
+
+    @Test
+    void receiptsModeEmitsNoOpRecord() throws Exception {
+        TestFixture fixture = new TestFixture(false);
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        verify(fixture.recorder, org.mockito.Mockito.never())
+                .record(any(net.medievalrp.spyglass.api.event.EventRecord.class));
     }
 
     @Test
