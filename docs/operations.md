@@ -61,14 +61,15 @@ If you're seeing first-crossing warnings during normal play, raise the threshold
 
 ## Large rollbacks: heap, GC, and what the TPS metric hides
 
-A multi-million-block rollback is read- and GC-bound — the apply runs off-main, so the main thread stays ~90% parked and MSPT stays flat regardless. Whether it is also *freeze-free* is decided by two dials in `limits` (measured: 2M-block rollback, 6 GB heap, local ClickHouse; full data in [the bench report](report/rollback-bench-results.md)):
+A multi-million-block rollback is read- and GC-bound — the apply runs off-main, so the main thread stays ~90% parked and MSPT stays flat regardless. Whether it is also *freeze-free* is decided by `rollback-page-size`, which since [#17](https://github.com/medievalrp-net/Spyglass/issues/17) governs `/spyglass undo` identically (shared pipeline). Measured 2026-06-10 sweep — 2M blocks, stock Aikar flags, 6 GB heap, local ClickHouse:
 
-| `rollback-page-size` | 2M wall-clock | player experience |
+| `rollback-page-size` | 2M rollback / undo | player experience (worst tick + GC log) |
 |---|---|---|
-| 1,000,000 | ~10–14 s | 0.4–1.0 s stop-the-world GC freeze mid-run |
-| 250,000–400,000 | in between | most of the read speed, bounded heap |
-| 100,000 | ~22 s | worst single tick < ~100 ms |
-| 20,000 (default) | slowest | smooth |
+| 20,000 (default) | ~20 s / ~20 s | worst tick ~32 ms, GC < 80 ms — **invisible** |
+| 400,000 | ~11 s / ~10 s | occasional 150–330 ms GC pauses; worst tick can reach ~500 ms |
+| 1,000,000 | ~7–9 s / ~10 s | occasional 250–450 ms GC pauses |
+
+The smoothness cliff sits **between the default and 400K**: any large page keeps ~two pages of records resident, which G1 promotes under Aikar's `MaxTenuringThreshold=1` and then evacuates mid-operation ([#19](https://github.com/medievalrp-net/Spyglass/issues/19) removes that transient, for both directions). Keep the default on player-facing servers; raise it only when finishing a huge rollback fast matters more than a few sub-half-second hitches. For reference, CoreProtect on the same runs: 9–16 s wall-clock with 250–660 ms worst ticks and TPS sag for the whole duration.
 
 - **Undo is replay-by-reference** ([#17](https://github.com/medievalrp-net/Spyglass/issues/17)): completing a rollback/restore writes one small ledger row — the resolved query plus a time ceiling — and `/spyglass undo` re-streams the same records through the engine in the opposite direction. There is no per-effect capture, so undo adds ~zero cost to the rollback and any operation size is undoable; an undo costs about the same as the rollback it reverses. `rollback-undo-cap` is parsed but ignored.
 - **Don't trust `/mspt` averages for freeze claims.** Off-main work means a GC pause lands *between* measured ticks: the bench showed "flat 20 TPS" while the GC log recorded an 849 ms stop-the-world pause. Judge a config with the `/mspt` **max** column and the JVM GC log (`grep 'Pause Young' logs/gc*.log`) during a trial rollback — `regression/bot/compare.js` prints a WORST SINGLE TICK row for exactly this reason.
