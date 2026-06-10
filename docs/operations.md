@@ -59,6 +59,21 @@ Recommendation: 10x your steady-state peak event rate × seconds of acceptable b
 
 If you're seeing first-crossing warnings during normal play, raise the threshold. If you're seeing them after a Mongo restart and they double quickly, the drain is genuinely losing — check Mongo CPU, replica election, network.
 
+## Large rollbacks: heap, GC, and what the TPS metric hides
+
+A multi-million-block rollback is read- and GC-bound — the apply runs off-main, so the main thread stays ~90% parked and MSPT stays flat regardless. Whether it is also *freeze-free* is decided by two dials in `limits` (measured: 2M-block rollback, 6 GB heap, local ClickHouse; full data in [the bench report](report/rollback-bench-results.md)):
+
+| `rollback-page-size` | 2M wall-clock | player experience |
+|---|---|---|
+| 1,000,000 | ~10–14 s | 0.4–1.0 s stop-the-world GC freeze mid-run |
+| 250,000–400,000 | in between | most of the read speed, bounded heap |
+| 100,000 | ~22 s | worst single tick < ~100 ms |
+| 20,000 (default) | slowest | smooth |
+
+- **`rollback-undo-cap`: leave it at the 500k default.** Inverse effects live for the whole operation and promote to old gen; the benchmark's 10M cap pushed ~2 GB into old gen and drew the 0.5–1.0 s pauses above. Streaming undo capture ([#17](https://github.com/medievalrp-net/Spyglass/issues/17)) removes this constraint; until then the cap is the heap's safety net.
+- **Don't trust `/mspt` averages for freeze claims.** Off-main work means a GC pause lands *between* measured ticks: the bench showed "flat 20 TPS" while the GC log recorded an 849 ms stop-the-world pause. Judge a config with the `/mspt` **max** column and the JVM GC log (`grep 'Pause Young' logs/gc*.log`) during a trial rollback — `regression/bot/compare.js` prints a WORST SINGLE TICK row for exactly this reason.
+- `/spyglass undo` of very large rollbacks (> ~250 K effects) currently OOMs on replay — also fixed by [#17](https://github.com/medievalrp-net/Spyglass/issues/17).
+
 ## Disabling events
 
 `config.conf` has per-event toggles under `events.<name>`. Disabling an event:
