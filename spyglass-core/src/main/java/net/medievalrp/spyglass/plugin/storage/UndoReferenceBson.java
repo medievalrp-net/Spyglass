@@ -51,18 +51,53 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Internal
 public final class UndoReferenceBson {
 
-    /** Decoded reference: what to replay and within which time bound. */
-    public record Reference(QueryRequest request, String mode, Instant ceiling) {
+    /**
+     * Decoded reference: what to replay, within which time bound, and —
+     * since v2 — where the operation landed (per-world bounding boxes)
+     * and how big it was. v1 blobs decode with empty boxes and zero
+     * counts.
+     */
+    public record Reference(QueryRequest request, String mode, Instant ceiling,
+                            List<WorldBox> boxes, int applied, int skipped) {
+        public Reference {
+            boxes = List.copyOf(boxes);
+        }
+    }
+
+    /** Inclusive block-coordinate bounding box of one world's writes. */
+    public record WorldBox(UUID worldId, int minX, int minY, int minZ,
+                           int maxX, int maxY, int maxZ) {
     }
 
     private UndoReferenceBson() {
     }
 
+    /** v1-shaped convenience: no boxes, no counts (small ops, tests). */
     public static String encodeBase64(QueryRequest request, String mode, Instant ceiling) {
+        return encodeBase64(request, mode, ceiling, List.of(), 0, 0);
+    }
+
+    public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
+                                      List<WorldBox> boxes, int applied, int skipped) {
         BsonDocument doc = new BsonDocument();
-        doc.append("v", new BsonInt32(1));
+        doc.append("v", new BsonInt32(2));
         doc.append("mode", new BsonString(mode));
         doc.append("ceiling", new BsonDateTime(ceiling.toEpochMilli()));
+        doc.append("applied", new BsonInt32(applied));
+        doc.append("skipped", new BsonInt32(skipped));
+        BsonArray boxArray = new BsonArray();
+        for (WorldBox box : boxes) {
+            BsonDocument b = new BsonDocument();
+            b.append("w", new BsonBinary(box.worldId(), UuidRepresentation.STANDARD));
+            BsonArray bounds = new BsonArray();
+            for (int bound : new int[]{box.minX(), box.minY(), box.minZ(),
+                    box.maxX(), box.maxY(), box.maxZ()}) {
+                bounds.add(new BsonInt32(bound));
+            }
+            b.append("b", bounds);
+            boxArray.add(b);
+        }
+        doc.append("boxes", boxArray);
         doc.append("sort", new BsonString(request.sort().name()));
         doc.append("limit", new BsonInt32(request.limit()));
         doc.append("grouping", new BsonBoolean(request.grouping()));
@@ -92,7 +127,7 @@ public final class UndoReferenceBson {
             doc = new BsonDocumentCodec().decode(reader, DecoderContext.builder().build());
         }
         int version = doc.getInt32("v").getValue();
-        if (version != 1) {
+        if (version != 1 && version != 2) {
             throw new IllegalStateException("Unknown undo reference version " + version);
         }
         String mode = doc.getString("mode").getValue();
@@ -108,8 +143,25 @@ public final class UndoReferenceBson {
         for (BsonValue value : doc.getArray("predicates")) {
             predicates.add(predicateFromBson(value.asDocument()));
         }
+        int applied = version >= 2 ? doc.getInt32("applied").getValue() : 0;
+        int skipped = version >= 2 ? doc.getInt32("skipped").getValue() : 0;
+        List<WorldBox> boxes = new ArrayList<>();
+        if (version >= 2) {
+            for (BsonValue value : doc.getArray("boxes")) {
+                BsonDocument b = value.asDocument();
+                List<BsonValue> bounds = b.getArray("b").getValues();
+                boxes.add(new WorldBox(
+                        b.getBinary("w").asUuid(UuidRepresentation.STANDARD),
+                        bounds.get(0).asInt32().getValue(),
+                        bounds.get(1).asInt32().getValue(),
+                        bounds.get(2).asInt32().getValue(),
+                        bounds.get(3).asInt32().getValue(),
+                        bounds.get(4).asInt32().getValue(),
+                        bounds.get(5).asInt32().getValue()));
+            }
+        }
         return new Reference(new QueryRequest(predicates, sort, limit, flags, grouping),
-                mode, ceiling);
+                mode, ceiling, boxes, applied, skipped);
     }
 
     private static BsonDocument predicateToBson(QueryPredicate predicate) {

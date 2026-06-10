@@ -282,6 +282,10 @@ public final class RollbackService {
         int pageCount = 0;
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
+        // Per-world bounding boxes of applied writes — recorded into the
+        // operation reference so search synthesis (#22) and operators
+        // know where the op landed. {minX,minY,minZ,maxX,maxY,maxZ}.
+        java.util.LinkedHashMap<UUID, int[]> worldBoxes = new java.util.LinkedHashMap<>();
         // Undo capture is BY REFERENCE (#17): one small row written at
         // completion records the resolved query + a time ceiling, and
         // /spyglass undo replays the same record set in the opposite
@@ -387,6 +391,14 @@ public final class RollbackService {
                         if (loc != null) {
                             chunkKeys.add(loc.worldId() + ":"
                                     + (loc.x() >> 4) + ":" + (loc.z() >> 4));
+                            int[] box = worldBoxes.computeIfAbsent(loc.worldId(), k ->
+                                    new int[]{loc.x(), loc.y(), loc.z(), loc.x(), loc.y(), loc.z()});
+                            box[0] = Math.min(box[0], loc.x());
+                            box[1] = Math.min(box[1], loc.y());
+                            box[2] = Math.min(box[2], loc.z());
+                            box[3] = Math.max(box[3], loc.x());
+                            box[4] = Math.max(box[4], loc.y());
+                            box[5] = Math.max(box[5], loc.z());
                         }
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
@@ -446,20 +458,54 @@ public final class RollbackService {
                 queryNanos / 1_000_000L, collectNanos / 1_000_000L,
                 prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
                 pageCount, chunkKeys.size(), totalApplied, elapsedMs));
-        // One reference row makes this operation undoable. Written
-        // before the summary so "done" implies /undo is ready; the
-        // cancel path also lands here, and a partial application is
-        // itself a valid replay target (force-overwrite converges).
+        // One reference blob serves both audiences: the undo ledger row
+        // (written before the summary so "done" implies /undo is ready)
+        // and the rollback-op event record that searches synthesize the
+        // per-block rolled-* entries from (#22). The cancel path also
+        // lands here, and a partial application is itself a valid
+        // replay target (force-overwrite converges).
+        java.util.List<net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.WorldBox> boxes =
+                worldBoxes.entrySet().stream()
+                        .map(e -> new net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.WorldBox(
+                                e.getKey(), e.getValue()[0], e.getValue()[1], e.getValue()[2],
+                                e.getValue()[3], e.getValue()[4], e.getValue()[5]))
+                        .toList();
+        String reference = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
+                request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped);
         boolean undoUnavailable = false;
         if (sender instanceof Player operator && totalApplied > 0) {
             try {
-                undoStack.pushReference(operator.getUniqueId(), mode.name(),
-                        net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
-                                request, mode.name(), job.submitTime));
+                undoStack.pushReference(operator.getUniqueId(), mode.name(), reference);
             } catch (RuntimeException ex) {
                 logger.warning("Spyglass undo reference push failed (" + mode.label()
                         + " applied; /undo unavailable): " + ex.getMessage());
                 undoUnavailable = true;
+            }
+        }
+        // Only in synthesized mode: receipts mode persists the per-block
+        // trail itself, and emitting op records there too would make a
+        // later mode flip double-render those operations (receipt rows
+        // plus synthesis from the same op).
+        if (totalApplied > 0 && config.storage().rolledAuditSynthesized()) {
+            try {
+                java.time.Instant opOccurred = java.time.Instant.now();
+                BlockLocation opLocation = boxes.isEmpty()
+                        ? new BlockLocation(new UUID(0L, 0L), "", 0, 0, 0)
+                        : new BlockLocation(boxes.get(0).worldId(), "",
+                                boxes.get(0).minX(), boxes.get(0).minY(), boxes.get(0).minZ());
+                net.medievalrp.spyglass.api.event.Source opSource = sender instanceof Player p
+                        ? net.medievalrp.spyglass.api.event.Source.player(p.getUniqueId(), p.getName())
+                        : net.medievalrp.spyglass.api.event.Source.environment(sender.getName());
+                recorder.record(net.medievalrp.spyglass.api.event.RollbackOpRecord.of(
+                        new net.medievalrp.spyglass.api.event.RecordContext(
+                                net.medievalrp.spyglass.api.util.EventIds.newId(), opOccurred,
+                                config.storage().retention().after(opOccurred),
+                                net.medievalrp.spyglass.api.event.Origin.rollback(sender.getName()),
+                                opSource, opLocation, config.server().name()),
+                        mode.name(), reference));
+            } catch (RuntimeException ex) {
+                logger.warning("Spyglass rollback-op record emit failed ("
+                        + mode.label() + " unaffected): " + ex.getMessage());
             }
         }
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,

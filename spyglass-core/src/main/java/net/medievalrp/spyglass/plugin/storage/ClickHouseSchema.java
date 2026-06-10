@@ -81,6 +81,10 @@ final class ClickHouseSchema {
         // included it from the start.
         execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                 + " ADD COLUMN IF NOT EXISTS server LowCardinality(String) DEFAULT ''");
+        // rollback-op records (#22): the operation reference blob the
+        // per-block rolled-* search entries are synthesized from.
+        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                + " ADD COLUMN IF NOT EXISTS op_reference Nullable(String) CODEC(ZSTD(1))");
         // Storage codecs (#21), idempotent for tables created before
         // them: ids are time-ordered v7 now, so a shared-prefix-aware
         // codec halves the column that used to be incompressible v4
@@ -262,6 +266,7 @@ final class ClickHouseSchema {
                 + "    entity_dismount Nullable(UInt8),\n"
                 + "    entity_old_name Nullable(String),\n"
                 + "    entity_new_name Nullable(String),\n"
+                + "    op_reference Nullable(String) CODEC(ZSTD(1)),\n"
                 // --- Skip indexes ---
                 + "    INDEX idx_loc_xz (location_x, location_z) TYPE minmax GRANULARITY 4,\n"
                 + "    INDEX idx_world location_world_id TYPE bloom_filter GRANULARITY 4,\n"
