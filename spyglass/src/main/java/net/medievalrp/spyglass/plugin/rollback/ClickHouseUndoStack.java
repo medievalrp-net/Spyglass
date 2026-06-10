@@ -83,34 +83,97 @@ public final class ClickHouseUndoStack implements UndoStack {
 
     private final class Writer extends ChunkedUndoWriter {
 
+        // BSON+ZSTD encoding the effects is the expensive part of a
+        // chunk write (~12µs per effect — ~25s single-threaded for a
+        // 2M-block operation, measured 2026-06-10; the insert itself is
+        // cheap RowBinary). Chunk rows are order-independent, so fan
+        // the streamed chunks across a small pool; the semaphore bounds
+        // how many raw chunks can wait in heap.
+        private static final int ENCODE_THREADS = 4;
+
         private final UUID playerId;
         private final String operationType;
         private final UUID operationId = UUID.randomUUID();
         private final Instant createdAt = Instant.now();
+        private final java.util.concurrent.ExecutorService encodePool;
+        private final java.util.concurrent.Semaphore chunkPermits =
+                new java.util.concurrent.Semaphore(ENCODE_THREADS + 2);
+        private final List<java.util.concurrent.Future<?>> inFlight = new java.util.ArrayList<>();
 
         private Writer(UUID playerId, String operationType) {
             super(effectsPerChunk);
             this.playerId = playerId;
             this.operationType = operationType;
+            this.encodePool = java.util.concurrent.Executors.newFixedThreadPool(
+                    ENCODE_THREADS, r -> {
+                        Thread t = new Thread(r, "Spyglass-UndoEncode");
+                        t.setDaemon(true);
+                        return t;
+                    });
         }
 
         @Override
         protected void eraseOperation(int streamedChunks) {
             // Tombstone the streamed chunks (1..streamedChunks); chunk 0
-            // was never written. Best-effort: the rows are unreachable
-            // without a sealed head anyway and TTL out in 24h.
+            // was never written. A straggler insert landing after its
+            // tombstone is harmless — ReplacingMergeTree(deleted) keeps
+            // the deleted=1 row regardless of arrival order. Best-effort
+            // anyway: the rows are unreachable without a sealed head and
+            // TTL out in 24h.
             tombstoneRows(operationId, playerId, createdAt, operationType,
                     1, streamedChunks + 1);
         }
 
         @Override
         protected void writeChunk(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
+            if (chunkIndex == 0) {
+                // The sealing head publishes the operation — synchronous
+                // and durable on return, per the base contract.
+                encodeAndInsert(chunkIndex, chunkCount, effects);
+                return;
+            }
+            try {
+                chunkPermits.acquire();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Undo chunk write interrupted", ie);
+            }
+            inFlight.add(encodePool.submit(() -> {
+                try {
+                    encodeAndInsert(chunkIndex, chunkCount, effects);
+                } finally {
+                    chunkPermits.release();
+                }
+            }));
+        }
+
+        @Override
+        protected void awaitStreamedChunks() {
+            try {
+                for (java.util.concurrent.Future<?> chunk : inFlight) {
+                    try {
+                        chunk.get(120, TimeUnit.SECONDS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Undo chunk flush interrupted", ie);
+                    } catch (Exception ex) {
+                        Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                        throw new RuntimeException(
+                                "Undo chunk write failed: " + cause.getMessage(), cause);
+                    }
+                }
+            } finally {
+                inFlight.clear();
+                encodePool.shutdown();
+            }
+        }
+
+        private void encodeAndInsert(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
             // RowBinary insert, not a VALUES literal: a 25K-effect chunk
             // is a multi-MB payload, and building + server-parsing it as
-            // SQL text dominated the rollback's ledger overhead (it took
-            // a 2M-block rollback from ~9s to ~32s) and generated most
-            // of the capture's garbage. The payload stays base64 so
-            // pre-streaming rows and the reader share one encoding.
+            // SQL text was pure overhead and garbage. The payload stays
+            // base64 so pre-streaming rows and the reader share one
+            // encoding.
             String payload = BsonBlobs.encodeRollbackEffectsBase64(effects);
             ByteArrayOutputStream buffer = new ByteArrayOutputStream(payload.length() + 256);
             try {

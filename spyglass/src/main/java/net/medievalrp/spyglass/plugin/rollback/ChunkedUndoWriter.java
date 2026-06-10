@@ -36,9 +36,20 @@ abstract class ChunkedUndoWriter implements UndoStack.UndoWriter {
     }
 
     // Persists one chunk. chunkCount is 0 for streamed chunks and the
-    // real total for the sealing head chunk.
+    // real total for the sealing head chunk. Implementations MAY
+    // perform streamed-chunk (index > 0) writes asynchronously — chunk
+    // rows are independent and carry their own index — but the head
+    // chunk (index 0) write must be synchronous and durable on return.
     protected abstract void writeChunk(int chunkIndex, int chunkCount,
                                        List<RollbackEffect> effects);
+
+    // Barrier for implementations with asynchronous streamed-chunk
+    // writes: returns once every chunk handed to writeChunk is durable,
+    // throwing if any failed. Called before the head chunk is written
+    // (a sealed head must never publish missing chunks) and before an
+    // abandon erases. Default: synchronous implementations need none.
+    protected void awaitStreamedChunks() {
+    }
 
     // Erases everything written for this operation so far (abandon).
     // streamedChunks is the count of streamed rows, i.e. indices
@@ -77,6 +88,10 @@ abstract class ChunkedUndoWriter implements UndoStack.UndoWriter {
             writeChunk(nextStreamedIndex++, 0, pending);
             pending = new ArrayList<>();
         }
+        // Every streamed chunk must be durable before the head goes in:
+        // the head is what publishes the operation, and a published op
+        // with holes would fail its replay.
+        awaitStreamedChunks();
         int chunkCount = nextStreamedIndex; // indices 0..nextStreamedIndex-1
         writeChunk(0, chunkCount, head == null ? List.of() : head);
         head = null;
@@ -91,6 +106,11 @@ abstract class ChunkedUndoWriter implements UndoStack.UndoWriter {
         abandoned = true;
         head = null;
         pending = new ArrayList<>();
+        try {
+            awaitStreamedChunks();
+        } catch (RuntimeException ignored) {
+            // Abandoning anyway; in-flight failures change nothing.
+        }
         if (nextStreamedIndex > 1) {
             eraseOperation(nextStreamedIndex - 1);
         }
