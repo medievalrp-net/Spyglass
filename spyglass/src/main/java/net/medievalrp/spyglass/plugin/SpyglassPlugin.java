@@ -327,20 +327,35 @@ public final class SpyglassPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(physicsBlocker, this);
         engine.setPhysicsBlocker(physicsBlocker);
         engine.setTickBudgetMs(config.limits().rollbackTickBudgetMs());
-        // Single-thread executor for the off-main-thread world-write
-        // phase. The apply path's bulk LevelChunkSection.setBlockState
-        // loop runs here so the main thread only handles the small
-        // post-processing (chunk packet, tile entities, inverse build)
-        // per chunk. Server TPS stays at ~20 even on multi-million-
-        // block rollbacks because we're no longer monopolizing the
-        // server thread for the whole rollback duration.
-        this.worldWriteExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "Spyglass-WorldWriter");
-            t.setDaemon(true);
-            t.setPriority(Thread.NORM_PRIORITY);
-            return t;
-        });
+        // Pool for the off-main-thread world-write phase. The apply
+        // path's bulk LevelChunkSection.setBlockState loop runs here so
+        // the main thread only handles the small post-processing (chunk
+        // packet, tile entities, inverse build) per chunk. Server TPS
+        // stays at ~20 even on multi-million-block rollbacks because
+        // we're no longer monopolizing the server thread for the whole
+        // rollback duration.
+        //
+        // Sized to the host: distinct chunks write to independent
+        // LevelChunkSection palettes, and the 4-arg setBlockState takes
+        // the useLocks=true (thread-safe) path, so the engine fans the
+        // per-chunk palette writes across these threads — the dominant
+        // phase of a large rollback. getChunk and all tile-entity /
+        // finish work stay on the main thread (see RollbackEngine), so
+        // the only NMS touched off-main is the locked section write.
+        int worldWriteThreads = Math.max(2,
+                Math.min(8, Runtime.getRuntime().availableProcessors() - 2));
+        final java.util.concurrent.atomic.AtomicInteger writeThreadSeq =
+                new java.util.concurrent.atomic.AtomicInteger();
+        this.worldWriteExecutor = java.util.concurrent.Executors.newFixedThreadPool(
+                worldWriteThreads, r -> {
+                    Thread t = new Thread(r, "Spyglass-WorldWriter-" + writeThreadSeq.incrementAndGet());
+                    t.setDaemon(true);
+                    t.setPriority(Thread.NORM_PRIORITY);
+                    return t;
+                });
         engine.setWorldWriteExecutor(this.worldWriteExecutor);
+        engine.setWorldWriteParallelism(worldWriteThreads);
+        getLogger().info("Spyglass rollback world-write pool: " + worldWriteThreads + " threads");
         // Plugin reference so the engine can hold a chunk ticket per
         // chunk during the async write phase — chunks pinned loaded
         // until each chunk's main-thread post-processing completes.
