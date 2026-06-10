@@ -75,6 +75,10 @@ public final class EventCatalog {
         // recorder queue on big rollbacks).
         m.put("rolled-place", BlockUseRecord.class);
         m.put("rolled-break", BlockUseRecord.class);
+        // One per completed rollback/restore/undo operation: the durable
+        // identity the per-block rolled-* entries are synthesized from
+        // at search time (#22).
+        m.put("rollback-op", RollbackOpRecord.class);
         TYPES = Map.copyOf(m);
     }
 

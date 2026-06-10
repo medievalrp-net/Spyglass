@@ -73,7 +73,9 @@ public record SpyglassConfig(
                         Duration.parse(root.node("storage", "retention").getString("4w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
                         Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
-                        parseDurability(root.node("storage", "durability").getString("ram"))),
+                        parseDurability(root.node("storage", "durability").getString("ram")),
+                        "synthesized".equalsIgnoreCase(
+                                root.node("storage", "rolled-audit").getString("synthesized"))),
                 new Defaults(
                         root.node("defaults", "enabled").getBoolean(true),
                         root.node("defaults", "radius").getInt(250),
@@ -174,7 +176,7 @@ public record SpyglassConfig(
      *                      cheap; per-event overhead is negligible.
      */
     public record Storage(Duration retention, int queueCapacity, Duration flushTimeout,
-                          Durability durability) {
+                          Durability durability, boolean rolledAuditSynthesized) {
     }
 
     /**
