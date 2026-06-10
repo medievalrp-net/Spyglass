@@ -317,18 +317,24 @@ async function runOneSize(s, idx) {
     r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring), mspt: tpsStats(sgRb.msptDuring), worstTick: sgRb.worstTick };
     await sleep(4000);
 
-    // ── Spyglass undo SKIPPED ────────────────────────────────────
-    // Known issue: /sg undo push() OOMs for rollbacks >~250K effects
-    // because BSON-encoding the entire inverse-effects list in one
-    // pass blows the JVM heap. Documented; need paged push to fix.
-    // The earlier compare run captured the failure mode at 500K/1M.
-    r.sgUndo = null;
+    // ── Spyglass undo (chunked ledger replay, #17) ───────────────
+    // The bot is the rollback's operator, so its ledger holds the op.
+    // Replay streams ~25K-effect chunks: ledger reads + chunked
+    // applies, never the whole inverse list in heap.
+    log('  /spyglass undo…');
+    const sgUndo = await timedOp(bot, '/spyglass undo',
+        /(reversals|no valid actions|Undo failed)/i);
+    log(`  → ${sgUndo.ms} ms (${(expected / (sgUndo.ms / 1000)).toFixed(0)} bps)`);
+    log(`     summary: ${(sgUndo.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
+    r.sgUndo = { ms: sgUndo.ms, summary: sgUndo.summary, tps: tpsStats(sgUndo.tpsDuring), mspt: tpsStats(sgUndo.msptDuring), worstTick: sgUndo.worstTick };
+    await sleep(4000);
 
-    // After SG rollback the cube is stone. /fill it back to air via
-    // RCON (server-issued, NOT logged by either plugin) so CP
-    // rollback has real block-write work to do — otherwise CP
-    // iterates its log but writes no blocks (already-stone),
-    // measuring only its scan path, not its apply path.
+    // After SG rollback the cube is stone; after the undo it is air
+    // again. The /fill below is then a near-no-op, kept as a reset so
+    // CP still gets real block-write work even on runs where the undo
+    // failed — otherwise CP iterates its log but writes no blocks
+    // (already-stone), measuring only its scan path, not its apply
+    // path.
     log('  /fill air (reset for CP test)…');
     {
         let yc = Y_BASE;
