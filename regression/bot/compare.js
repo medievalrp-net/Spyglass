@@ -245,6 +245,13 @@ async function runOneSize(s, idx) {
 
     const bot = mineflayer.createBot({
         host: HOST, port: PORT, username: botName, version: '1.21.4',
+        // The 2M //replace floods the client with block updates; parsing
+        // them starves the keepalive in node's single event loop and the
+        // default 30s watchdog self-disconnects (seen under ZGC, where no
+        // server GC pauses pace the flood). Timing reads chat regexes
+        // AFTER the drain+baseline settle, so a patient watchdog does not
+        // affect measurements.
+        checkTimeoutInterval: 180_000,
     });
     await new Promise((r, j) => { bot.once('spawn', r); bot.once('error', j); });
 
