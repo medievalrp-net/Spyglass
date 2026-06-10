@@ -146,30 +146,52 @@ function fmtStage(rows) {
     await sleep(2000);
     const afterRollback = await readAll(bot);
 
+    // ── Stage 4: /spyglass undo (reverse the rollback → air) ──────
+    // The undo replays the rollback's inverse-effect ledger in chunks
+    // (#17); world truth must come back to the post-//replace state.
+    log('Stage 4: /spyglass undo …');
+    let undoSummary = null;
+    const undoHandler = m => { if (/(reversals|no valid actions|Undo failed)/i.test(m)) undoSummary = m; };
+    bot.on('messagestr', undoHandler);
+    const tUndo = Date.now();
+    bot.chat('/spyglass undo');
+    while (undoSummary == null && Date.now() - tUndo < 60000) await sleep(200);
+    bot.removeListener('messagestr', undoHandler);
+    await sleep(2000);
+    const afterUndo = await readAll(bot);
+
     // ── Report ────────────────────────────────────────────────────
     log('\n──────── BLOCK STATE BY STAGE (srv = server truth, cli = bot view) ────────');
     for (let i = 0; i < SAMPLES.length; i++) {
-        const f = afterFill[i], r = afterReplace[i], b = afterRollback[i];
-        log(`(${f.x},${f.y},${f.z})  fill:srv=${f.server}/cli=${f.client}  ->  replace:srv=${r.server}/cli=${r.client}  ->  rollback:srv=${b.server}/cli=${b.client}`);
+        const f = afterFill[i], r = afterReplace[i], b = afterRollback[i], u = afterUndo[i];
+        log(`(${f.x},${f.y},${f.z})  fill:srv=${f.server}/cli=${f.client}  ->  replace:srv=${r.server}/cli=${r.client}  ->  rollback:srv=${b.server}/cli=${b.client}  ->  undo:srv=${u.server}/cli=${u.client}`);
     }
     log('');
     log(`Rollback summary line: ${summary ? summary.replace(/\s+/g, ' ').trim() : '(none / timeout)'}`);
     log(`Rollback wall time: ${Date.now() - t0} ms`);
+    log(`Undo summary line: ${undoSummary ? undoSummary.replace(/\s+/g, ' ').trim() : '(none / timeout)'}`);
+    log(`Undo wall time: ${Date.now() - tUndo} ms`);
 
     // ── Verdict ───────────────────────────────────────────────────
     const allStoneAfterFill = afterFill.every(s => s.server === 'stone');
     const allAirAfterReplace = afterReplace.every(s => s.server === 'air');
     const allStoneAfterRollback = afterRollback.every(s => s.server === 'stone');
+    const allAirAfterUndo = afterUndo.every(s => s.server === 'air');
     const appliedMatch = summary && summary.match(/(\d[\d,]*)\s+reversal/i);
     const applied = appliedMatch ? parseInt(appliedMatch[1].replace(/,/g, ''), 10) : 0;
+    const undoneMatch = undoSummary && undoSummary.match(/(\d[\d,]*)\s+reversal/i);
+    const undone = undoneMatch ? parseInt(undoneMatch[1].replace(/,/g, ''), 10) : 0;
 
     log('\n──────── VERDICT ────────');
     log(`  all samples STONE after fill:        ${allStoneAfterFill ? 'YES' : 'NO'}`);
     log(`  all samples AIR after //replace:     ${allAirAfterReplace ? 'YES' : 'NO'}`);
     log(`  all samples STONE after rollback:    ${allStoneAfterRollback ? 'YES' : 'NO'}  <-- rollback wrote blocks`);
+    log(`  all samples AIR after undo:          ${allAirAfterUndo ? 'YES' : 'NO'}  <-- undo reversed them`);
     log(`  rollback reported reversals:         ${applied.toLocaleString()}`);
-    const pass = allStoneAfterFill && allAirAfterReplace && allStoneAfterRollback && applied > 0;
-    log(`\n  RESULT: ${pass ? 'PASS — rollback physically restored the blocks.' : 'FAIL — see stages above.'}`);
+    log(`  undo reported reversals:             ${undone.toLocaleString()}`);
+    const pass = allStoneAfterFill && allAirAfterReplace && allStoneAfterRollback
+        && allAirAfterUndo && applied > 0 && undone === applied;
+    log(`\n  RESULT: ${pass ? 'PASS — rollback restored the blocks and undo reversed them.' : 'FAIL — see stages above.'}`);
 
     bot.quit();
     await sleep(1500);
