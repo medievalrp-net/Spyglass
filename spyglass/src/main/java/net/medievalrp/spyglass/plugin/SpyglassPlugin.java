@@ -100,6 +100,7 @@ import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import net.medievalrp.spyglass.plugin.storage.SynthesizingRecordStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
@@ -164,7 +165,18 @@ public final class SpyglassPlugin extends JavaPlugin {
                             chStore.client(), ch.database());
                 }
             }
-            getLogger().info("Spyglass: backend = " + config.database().backend());
+            if (config.storage().rolledAuditSynthesized()) {
+                // #22: searches synthesize per-block rolled-* entries
+                // from rollback-op records instead of reading persisted
+                // receipts. Wrapping here puts every read path — plugin
+                // search, the public API, IP resolution — behind the
+                // same merge; writes and the rollback's streaming page
+                // reads delegate untouched.
+                recordStore = new SynthesizingRecordStore(recordStore, true);
+            }
+            getLogger().info("Spyglass: backend = " + config.database().backend()
+                    + (config.storage().rolledAuditSynthesized()
+                            ? " (rolled audit: synthesized)" : " (rolled audit: receipts)"));
         } catch (Exception ex) {
             getLogger().severe("Failed to initialize record store ("
                     + config.database().backend() + "): " + ex.getMessage());
@@ -321,7 +333,13 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
-        RollbackEngine engine = new RollbackEngine(recorder, support);
+        // Synthesized rolled audit (#22): the engine's per-block
+        // receipt emission is the recorder hook — a null recorder is
+        // its documented no-emit mode (unit tests rely on it). The
+        // operation record that searches synthesize from is emitted by
+        // RollbackService at completion instead.
+        RollbackEngine engine = new RollbackEngine(
+                config.storage().rolledAuditSynthesized() ? null : recorder, support);
         engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
         RollbackPhysicsBlocker physicsBlocker = new RollbackPhysicsBlocker();
         getServer().getPluginManager().registerEvents(physicsBlocker, this);

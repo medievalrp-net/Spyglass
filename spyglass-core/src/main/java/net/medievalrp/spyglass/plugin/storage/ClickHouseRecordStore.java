@@ -44,6 +44,7 @@ import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.RollbackOpRecord;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
@@ -119,7 +120,8 @@ public final class ClickHouseRecordStore implements RecordStore {
             "after_material", "after_blockdata", "after_extras",
             "before_item", "after_item",
             "item",
-            "entity_nbt");
+            "entity_nbt",
+            "op_reference");
 
     /**
      * Trimmed column list for the rollback streaming path. Includes
@@ -286,6 +288,12 @@ public final class ClickHouseRecordStore implements RecordStore {
         writeJoinColumns(writer, record);
         writeTeleportColumns(writer, record);
         writeEntityColumns(writer, record);
+        writeOpColumns(writer, record);
+    }
+
+    private void writeOpColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        writer.setValue("op_reference",
+                record instanceof RollbackOpRecord op ? op.reference() : null);
     }
 
     private void writeCommon(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
@@ -685,6 +693,13 @@ public final class ClickHouseRecordStore implements RecordStore {
         if (clazz == BlockUseRecord.class) {
             return new BlockUseRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target);
+        }
+        if (clazz == RollbackOpRecord.class) {
+            // mode rides in the common `target` column; the reference
+            // blob is heavy-class (only full reads need to expand ops).
+            return new RollbackOpRecord(id, event, occurred, expiresAt,
+                    origin, source, location, server, target,
+                    includeHeavy ? row.getString("op_reference") : null);
         }
         if (clazz == ChatRecord.class) {
             return new ChatRecord(id, event, occurred, expiresAt,
