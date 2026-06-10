@@ -146,9 +146,42 @@ public final class RollbackService {
     private record JobContext(QueryRequest request, RollbackMode mode,
                               @org.jetbrains.annotations.Nullable
                               net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
-                              int initialApplied, int initialSkipped) {
+                              int initialApplied, int initialSkipped,
+                              @org.jetbrains.annotations.Nullable Runnable onDone) {
         JobContext(QueryRequest request, RollbackMode mode) {
-            this(request, mode, null, 0, 0);
+            this(request, mode, null, 0, 0, null);
+        }
+
+        JobContext(QueryRequest request, RollbackMode mode,
+                   @org.jetbrains.annotations.Nullable
+                   net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
+                   int initialApplied, int initialSkipped) {
+            this(request, mode, startCursor, initialApplied, initialSkipped, null);
+        }
+    }
+
+    // Replays an already-resolved request through the normal job
+    // pipeline — same queue, progress UI, cancellation, and streaming
+    // engine as an operator-issued rollback/restore. Used by /spyglass
+    // undo to run a stored reference in the opposite direction; onDone
+    // fires only on a clean completion (not cancel/failure), which is
+    // when the undo reference may be consumed. Note: the queue label is
+    // not re-parseable, so a crash mid-replay is not resumable via
+    // /sg resume — the reference stays poppable and /undo just re-runs.
+    public void executeReplay(Player operator, QueryRequest request, RollbackMode mode,
+                              String queueLabel, Runnable onDone) {
+        QueryRequest replay = forceNoGroup(request, mode);
+        RollbackJob.Mode jobMode = mode == RollbackMode.RESTORE
+                ? RollbackJob.Mode.RESTORE
+                : RollbackJob.Mode.ROLLBACK;
+        RollbackJob job = new RollbackJob(UUID.randomUUID(), operator.getUniqueId(),
+                operator.getName(), queueLabel, jobMode, Instant.now(), operator);
+        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone));
+        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
+        int position = jobQueue.submit(job);
+        if (position > 0) {
+            operator.sendMessage(Feedback.bonus("Undo queued at position " + position
+                    + " (id " + job.shortId() + ")."));
         }
     }
 
@@ -211,6 +244,9 @@ public final class RollbackService {
                         ? RollbackJob.State.CANCELLED
                         : RollbackJob.State.DONE);
                 resumeStore.markFinish(job.id);
+                if (!job.cancelFlag.get() && ctx.onDone() != null) {
+                    ctx.onDone().run();
+                }
             } catch (Throwable thrown) {
                 logger.warning("Spyglass rollback job " + job.shortId() + " failed: " + thrown);
                 job.failureMessage = thrown.getMessage();
@@ -246,12 +282,10 @@ public final class RollbackService {
         int pageCount = 0;
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
-        // Past undoCap inverses we drop the rest. The rollback still
-        // applies; only /spyglass undo is sacrificed. Without this a
-        // 1M-block rollback eats ~200 MB just holding inverses.
-        int undoCap = Math.max(0, config.limits().rollbackUndoCap());
-        List<RollbackEffect> inverses = new ArrayList<>();
-        boolean undoTruncated = false;
+        // Undo capture is BY REFERENCE (#17): one small row written at
+        // completion records the resolved query + a time ceiling, and
+        // /spyglass undo replays the same record set in the opposite
+        // direction. Nothing is captured per effect.
 
         net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursor = startCursor;
         if (startCursor != null) {
@@ -349,11 +383,6 @@ public final class RollbackService {
                 for (RollbackResult r : results) {
                     if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
-                        if (totalApplied <= undoCap) {
-                            inverses.add(applied.inverseEffect());
-                        } else {
-                            undoTruncated = true;
-                        }
                         BlockLocation loc = locationOf(applied.effect());
                         if (loc != null) {
                             chunkKeys.add(loc.worldId() + ":"
@@ -417,10 +446,27 @@ public final class RollbackService {
                 queryNanos / 1_000_000L, collectNanos / 1_000_000L,
                 prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
                 pageCount, chunkKeys.size(), totalApplied, elapsedMs));
+        // One reference row makes this operation undoable. Written
+        // before the summary so "done" implies /undo is ready; the
+        // cancel path also lands here, and a partial application is
+        // itself a valid replay target (force-overwrite converges).
+        boolean undoUnavailable = false;
+        if (sender instanceof Player operator && totalApplied > 0) {
+            try {
+                undoStack.pushReference(operator.getUniqueId(), mode.name(),
+                        net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
+                                request, mode.name(), job.submitTime));
+            } catch (RuntimeException ex) {
+                logger.warning("Spyglass undo reference push failed (" + mode.label()
+                        + " applied; /undo unavailable): " + ex.getMessage());
+                undoUnavailable = true;
+            }
+        }
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,
-                chunkKeys.size(), elapsedMs, inverses);
-        boolean truncated = undoTruncated;
-        support.onMainThread(() -> deliverStreamingSummary(sender, mode, summary, skipCounts, truncated));
+                chunkKeys.size(), elapsedMs);
+        boolean undoUnavailableFinal = undoUnavailable;
+        support.onMainThread(() -> deliverStreamingSummary(
+                sender, mode, summary, skipCounts, undoUnavailableFinal));
     }
 
     // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
@@ -471,29 +517,15 @@ public final class RollbackService {
     private void deliverStreamingSummary(CommandSender sender, RollbackMode mode,
                                          Summary summary,
                                          java.util.LinkedHashMap<String, Integer> skipCounts,
-                                         boolean undoTruncated) {
+                                         boolean undoUnavailable) {
         for (var entry : skipCounts.entrySet()) {
             String suffix = entry.getValue() == 1 ? "" : " ×" + entry.getValue();
             sender.sendMessage(Feedback.bonus("Skip Reason: " + entry.getKey() + suffix));
         }
         sender.sendMessage(summaryLine(summary));
-        if (undoTruncated) {
+        if (undoUnavailable) {
             sender.sendMessage(Feedback.bonus(
-                    "Rollback exceeded undo cap (" + config.limits().rollbackUndoCap()
-                            + "); /spyglass undo will not reverse this op."));
-        }
-        if (sender instanceof Player player && !summary.inverses.isEmpty()) {
-            UUID playerId = player.getUniqueId();
-            String operation = mode.name();
-            List<RollbackEffect> inverses = summary.inverses;
-            support.onAsyncThread(() -> {
-                try {
-                    undoStack.push(playerId, operation, inverses);
-                } catch (RuntimeException ex) {
-                    logger.warning("Spyglass undo-stack push failed (rollback "
-                            + "applied but undo unavailable): " + ex.getMessage());
-                }
-            });
+                    "Undo reference could not be saved; /spyglass undo cannot reverse this op."));
         }
     }
 
@@ -544,15 +576,10 @@ public final class RollbackService {
     }
 
     public record Summary(int applied, int skipped, int errors,
-                          int chunks, long elapsedMs,
-                          List<RollbackEffect> inverses) {
+                          int chunks, long elapsedMs) {
 
-        public Summary {
-            inverses = List.copyOf(inverses);
-        }
-
-        public Summary(int applied, int skipped, List<RollbackEffect> inverses) {
-            this(applied, skipped, 0, 0, 0L, inverses);
+        public Summary(int applied, int skipped) {
+            this(applied, skipped, 0, 0, 0L);
         }
     }
 }
