@@ -98,6 +98,7 @@ const SIZES = [
     // { name: '100K',  side: 47  },
     // { name: '1M',    side: 100 },
     { name: '2M',    side: 126 },
+    // { name: '500K',  side: 80  },
 ];
 
 const X_BASE = 14000, Y_BASE = 80, Z_BASE = 14000;
@@ -119,12 +120,21 @@ function tpsStats(samples) {
 // null if it didn't parse. mspt < 50 ms = healthy 20 TPS;
 // mspt > 50 ms = real TPS drop.
 async function msptAvg5s() {
+    const s = await msptSample();
+    return s == null ? null : s.avg;
+}
+
+// Parse the 5s window's avg AND max single tick. The avg smooths
+// short spikes (a lone 200ms tick over ~100 ticks barely moves it),
+// so the max is what actually reveals a single-tick stall. Returns
+// { avg, max } in ms, or null.
+async function msptSample() {
     try {
         const r = await rcon('mspt');
         // "Server tick times (avg/min/max) from last 5s, 10s, 1m:
-        //  ◴ 1.7/0.6/7.4, 1.8/0.6/7.4, 1.6/0.5/21.0"
+        //  ◴ 1.7/0.6/7.4, 1.8/0.6/7.4, 1.6/0.5/21.0"  -> first triple = 5s
         const m = r.match(/([\d.]+)\/([\d.]+)\/([\d.]+),/);
-        if (m) return parseFloat(m[1]);
+        if (m) return { avg: parseFloat(m[1]), max: parseFloat(m[3]) };
     } catch { }
     return null;
 }
@@ -179,26 +189,36 @@ async function timedOp(bot, command, completionRegex, timeout = 1800000) {
     const t0 = Date.now();
     const done = waitForChat(bot, completionRegex, timeout);
 
+    // Sundial all-threads profiling forces a JVM safepoint every 5ms and
+    // only runs during the SG rollback, so it inflates SG's tick times vs
+    // CP. Keep it OFF for fair MSPT/worst-tick measurement; flip to the
+    // regex only when specifically capturing an off-main profile.
+    const profile = false;
+
     const tpsDuring = [];
     const msptDuring = [];
+    let worstTick = 0;        // max single-tick mspt seen (5s-window max)
     let sampling = true;
     const sampler = (async () => {
         while (sampling) {
-            const m = await msptAvg5s();  // 5s avg — responsive within rollback window
-            if (m != null) {
-                msptDuring.push(m);
-                tpsDuring.push(tpsFromMspt(m));
+            const s = await msptSample();  // {avg, max} over the last 5s
+            if (s != null) {
+                msptDuring.push(s.avg);
+                tpsDuring.push(tpsFromMspt(s.avg));
+                if (s.max > worstTick) worstTick = s.max;
             }
             await sleep(1500);
         }
     })();
 
+    if (profile) { try { await rcon('sundial start all 5'); } catch (e) {} }
     bot.chat(command);
     const summary = await done;
     const ms = Date.now() - t0;
     sampling = false;
     await sampler;
-    return { ms, summary, tpsDuring, msptDuring };
+    if (profile) { try { await rcon('sundial stop'); } catch (e) {} }
+    return { ms, summary, tpsDuring, msptDuring, worstTick };
 }
 
 const results = [];
@@ -287,7 +307,7 @@ async function runOneSize(s, idx) {
         /(reversals|No results)/i);
     log(`  → ${sgRb.ms} ms (${(expected / (sgRb.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(sgRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring), mspt: tpsStats(sgRb.msptDuring) };
+    r.sgRollback = { ms: sgRb.ms, summary: sgRb.summary, tps: tpsStats(sgRb.tpsDuring), mspt: tpsStats(sgRb.msptDuring), worstTick: sgRb.worstTick };
     await sleep(4000);
 
     // ── Spyglass undo SKIPPED ────────────────────────────────────
@@ -323,7 +343,7 @@ async function runOneSize(s, idx) {
         /(Rollback completed|No data found)/i);
     log(`  → ${cpRb.ms} ms (${(expected / (cpRb.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(cpRb.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.cpRollback = { ms: cpRb.ms, summary: cpRb.summary, tps: tpsStats(cpRb.tpsDuring), mspt: tpsStats(cpRb.msptDuring) };
+    r.cpRollback = { ms: cpRb.ms, summary: cpRb.summary, tps: tpsStats(cpRb.tpsDuring), mspt: tpsStats(cpRb.msptDuring), worstTick: cpRb.worstTick };
     await sleep(4000);
 
     // ── CoreProtect restore (re-apply the breaks → back to air) ──
@@ -332,7 +352,7 @@ async function runOneSize(s, idx) {
         /(Restore completed|No data found)/i);
     log(`  → ${cpRestore.ms} ms (${(expected / (cpRestore.ms / 1000)).toFixed(0)} bps)`);
     log(`     summary: ${(cpRestore.summary || '(timeout)').replace(/\s+/g, ' ').slice(0, 200)}`);
-    r.cpRestore = { ms: cpRestore.ms, summary: cpRestore.summary, tps: tpsStats(cpRestore.tpsDuring), mspt: tpsStats(cpRestore.msptDuring) };
+    r.cpRestore = { ms: cpRestore.ms, summary: cpRestore.summary, tps: tpsStats(cpRestore.tpsDuring), mspt: tpsStats(cpRestore.msptDuring), worstTick: cpRestore.worstTick };
     await sleep(2000);
 
     bot.quit();
@@ -369,13 +389,24 @@ function printReport() {
         log(`${fmtSize} | ${fmtBlk} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
     }
     log('');
-    log('mspt during op (max / avg ms — 50 ms = 20 TPS floor):');
+    log('mspt-5s-AVG during op (max-of-avgs / avg ms — SMOOTHS single-tick spikes):');
     log('Size  | SG rollback         | SG undo             | CP rollback         | CP restore');
     log('------|---------------------|---------------------|---------------------|----------------');
     for (const r of results) {
         const fmt = (op) => {
             if (!op || !op.mspt || op.mspt.n === 0) return 'n/a                ';
             return `${op.mspt.max.toFixed(1).padStart(5)}/${op.mspt.avg.toFixed(1).padEnd(5)} ms (n=${op.mspt.n.toString().padEnd(2)})`;
+        };
+        log(`${r.size.padEnd(5)} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
+    }
+    log('');
+    log('WORST SINGLE TICK during op (mspt 5s-window max — > 50 ms = a real TPS dip that tick):');
+    log('Size  | SG rollback     | SG undo         | CP rollback     | CP restore');
+    log('------|-----------------|-----------------|-----------------|----------------');
+    for (const r of results) {
+        const fmt = (op) => {
+            if (!op || op.worstTick == null) return 'n/a            ';
+            return `${op.worstTick.toFixed(1).padStart(7)} ms    `;
         };
         log(`${r.size.padEnd(5)} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
     }
