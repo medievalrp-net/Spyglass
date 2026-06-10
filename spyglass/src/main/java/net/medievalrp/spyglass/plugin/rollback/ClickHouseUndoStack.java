@@ -2,8 +2,17 @@ package net.medievalrp.spyglass.plugin.rollback;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.command.CommandResponse;
+import com.clickhouse.client.api.data_formats.RowBinaryFormatWriter;
+import com.clickhouse.client.api.insert.InsertResponse;
+import com.clickhouse.client.api.insert.InsertSettings;
+import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.client.api.query.GenericRecord;
+import com.clickhouse.data.ClickHouseFormat;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -46,18 +55,25 @@ public final class ClickHouseUndoStack implements UndoStack {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final Client client;
+    private final String database;
     private final String table;
     private final int effectsPerChunk;
+    private final TableSchema undoSchema;
 
     public ClickHouseUndoStack(Client client, String database) {
         this(client, database, DEFAULT_EFFECTS_PER_CHUNK);
     }
 
     // Visible chunk size for tests; production uses the default.
+    // Requires the schema to exist already — the record store's
+    // constructor runs ClickHouseSchema.ensure before the stack is
+    // built (SpyglassPlugin wiring order; the ITs mirror it).
     public ClickHouseUndoStack(Client client, String database, int effectsPerChunk) {
         this.client = client;
+        this.database = database;
         this.table = "`" + database + "`.`undo_history`";
         this.effectsPerChunk = Math.max(1, effectsPerChunk);
+        this.undoSchema = client.getTableSchema("undo_history", database);
     }
 
     @Override
@@ -89,18 +105,44 @@ public final class ClickHouseUndoStack implements UndoStack {
 
         @Override
         protected void writeChunk(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
+            // RowBinary insert, not a VALUES literal: a 25K-effect chunk
+            // is a multi-MB payload, and building + server-parsing it as
+            // SQL text dominated the rollback's ledger overhead (it took
+            // a 2M-block rollback from ~9s to ~32s) and generated most
+            // of the capture's garbage. The payload stays base64 so
+            // pre-streaming rows and the reader share one encoding.
             String payload = BsonBlobs.encodeRollbackEffectsBase64(effects);
-            String sql = "INSERT INTO " + table
-                    + " (operation_id, chunk_index, chunk_count, "
-                    + "player_id, created_at, operation_type, inverse_effects, deleted) "
-                    + "VALUES (toUUID('" + operationId + "'), "
-                    + chunkIndex + ", "
-                    + chunkCount + ", "
-                    + "toUUID('" + playerId + "'), "
-                    + chTimestamp(createdAt) + ", "
-                    + escape(operationType) + ", "
-                    + escape(payload) + ", 0)";
-            execute(sql);
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream(payload.length() + 256);
+            try {
+                RowBinaryFormatWriter w = new RowBinaryFormatWriter(
+                        buffer, undoSchema, ClickHouseFormat.RowBinary);
+                w.setValue("operation_id", operationId);
+                w.setValue("chunk_index", chunkIndex);
+                w.setValue("chunk_count", chunkCount);
+                w.setValue("player_id", playerId);
+                w.setDateTime("created_at", LocalDateTime.ofInstant(createdAt, ZoneOffset.UTC));
+                w.setString("operation_type", operationType);
+                w.setString("inverse_effects", payload);
+                w.setValue("deleted", 0);
+                w.commitRow();
+            } catch (IOException ex) {
+                throw new RuntimeException("Undo RowBinary write failed: " + ex.getMessage(), ex);
+            }
+            // Plain synchronous insert — no async_insert fire-and-forget
+            // here: seal() returning must mean the ledger is durable.
+            InsertSettings settings = new InsertSettings().setDatabase(database);
+            try (InsertResponse ignored = client.insert(
+                    "undo_history",
+                    new ByteArrayInputStream(buffer.toByteArray()),
+                    ClickHouseFormat.RowBinary,
+                    settings).get(60, TimeUnit.SECONDS)) {
+                // ack received
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Undo insert interrupted", ie);
+            } catch (Exception ex) {
+                throw new RuntimeException("Undo insert failed: " + ex.getMessage(), ex);
+            }
         }
     }
 
