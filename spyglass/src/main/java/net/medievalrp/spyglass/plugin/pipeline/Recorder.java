@@ -9,6 +9,21 @@ public interface Recorder {
 
     void record(EventRecord record);
 
+    /**
+     * Bulk-record a batch of synthesized records. Implementations may
+     * skip the per-record committed hook that {@link #record} fires —
+     * this path is for internally-generated batches (the rollback audit
+     * trail) where reactive per-record notification isn't needed and
+     * firing one Bukkit event per record on the main thread would cost
+     * more than the operation producing them. Default falls back to
+     * per-record {@link #record} so test doubles work unchanged.
+     */
+    default void recordAll(java.util.List<EventRecord> records) {
+        for (EventRecord record : records) {
+            record(record);
+        }
+    }
+
     AsyncRecorder.ShutdownReport shutdown(Duration timeout);
 
     /**
