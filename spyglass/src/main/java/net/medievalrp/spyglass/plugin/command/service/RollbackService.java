@@ -247,10 +247,34 @@ public final class RollbackService {
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         // Past undoCap inverses we drop the rest. The rollback still
-        // applies; only /spyglass undo is sacrificed. Without this a
-        // 1M-block rollback eats ~200 MB just holding inverses.
+        // applies; only /spyglass undo is sacrificed.
         int undoCap = Math.max(0, config.limits().rollbackUndoCap());
-        List<RollbackEffect> inverses = new ArrayList<>();
+        // Inverse effects stream to the undo ledger page by page on a
+        // dedicated I/O thread (#17). Capture heap stays O(page) instead
+        // of O(rollback) — the whole-op inverse list was the dominant
+        // old-gen promotion source on multi-million-block rollbacks —
+        // and ledger writes overlap the next page's read/apply instead
+        // of serializing with them. The single thread also serializes
+        // all writer calls, so the writer itself needs no locking.
+        UndoStack.UndoWriter undoWriterLocal = null;
+        if (sender instanceof Player undoOwner && undoCap > 0) {
+            try {
+                undoWriterLocal = undoStack.beginPush(undoOwner.getUniqueId(), mode.name());
+            } catch (RuntimeException ex) {
+                logger.warning("Spyglass undo capture unavailable: " + ex.getMessage());
+            }
+        }
+        final UndoStack.UndoWriter undoSink = undoWriterLocal;
+        final java.util.concurrent.atomic.AtomicBoolean undoBroken =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.ExecutorService undoIo = undoSink == null ? null
+                : java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r, "Spyglass-UndoCapture");
+                    t.setDaemon(true);
+                    return t;
+                });
+        long undoAppended = 0;
+        boolean undoSealed = false;
         boolean undoTruncated = false;
 
         net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursor = startCursor;
@@ -346,11 +370,15 @@ public final class RollbackService {
                     return;
                 }
                 applyNanos += System.nanoTime() - tApply;
+                List<RollbackEffect> pageInverses =
+                        undoSink != null && !undoBroken.get() ? new ArrayList<>() : null;
                 for (RollbackResult r : results) {
                     if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
                         if (totalApplied <= undoCap) {
-                            inverses.add(applied.inverseEffect());
+                            if (pageInverses != null) {
+                                pageInverses.add(applied.inverseEffect());
+                            }
                         } else {
                             undoTruncated = true;
                         }
@@ -369,6 +397,21 @@ public final class RollbackService {
                             totalErrors++;
                         }
                     }
+                }
+                if (pageInverses != null && !pageInverses.isEmpty()) {
+                    undoAppended += pageInverses.size();
+                    final List<RollbackEffect> undoBatch = pageInverses;
+                    undoIo.execute(() -> {
+                        try {
+                            undoSink.append(undoBatch);
+                        } catch (RuntimeException ex) {
+                            if (undoBroken.compareAndSet(false, true)) {
+                                logger.warning("Spyglass undo capture failed mid-stream"
+                                        + " (rollback continues; /undo unavailable): "
+                                        + ex.getMessage());
+                            }
+                        }
+                    });
                 }
                 job.appliedCount.set(totalApplied);
                 job.skippedCount.set(totalSkipped);
@@ -391,6 +434,23 @@ public final class RollbackService {
                     break;
                 }
             }
+            // Publish the undo ledger once the loop exits normally —
+            // including a cancel, which leaves a partial rollback that
+            // is itself undoable. Failure paths return/throw past this
+            // and the finally abandons the unsealed writer instead.
+            if (undoSink != null && !undoBroken.get() && undoAppended > 0) {
+                java.util.concurrent.Future<?> sealTask = undoIo.submit(undoSink::seal);
+                try {
+                    sealTask.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                    undoSealed = true;
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception ex) {
+                    logger.warning("Spyglass undo ledger seal failed"
+                            + " (/undo unavailable): " + ex.getMessage());
+                    undoBroken.set(true);
+                }
+            }
         } catch (RuntimeException unexpected) {
             logger.warning("Spyglass " + mode.label() + " streaming failure: " + unexpected);
             final String msg = unexpected.getMessage() == null ? unexpected.toString() : unexpected.getMessage();
@@ -402,6 +462,23 @@ public final class RollbackService {
             // early-return, or exception); shutdownNow interrupts an
             // in-flight read that the loop already broke away from.
             prefetch.shutdownNow();
+            if (undoIo != null) {
+                if (!undoSealed) {
+                    // Failure/early-return path: close() without seal()
+                    // abandons, tombstoning any chunks already written.
+                    undoIo.execute(undoSink::close);
+                }
+                // shutdown (not shutdownNow) so queued ledger writes
+                // drain; the bounded wait makes the failure-path
+                // tombstone land before the job reports finished. On
+                // the seal path the queue is already empty here.
+                undoIo.shutdown();
+                try {
+                    undoIo.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         if (totalSeen == 0) {
@@ -418,9 +495,12 @@ public final class RollbackService {
                 prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
                 pageCount, chunkKeys.size(), totalApplied, elapsedMs));
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,
-                chunkKeys.size(), elapsedMs, inverses);
+                chunkKeys.size(), elapsedMs);
         boolean truncated = undoTruncated;
-        support.onMainThread(() -> deliverStreamingSummary(sender, mode, summary, skipCounts, truncated));
+        boolean undoUnavailable = sender instanceof Player && undoCap > 0
+                && totalApplied > 0 && !undoSealed;
+        support.onMainThread(() -> deliverStreamingSummary(
+                sender, mode, summary, skipCounts, truncated, undoUnavailable));
     }
 
     // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
@@ -471,7 +551,7 @@ public final class RollbackService {
     private void deliverStreamingSummary(CommandSender sender, RollbackMode mode,
                                          Summary summary,
                                          java.util.LinkedHashMap<String, Integer> skipCounts,
-                                         boolean undoTruncated) {
+                                         boolean undoTruncated, boolean undoUnavailable) {
         for (var entry : skipCounts.entrySet()) {
             String suffix = entry.getValue() == 1 ? "" : " ×" + entry.getValue();
             sender.sendMessage(Feedback.bonus("Skip Reason: " + entry.getKey() + suffix));
@@ -482,18 +562,9 @@ public final class RollbackService {
                     "Rollback exceeded undo cap (" + config.limits().rollbackUndoCap()
                             + "); /spyglass undo will not reverse this op."));
         }
-        if (sender instanceof Player player && !summary.inverses.isEmpty()) {
-            UUID playerId = player.getUniqueId();
-            String operation = mode.name();
-            List<RollbackEffect> inverses = summary.inverses;
-            support.onAsyncThread(() -> {
-                try {
-                    undoStack.push(playerId, operation, inverses);
-                } catch (RuntimeException ex) {
-                    logger.warning("Spyglass undo-stack push failed (rollback "
-                            + "applied but undo unavailable): " + ex.getMessage());
-                }
-            });
+        if (undoUnavailable && !undoTruncated) {
+            sender.sendMessage(Feedback.bonus(
+                    "Undo capture failed; /spyglass undo cannot reverse this op."));
         }
     }
 
@@ -544,15 +615,10 @@ public final class RollbackService {
     }
 
     public record Summary(int applied, int skipped, int errors,
-                          int chunks, long elapsedMs,
-                          List<RollbackEffect> inverses) {
+                          int chunks, long elapsedMs) {
 
-        public Summary {
-            inverses = List.copyOf(inverses);
-        }
-
-        public Summary(int applied, int skipped, List<RollbackEffect> inverses) {
-            this(applied, skipped, 0, 0, 0L, inverses);
+        public Summary(int applied, int skipped) {
+            this(applied, skipped, 0, 0, 0L);
         }
     }
 }

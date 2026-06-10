@@ -200,4 +200,101 @@ class RollbackServiceTest {
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("0 reversals") && line.contains("1 skipped"));
     }
+
+    /**
+     * Recording {@link UndoStack.UndoWriter}: captures append batches
+     * and the seal/abandon outcome so tests can assert the streaming
+     * capture contract (per-page appends, seal only on success).
+     */
+    private static final class FakeWriter implements UndoStack.UndoWriter {
+        final List<List<RollbackEffect>> batches =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        volatile boolean sealed = false;
+        volatile boolean abandoned = false;
+        private long appended = 0;
+
+        @Override
+        public void append(List<RollbackEffect> effects) {
+            batches.add(List.copyOf(effects));
+            appended += effects.size();
+        }
+
+        @Override
+        public long appended() {
+            return appended;
+        }
+
+        @Override
+        public void seal() {
+            sealed = true;
+        }
+
+        @Override
+        public void abandon() {
+            if (!sealed) {
+                abandoned = true;
+            }
+        }
+
+        @Override
+        public void close() {
+            abandon();
+        }
+    }
+
+    @Test
+    void streamsUndoCapturePerPageAndSeals() throws Exception {
+        TestFixture fixture = new TestFixture();
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        FakeWriter writer = new FakeWriter();
+        when(fixture.undoStack.beginPush(any(UUID.class), any(String.class))).thenReturn(writer);
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        // The seal future is awaited on the rollback thread, so by the
+        // time execute() returns (synchronous support) capture is final.
+        assertThat(writer.sealed).as("ledger sealed on success").isTrue();
+        assertThat(writer.abandoned).isFalse();
+        assertThat(writer.batches).hasSize(1);
+        assertThat(writer.batches.get(0)).containsExactly(inverse);
+    }
+
+    @Test
+    void abandonsUndoCaptureWhenApplyFails() throws Exception {
+        TestFixture fixture = new TestFixture();
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("apply boom")));
+        FakeWriter writer = new FakeWriter();
+        when(fixture.undoStack.beginPush(any(UUID.class), any(String.class))).thenReturn(writer);
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        // The finally block drains the undo executor before returning,
+        // so the abandon is visible here.
+        assertThat(writer.sealed).isFalse();
+        assertThat(writer.abandoned).as("failed rollback abandons the unsealed ledger").isTrue();
+    }
 }

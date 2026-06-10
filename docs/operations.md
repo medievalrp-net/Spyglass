@@ -70,9 +70,9 @@ A multi-million-block rollback is read- and GC-bound — the apply runs off-main
 | 100,000 | ~22 s | worst single tick < ~100 ms |
 | 20,000 (default) | slowest | smooth |
 
-- **`rollback-undo-cap`: leave it at the 500k default.** Inverse effects live for the whole operation and promote to old gen; the benchmark's 10M cap pushed ~2 GB into old gen and drew the 0.5–1.0 s pauses above. Streaming undo capture ([#17](https://github.com/medievalrp-net/Spyglass/issues/17)) removes this constraint; until then the cap is the heap's safety net.
+- **`rollback-undo-cap` is a ledger bound, not a heap bound.** Since [#17](https://github.com/medievalrp-net/Spyglass/issues/17), inverse effects stream to the undo ledger page by page during the rollback (writes overlap the apply) and `/spyglass undo` replays them chunk by chunk — capture and replay are O(page) memory at any operation size. The cap only limits how many effects the ledger records per op (default 10M ≈ any realistic grief event; the ledger TTLs out after 24h).
 - **Don't trust `/mspt` averages for freeze claims.** Off-main work means a GC pause lands *between* measured ticks: the bench showed "flat 20 TPS" while the GC log recorded an 849 ms stop-the-world pause. Judge a config with the `/mspt` **max** column and the JVM GC log (`grep 'Pause Young' logs/gc*.log`) during a trial rollback — `regression/bot/compare.js` prints a WORST SINGLE TICK row for exactly this reason.
-- `/spyglass undo` of very large rollbacks (> ~250 K effects) currently OOMs on replay — also fixed by [#17](https://github.com/medievalrp-net/Spyglass/issues/17).
+- `/spyglass undo` replays the ledger in ~25K-effect chunks, yielding between engine batches like a rollback. A failed replay does **not** consume the operation — it stays poppable, and the force-overwrite apply makes the retry converge.
 
 ## Disabling events
 
