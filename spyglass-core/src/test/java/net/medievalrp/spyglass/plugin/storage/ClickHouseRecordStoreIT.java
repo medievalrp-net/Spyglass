@@ -77,6 +77,22 @@ class ClickHouseRecordStoreIT {
                 .get(30, java.util.concurrent.TimeUnit.SECONDS).close();
     }
 
+    // save() is fire-and-forget (async_insert=1, wait_for_async_insert=0):
+    // the INSERT acks before the server materializes the part, so an
+    // immediate SELECT races the server-side flush and reads empty.
+    // Tests need read-your-writes; force the flush between save and query.
+    private void flushAsyncInserts() {
+        try {
+            store.client().execute("SYSTEM FLUSH ASYNC INSERT QUEUE")
+                    .get(30, java.util.concurrent.TimeUnit.SECONDS).close();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("async-insert flush interrupted", ie);
+        } catch (Exception ex) {
+            throw new IllegalStateException("async-insert flush failed", ex);
+        }
+    }
+
     @Test
     void savesAndQueriesAllRecordTypes() {
         Instant now = Instant.now().minusSeconds(60);
@@ -105,6 +121,7 @@ class ClickHouseRecordStoreIT {
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null));
 
         store.save(records);
+        flushAsyncInserts();
 
         QueryRequest allEvents = new QueryRequest(
                 List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
@@ -140,6 +157,7 @@ class ClickHouseRecordStoreIT {
                 UUID.randomUUID(), "break", now, now.plusSeconds(3600),
                 origin, source, loc, "test", "CHEST", stoneWithItem, air);
         store.save(List.of(saved));
+        flushAsyncInserts();
 
         QueryRequest byEvent = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),
@@ -171,6 +189,7 @@ class ClickHouseRecordStoreIT {
                     origin, source, loc, "test", "STONE", stone, air));
         }
         store.save(many);
+        flushAsyncInserts();
         QueryRequest limited = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),
                 Sort.NEWEST_FIRST, 5, EnumSet.noneOf(Flag.class), false);
@@ -198,6 +217,7 @@ class ClickHouseRecordStoreIT {
                     new BlockLocation(WORLD, "world", 100 + i, 64, 200 + i),
                     "test", "STONE", stone, air)));
         }
+        flushAsyncInserts();
 
         QueryRequest spatial = new QueryRequest(
                 List.of(
@@ -223,6 +243,7 @@ class ClickHouseRecordStoreIT {
         store.save(List.of(new BlockBreakRecord(
                 UUID.randomUUID(), "break", now, now.plusSeconds(3600),
                 origin, source, loc, "test", "CHEST", bigSnapshot, null)));
+        flushAsyncInserts();
 
         QueryRequest q = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),
@@ -260,6 +281,7 @@ class ClickHouseRecordStoreIT {
 
         store.save(List.of(record));
         store.save(List.of(record));
+        flushAsyncInserts();
 
         // Force a merge so dedup is observable; in production this
         // happens lazily on background merges.
