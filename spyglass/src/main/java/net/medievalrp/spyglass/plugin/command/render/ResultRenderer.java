@@ -335,10 +335,10 @@ public final class ResultRenderer {
         if (origin == null || origin.kind() == null) {
             return "";
         }
-        return switch (origin.kind().toLowerCase()) {
+        return switch (origin.kind().toLowerCase(java.util.Locale.ROOT)) {
             case Origin.WORLDEDIT -> "[WE]";
             case Origin.FAWE -> "[FAWE]";
-            case Origin.PLUGIN -> "[" + (origin.detail() == null ? "PL" : origin.detail().toUpperCase()) + "]";
+            case Origin.PLUGIN -> "[" + (origin.detail() == null ? "PL" : origin.detail()) + "]";
             default -> "";
         };
     }
