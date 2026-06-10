@@ -22,7 +22,7 @@ Reading the table: the MSPT-derived "worst tick" and the GC log must be read tog
 
 Customers run stock flags. The plugin must be smooth there, which means not allocating/retaining gigabytes per rollback in the first place:
 
-- **#17 (this branch):** undo capture streams to the ledger per page and `/undo` replays per chunk — removes the whole-operation inverse list, the dominant *retained* promotion source, and unblocks `/undo` past ~250 K effects.
-- **#19 (next):** stream the ClickHouse/Mongo page read straight into effect collection — removes the two-pages-of-records *transient* and its humongous arrays at any page size.
+- **#17 (this branch):** undo became *replay-by-reference* — an undo operation stores the original op's resolved query plus a time ceiling, and `/undo` re-streams the same records through the engine in the opposite direction. Capture cost dropped to one ~1KB row (measured: 2M rollback 8.4 s with capture on, vs 8.7 s baseline without; rollback-window GC unchanged), and a 2M `/undo` runs in ~10 s through the same pipeline instead of OOMing. The intermediate design — streaming an inverse-effect ledger — was built and benched first: even after RowBinary inserts, a 4-thread encode pool, and tree-free BSON streaming it still cost 21.7 s (the 400 MB ledger artifact has to be encoded *somewhere*), which is what justified deleting the artifact instead.
+- **#19 (next):** stream the ClickHouse/Mongo page read straight into effect collection — removes the two-pages-of-records *transient* and its humongous arrays at any page size. Now covers `/undo` for free, since both directions share the pipeline.
 
 Repro: `RP_Server/start-bench-zgc.sh` and `RP_Server/start-bench-g1tuned.sh` (flag deltas inline above); GC logs in `RP_Server/logs/gc-bench-{zgc,g1tuned}.log`; bench driver `regression/bot/compare.js`.
