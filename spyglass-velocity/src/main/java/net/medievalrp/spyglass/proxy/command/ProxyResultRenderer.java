@@ -30,6 +30,7 @@ import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
+import net.medievalrp.spyglass.api.event.RollbackOpRecord;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.query.Flag;
@@ -255,6 +256,7 @@ public final class ProxyResultRenderer {
             case ContainerWithdrawRecord r -> withContainer(r.target(), r.containerType());
             case ContainerInteractRecord r -> r.target();
             case BlockUseRecord r -> r.target();
+            case RollbackOpRecord r -> r.mode() == null ? "" : r.mode().toUpperCase(java.util.Locale.ROOT);
             case ChatRecord r -> r.target();
             case CommandRecord r -> "/" + r.target();
             case JoinRecord r -> r.address() == null ? "" : r.address();
