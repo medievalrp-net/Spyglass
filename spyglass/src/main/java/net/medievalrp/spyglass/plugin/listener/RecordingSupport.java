@@ -115,23 +115,17 @@ public final class RecordingSupport {
     }
 
     /**
-     * v4 UUID using {@link java.util.concurrent.ThreadLocalRandom} instead
-     * of {@link UUID#randomUUID}'s {@code SecureRandom}. Record IDs only
-     * need to be unique, not unguessable — and SecureRandom hits
-     * {@code /dev/urandom} via JNI, which the spark profile flagged as
-     * 0.05% of server thread on TNT bursts. ThreadLocalRandom is
-     * thread-safe, ~5-10× faster, and gives us collision odds equivalent
-     * to the cryptographic version (122 bits of randomness either way).
-     *
-     * <p>Bit-twiddling is the standard v4 pattern: clear the version
-     * nibble and set it to 4, clear the variant bits and set them to 10
-     * (RFC 4122).
+     * Time-ordered v7 UUID via {@link
+     * net.medievalrp.spyglass.api.util.EventIds}. Same rationale this
+     * method has always had — ThreadLocalRandom instead of {@link
+     * UUID#randomUUID}'s SecureRandom, because record ids need
+     * uniqueness, not unguessability, and SecureRandom's JNI hit showed
+     * up on TNT-burst profiles — plus the storage reason that moved it
+     * to v7: random v4 bytes are incompressible, and the id column was
+     * the single largest consumer of store disk (#21).
      */
     public static UUID fastRandomUUID() {
-        java.util.concurrent.ThreadLocalRandom rng = java.util.concurrent.ThreadLocalRandom.current();
-        long msb = (rng.nextLong() & 0xFFFFFFFFFFFF0FFFL) | 0x0000000000004000L;
-        long lsb = (rng.nextLong() & 0x3FFFFFFFFFFFFFFFL) | 0x8000000000000000L;
-        return new UUID(msb, lsb);
+        return net.medievalrp.spyglass.api.util.EventIds.newId();
     }
 
     /**
