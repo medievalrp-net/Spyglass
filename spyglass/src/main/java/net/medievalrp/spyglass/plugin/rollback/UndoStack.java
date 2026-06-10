@@ -1,7 +1,6 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -9,105 +8,67 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 import org.jetbrains.annotations.ApiStatus;
 
-// Per-player rollback ledger. Capture and replay are both streamed so
-// neither side ever holds a whole operation's inverse effects in heap:
-// the rollback appends inverses page by page through an UndoWriter, and
-// /spyglass undo replays chunk by chunk through an UndoReader. Both
-// Mongo and ClickHouse backends retain entries for 24h.
+// Per-player undo ledger. An undo operation is stored BY REFERENCE:
+// one small row holding the resolved query that replays the original
+// operation in the opposite direction (see UndoReferenceBson), plus a
+// time ceiling. The event records themselves are the ledger — there
+// is no inverse-effect capture, so recording an undo costs O(1)
+// regardless of operation size, and the replay streams through the
+// same engine pipeline as a rollback.
 //
-// Crash contract: an operation only becomes visible to readers once
-// seal() succeeds. A writer closed without seal() tombstones whatever
-// it wrote; a process death mid-stream leaves chunks that no reader
-// will return (no sealed head chunk) and the 24h TTL sweeps them.
+// Operations written by older builds — whole-operation documents and
+// chunked inverse-effect rows — remain readable for the 24h they
+// survive (both backends TTL the ledger), surfaced as LegacyOperation.
 @ApiStatus.Internal
 public interface UndoStack {
 
-    // Streaming capture for one operation. Not thread-safe; the
-    // rollback's page loop is the only writer.
-    interface UndoWriter extends AutoCloseable {
+    // Suffix on the stored operation_type that marks a reference row.
+    // Pre-reference rows never contain '#'.
+    String REF_MARKER = "#REF";
 
-        // Appends the next slice of inverse effects, in apply order.
-        // May flush full chunks to the store; bounded memory.
-        void append(List<RollbackEffect> effects);
+    // Records a reference operation: one row, the blob produced by
+    // UndoReferenceBson. operationType is the ORIGINAL op's mode name
+    // (ROLLBACK / RESTORE); the marker is storage-internal.
+    void pushReference(UUID playerId, String operationType, String referenceBase64);
 
-        // Effects appended so far (for cap accounting / reporting).
-        long appended();
+    Optional<Popped> openLatest(UUID playerId);
 
-        // Publishes the operation: flushes remaining effects and writes
-        // the sealed head chunk that makes the op visible to readers.
-        void seal();
-
-        // Tombstones anything already written; close() without seal()
-        // does the same. Idempotent.
-        void abandon();
-
-        @Override
-        void close();
-    }
-
-    // Streaming replay of one sealed operation, oldest chunk first
-    // (chunk order == capture order == apply order).
-    interface UndoReader extends AutoCloseable {
+    // The newest undoable operation for a player. tombstone() consumes
+    // it — call only after a successful replay; a failed replay leaves
+    // the operation poppable (force-overwrite applies make retry safe).
+    sealed interface Popped permits ReplayReference, LegacyOperation {
 
         UUID operationId();
 
         Instant createdAt();
 
+        // Marker-free: ROLLBACK / RESTORE.
         String operationType();
 
-        // Total chunks recorded at seal time.
-        int chunkCount();
-
-        // Next chunk of inverse effects, or empty when exhausted.
-        // A store-side gap (missing chunk) throws IllegalStateException
-        // — the op is corrupt and the caller should report, not apply.
-        Optional<List<RollbackEffect>> nextChunk();
-
-        // Consumes the operation so the next pop sees the one below it.
-        // Call after a successful replay — a failed replay leaves the
-        // op poppable again (force-overwrite apply makes retry safe).
         void tombstone();
 
-        @Override
         void close();
     }
 
-    UndoWriter beginPush(UUID playerId, String operationType);
+    // Reference operation: decode with UndoReferenceBson and replay
+    // the stored request in the opposite mode.
+    non-sealed interface ReplayReference extends Popped {
 
-    Optional<UndoReader> openLatest(UUID playerId);
-
-    // Whole-list convenience used by small ops and tests; bounded
-    // callers only — large operations stream via beginPush directly.
-    default void push(UUID playerId, String operationType, List<RollbackEffect> inverseEffects) {
-        try (UndoWriter writer = beginPush(playerId, operationType)) {
-            writer.append(inverseEffects);
-            writer.seal();
-        }
+        String referenceBase64();
     }
 
-    // Whole-list convenience mirror of openLatest; materializes every
-    // chunk, so only safe where the operation is known to be small.
-    default Optional<UndoOperation> pop(UUID playerId) {
-        Optional<UndoReader> opened = openLatest(playerId);
-        if (opened.isEmpty()) {
-            return Optional.empty();
-        }
-        try (UndoReader reader = opened.get()) {
-            List<RollbackEffect> all = new ArrayList<>();
-            for (Optional<List<RollbackEffect>> chunk = reader.nextChunk();
-                    chunk.isPresent(); chunk = reader.nextChunk()) {
-                all.addAll(chunk.get());
-            }
-            UndoOperation operation = new UndoOperation(
-                    reader.operationId(), playerId, reader.createdAt(),
-                    reader.operationType(), all);
-            reader.tombstone();
-            return Optional.of(operation);
-        }
+    // Pre-reference operation: stream the stored inverse effects chunk
+    // by chunk (chunk order == apply order). A store-side gap throws
+    // IllegalStateException from nextChunk — report, don't half-apply.
+    non-sealed interface LegacyOperation extends Popped {
+
+        int chunkCount();
+
+        Optional<List<RollbackEffect>> nextChunk();
     }
 
-    // @BsonProperty is read by Mongo's POJO codec; the ClickHouse
-    // backend builds the record from columns and ignores it.
+    // @BsonProperty is read by Mongo's POJO codec when decoding legacy
+    // whole-operation documents; ClickHouse never sees this shape.
     record UndoOperation(
             @BsonProperty("_id") UUID id,
             UUID playerId,

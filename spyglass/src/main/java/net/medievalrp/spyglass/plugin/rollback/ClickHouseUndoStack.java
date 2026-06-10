@@ -2,17 +2,8 @@ package net.medievalrp.spyglass.plugin.rollback;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.command.CommandResponse;
-import com.clickhouse.client.api.data_formats.RowBinaryFormatWriter;
-import com.clickhouse.client.api.insert.InsertResponse;
-import com.clickhouse.client.api.insert.InsertSettings;
-import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.client.api.query.GenericRecord;
-import com.clickhouse.data.ClickHouseFormat;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -29,190 +20,50 @@ import org.jetbrains.annotations.ApiStatus;
 // same key, and FINAL filters them out for reads. A 24h TTL trims old
 // data.
 //
-// An operation's inverse effects are split across N rows sharing one
-// operation_id with chunk_index 0..N-1, so no single INSERT literal
-// blows past CH's parser-chunk allocation limit.
+// Reference operations (the only kind written since #17 settled on
+// undo-by-reference) are a single row: chunk_index=0, chunk_count=1,
+// operation_type='<MODE>#REF', inverse_effects = the reference blob.
+// The row is ~1KB, so the plain VALUES insert is fine — the RowBinary
+// machinery this file briefly carried existed only for multi-MB
+// inverse-effect payloads, which no longer exist.
 //
-// Streaming seal protocol: chunks 1..N-1 are flushed as the rollback
-// streams (chunk_count=0 — "unsealed"), while chunk 0 is withheld in
-// the writer and only written by seal(), carrying the authoritative
-// chunk_count. Readers recognise an operation solely by a chunk 0 row
-// with chunk_count > 0, so a crash mid-capture leaves rows no reader
-// returns (TTL sweeps them) — and every pre-streaming row ever written
-// already satisfies the sealed predicate, so old ledgers stay
-// readable. No same-key re-insert is ever needed, which matters
-// because ReplacingMergeTree(deleted) only orders versions by the
-// deleted flag.
+// Legacy rows remain readable for the 24h they survive: chunked
+// operations (chunk_index 0..N-1 sharing an operation_id) and the
+// pre-chunk whole-operation rows (which satisfy the same head
+// predicate: chunk 0 with chunk_count > 0).
 @ApiStatus.Internal
 public final class ClickHouseUndoStack implements UndoStack {
-
-    // ~25k effects per row stays under ~25 MB SQL after BSON+base64
-    // encoding. The previous 100k limit pushed past 60 MB and the
-    // v2 client started dropping inserts silently.
-    private static final int DEFAULT_EFFECTS_PER_CHUNK = 25_000;
 
     private static final DateTimeFormatter CH_TIMESTAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final Client client;
-    private final String database;
     private final String table;
-    private final int effectsPerChunk;
-    private final TableSchema undoSchema;
 
     public ClickHouseUndoStack(Client client, String database) {
-        this(client, database, DEFAULT_EFFECTS_PER_CHUNK);
-    }
-
-    // Visible chunk size for tests; production uses the default.
-    // Requires the schema to exist already — the record store's
-    // constructor runs ClickHouseSchema.ensure before the stack is
-    // built (SpyglassPlugin wiring order; the ITs mirror it).
-    public ClickHouseUndoStack(Client client, String database, int effectsPerChunk) {
         this.client = client;
-        this.database = database;
         this.table = "`" + database + "`.`undo_history`";
-        this.effectsPerChunk = Math.max(1, effectsPerChunk);
-        this.undoSchema = client.getTableSchema("undo_history", database);
     }
 
     @Override
-    public UndoWriter beginPush(UUID playerId, String operationType) {
-        return new Writer(playerId, operationType);
-    }
-
-    private final class Writer extends ChunkedUndoWriter {
-
-        // BSON+ZSTD encoding the effects is the expensive part of a
-        // chunk write (~12µs per effect — ~25s single-threaded for a
-        // 2M-block operation, measured 2026-06-10; the insert itself is
-        // cheap RowBinary). Chunk rows are order-independent, so fan
-        // the streamed chunks across a small pool; the semaphore bounds
-        // how many raw chunks can wait in heap.
-        private static final int ENCODE_THREADS = 4;
-
-        private final UUID playerId;
-        private final String operationType;
-        private final UUID operationId = UUID.randomUUID();
-        private final Instant createdAt = Instant.now();
-        private final java.util.concurrent.ExecutorService encodePool;
-        private final java.util.concurrent.Semaphore chunkPermits =
-                new java.util.concurrent.Semaphore(ENCODE_THREADS + 2);
-        private final List<java.util.concurrent.Future<?>> inFlight = new java.util.ArrayList<>();
-
-        private Writer(UUID playerId, String operationType) {
-            super(effectsPerChunk);
-            this.playerId = playerId;
-            this.operationType = operationType;
-            this.encodePool = java.util.concurrent.Executors.newFixedThreadPool(
-                    ENCODE_THREADS, r -> {
-                        Thread t = new Thread(r, "Spyglass-UndoEncode");
-                        t.setDaemon(true);
-                        return t;
-                    });
-        }
-
-        @Override
-        protected void eraseOperation(int streamedChunks) {
-            // Tombstone the streamed chunks (1..streamedChunks); chunk 0
-            // was never written. A straggler insert landing after its
-            // tombstone is harmless — ReplacingMergeTree(deleted) keeps
-            // the deleted=1 row regardless of arrival order. Best-effort
-            // anyway: the rows are unreachable without a sealed head and
-            // TTL out in 24h.
-            tombstoneRows(operationId, playerId, createdAt, operationType,
-                    1, streamedChunks + 1);
-        }
-
-        @Override
-        protected void writeChunk(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
-            if (chunkIndex == 0) {
-                // The sealing head publishes the operation — synchronous
-                // and durable on return, per the base contract.
-                encodeAndInsert(chunkIndex, chunkCount, effects);
-                return;
-            }
-            try {
-                chunkPermits.acquire();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Undo chunk write interrupted", ie);
-            }
-            inFlight.add(encodePool.submit(() -> {
-                try {
-                    encodeAndInsert(chunkIndex, chunkCount, effects);
-                } finally {
-                    chunkPermits.release();
-                }
-            }));
-        }
-
-        @Override
-        protected void awaitStreamedChunks() {
-            try {
-                for (java.util.concurrent.Future<?> chunk : inFlight) {
-                    try {
-                        chunk.get(120, TimeUnit.SECONDS);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("Undo chunk flush interrupted", ie);
-                    } catch (Exception ex) {
-                        Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-                        throw new RuntimeException(
-                                "Undo chunk write failed: " + cause.getMessage(), cause);
-                    }
-                }
-            } finally {
-                inFlight.clear();
-                encodePool.shutdown();
-            }
-        }
-
-        private void encodeAndInsert(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
-            // RowBinary insert, not a VALUES literal: a 25K-effect chunk
-            // is a multi-MB payload, and building + server-parsing it as
-            // SQL text was pure overhead and garbage. The payload stays
-            // base64 so pre-streaming rows and the reader share one
-            // encoding.
-            String payload = BsonBlobs.encodeRollbackEffectsBase64(effects);
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream(payload.length() + 256);
-            try {
-                RowBinaryFormatWriter w = new RowBinaryFormatWriter(
-                        buffer, undoSchema, ClickHouseFormat.RowBinary);
-                w.setValue("operation_id", operationId);
-                w.setValue("chunk_index", chunkIndex);
-                w.setValue("chunk_count", chunkCount);
-                w.setValue("player_id", playerId);
-                w.setDateTime("created_at", LocalDateTime.ofInstant(createdAt, ZoneOffset.UTC));
-                w.setString("operation_type", operationType);
-                w.setString("inverse_effects", payload);
-                w.setValue("deleted", 0);
-                w.commitRow();
-            } catch (IOException ex) {
-                throw new RuntimeException("Undo RowBinary write failed: " + ex.getMessage(), ex);
-            }
-            // Plain synchronous insert — no async_insert fire-and-forget
-            // here: seal() returning must mean the ledger is durable.
-            InsertSettings settings = new InsertSettings().setDatabase(database);
-            try (InsertResponse ignored = client.insert(
-                    "undo_history",
-                    new ByteArrayInputStream(buffer.toByteArray()),
-                    ClickHouseFormat.RowBinary,
-                    settings).get(60, TimeUnit.SECONDS)) {
-                // ack received
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Undo insert interrupted", ie);
-            } catch (Exception ex) {
-                throw new RuntimeException("Undo insert failed: " + ex.getMessage(), ex);
-            }
-        }
+    public void pushReference(UUID playerId, String operationType, String referenceBase64) {
+        UUID operationId = UUID.randomUUID();
+        String sql = "INSERT INTO " + table
+                + " (operation_id, chunk_index, chunk_count, "
+                + "player_id, created_at, operation_type, inverse_effects, deleted) "
+                + "VALUES (toUUID('" + operationId + "'), 0, 1, "
+                + "toUUID('" + playerId + "'), "
+                + chTimestamp(Instant.now()) + ", "
+                + escape(operationType + REF_MARKER) + ", "
+                + escape(referenceBase64) + ", 0)";
+        execute(sql);
     }
 
     @Override
-    public Optional<UndoReader> openLatest(UUID playerId) {
-        // A sealed head is the operation's identity: chunk 0 with a
-        // real chunk_count. Pre-streaming rows qualify by construction.
+    public Optional<Popped> openLatest(UUID playerId) {
+        // The head row is the operation's identity: chunk 0 with a real
+        // chunk_count. References, chunked ops, and pre-chunk whole ops
+        // all satisfy it.
         String sql = "SELECT operation_id, created_at, operation_type, "
                 + "chunk_count, inverse_effects "
                 + "FROM " + table + " FINAL "
@@ -225,16 +76,70 @@ public final class ClickHouseUndoStack implements UndoStack {
             return Optional.empty();
         }
         GenericRecord head = rows.get(0);
-        return Optional.of(new Reader(
-                playerId,
-                head.getUUID("operation_id"),
-                head.getInstant("created_at"),
-                head.getString("operation_type"),
-                (int) head.getLong("chunk_count"),
-                head.getString("inverse_effects")));
+        UUID operationId = head.getUUID("operation_id");
+        Instant createdAt = head.getInstant("created_at");
+        String storedType = head.getString("operation_type");
+        int chunkCount = (int) head.getLong("chunk_count");
+        String headPayload = head.getString("inverse_effects");
+        if (storedType.endsWith(REF_MARKER)) {
+            String type = storedType.substring(0, storedType.length() - REF_MARKER.length());
+            return Optional.of(new Reference(
+                    playerId, operationId, createdAt, type, headPayload));
+        }
+        return Optional.of(new LegacyChunks(
+                playerId, operationId, createdAt, storedType, chunkCount, headPayload));
     }
 
-    private final class Reader implements UndoReader {
+    private final class Reference implements ReplayReference {
+
+        private final UUID playerId;
+        private final UUID operationId;
+        private final Instant createdAt;
+        private final String operationType;
+        private String reference;
+
+        private Reference(UUID playerId, UUID operationId, Instant createdAt,
+                          String operationType, String reference) {
+            this.playerId = playerId;
+            this.operationId = operationId;
+            this.createdAt = createdAt;
+            this.operationType = operationType;
+            this.reference = reference;
+        }
+
+        @Override
+        public UUID operationId() {
+            return operationId;
+        }
+
+        @Override
+        public Instant createdAt() {
+            return createdAt;
+        }
+
+        @Override
+        public String operationType() {
+            return operationType;
+        }
+
+        @Override
+        public String referenceBase64() {
+            return reference;
+        }
+
+        @Override
+        public void tombstone() {
+            tombstoneRows(operationId, playerId, createdAt,
+                    operationType + REF_MARKER, 0, 1);
+        }
+
+        @Override
+        public void close() {
+            reference = null;
+        }
+    }
+
+    private final class LegacyChunks implements LegacyOperation {
 
         private final UUID playerId;
         private final UUID operationId;
@@ -244,8 +149,8 @@ public final class ClickHouseUndoStack implements UndoStack {
         private String headPayload; // chunk 0, already fetched
         private int nextIndex = 0;
 
-        private Reader(UUID playerId, UUID operationId, Instant createdAt,
-                       String operationType, int chunkCount, String headPayload) {
+        private LegacyChunks(UUID playerId, UUID operationId, Instant createdAt,
+                             String operationType, int chunkCount, String headPayload) {
             this.playerId = playerId;
             this.operationId = operationId;
             this.createdAt = createdAt;

@@ -15,28 +15,24 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
 
-// Mongo-backed UndoStack. Operations are stored as chunk documents of
-// at most effectsPerChunk inverse effects each, sharing an operationId
-// with chunkIndex 0..N-1 — a single-document operation hits Mongo's
-// 16 MB document cap around ~70K effects, so whole-op documents cannot
-// hold a large rollback at all.
+// Mongo-backed UndoStack. Reference operations (the only kind written
+// since #17 settled on undo-by-reference) are one small document:
+// chunkIndex=0, chunkCount=1, operationType='<MODE>#REF', reference =
+// the blob, effects empty.
 //
-// Streaming seal protocol (mirrors ClickHouseUndoStack): chunks
-// 1..N-1 are inserted as the rollback streams with chunkCount=0;
-// chunk 0 is withheld and only inserted by seal(), carrying the
-// authoritative chunkCount. Readers recognise an operation solely by
-// a chunk 0 with chunkCount > 0, so a crash mid-capture leaves
-// documents no reader returns and the 24h TTL sweeps them.
-//
-// Legacy whole-op documents (the pre-chunk UndoOperation shape, no
-// chunkIndex field) are still readable for the 24h they survive.
+// Legacy documents remain readable for the 24h they survive: chunked
+// inverse-effect documents (same UndoChunk shape, reference null) and
+// the pre-chunk whole-operation UndoOperation documents (no chunkIndex
+// field at all).
 @ApiStatus.Internal
 public final class MongoUndoStack implements UndoStack {
 
-    private static final int DEFAULT_EFFECTS_PER_CHUNK = 25_000;
-
-    // Chunk document. Public so the POJO/record codec can reach it.
+    // Ledger document. Public so the record codec can reach it.
+    // `reference` is null on legacy chunk documents (and absent on
+    // ones written before the field existed — the codec decodes a
+    // missing field as null).
     public record UndoChunk(
             @BsonProperty("_id") UUID id,
             UUID operationId,
@@ -45,23 +41,17 @@ public final class MongoUndoStack implements UndoStack {
             UUID playerId,
             Instant createdAt,
             String operationType,
-            List<RollbackEffect> effects) {
+            List<RollbackEffect> effects,
+            @Nullable String reference) {
     }
 
     private final MongoCollection<UndoChunk> chunks;
     private final MongoCollection<UndoOperation> legacy;
-    private final int effectsPerChunk;
 
     public MongoUndoStack(MongoDatabase database, CodecRegistry codecRegistry) {
-        this(database, codecRegistry, DEFAULT_EFFECTS_PER_CHUNK);
-    }
-
-    // Visible chunk size for tests; production uses the default.
-    public MongoUndoStack(MongoDatabase database, CodecRegistry codecRegistry, int effectsPerChunk) {
         MongoDatabase db = database.withCodecRegistry(codecRegistry);
         this.chunks = db.getCollection("UndoHistory", UndoChunk.class);
         this.legacy = db.getCollection("UndoHistory", UndoOperation.class);
-        this.effectsPerChunk = Math.max(1, effectsPerChunk);
         this.chunks.createIndex(Indexes.compoundIndex(
                 Indexes.ascending("playerId"),
                 Indexes.descending("createdAt")));
@@ -73,41 +63,18 @@ public final class MongoUndoStack implements UndoStack {
     }
 
     @Override
-    public UndoWriter beginPush(UUID playerId, String operationType) {
-        return new Writer(playerId, operationType);
-    }
-
-    private final class Writer extends ChunkedUndoWriter {
-
-        private final UUID playerId;
-        private final String operationType;
-        private final UUID operationId = UUID.randomUUID();
-        private final Instant createdAt = Instant.now();
-
-        private Writer(UUID playerId, String operationType) {
-            super(effectsPerChunk);
-            this.playerId = playerId;
-            this.operationType = operationType;
-        }
-
-        @Override
-        protected void eraseOperation(int streamedChunks) {
-            chunks.deleteMany(Filters.eq("operationId", operationId));
-        }
-
-        @Override
-        protected void writeChunk(int chunkIndex, int chunkCount, List<RollbackEffect> effects) {
-            chunks.insertOne(new UndoChunk(
-                    UUID.randomUUID(), operationId, chunkIndex, chunkCount,
-                    playerId, createdAt, operationType, List.copyOf(effects)));
-        }
+    public void pushReference(UUID playerId, String operationType, String referenceBase64) {
+        chunks.insertOne(new UndoChunk(
+                UUID.randomUUID(), UUID.randomUUID(), 0, 1,
+                playerId, Instant.now(), operationType + REF_MARKER,
+                List.of(), referenceBase64));
     }
 
     @Override
-    public Optional<UndoReader> openLatest(UUID playerId) {
-        // Newest sealed chunked head vs newest legacy whole-op doc —
-        // whichever is more recent wins. Both queries are covered by
-        // the (playerId, createdAt) index.
+    public Optional<Popped> openLatest(UUID playerId) {
+        // Newest head document (reference or chunked) vs newest legacy
+        // whole-op document — whichever is more recent wins. Both
+        // queries are covered by the (playerId, createdAt) index.
         UndoChunk head = chunks.find(Filters.and(
                         Filters.eq("playerId", playerId),
                         Filters.eq("chunkIndex", 0),
@@ -123,20 +90,62 @@ public final class MongoUndoStack implements UndoStack {
         boolean useLegacy = legacyOp != null
                 && (head == null || legacyOp.createdAt().isAfter(head.createdAt()));
         if (useLegacy) {
-            return Optional.of(new LegacyReader(legacyOp));
+            return Optional.of(new LegacyWholeOp(legacyOp));
         }
         if (head == null) {
             return Optional.empty();
         }
-        return Optional.of(new Reader(head));
+        if (head.operationType().endsWith(REF_MARKER)) {
+            return Optional.of(new Reference(head));
+        }
+        return Optional.of(new LegacyChunks(head));
     }
 
-    private final class Reader implements UndoReader {
+    private final class Reference implements ReplayReference {
+
+        private final UndoChunk head;
+
+        private Reference(UndoChunk head) {
+            this.head = head;
+        }
+
+        @Override
+        public UUID operationId() {
+            return head.operationId();
+        }
+
+        @Override
+        public Instant createdAt() {
+            return head.createdAt();
+        }
+
+        @Override
+        public String operationType() {
+            String stored = head.operationType();
+            return stored.substring(0, stored.length() - REF_MARKER.length());
+        }
+
+        @Override
+        public String referenceBase64() {
+            return head.reference();
+        }
+
+        @Override
+        public void tombstone() {
+            chunks.deleteMany(Filters.eq("operationId", head.operationId()));
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private final class LegacyChunks implements LegacyOperation {
 
         private final UndoChunk head;
         private int nextIndex = 0;
 
-        private Reader(UndoChunk head) {
+        private LegacyChunks(UndoChunk head) {
             this.head = head;
         }
 
@@ -190,12 +199,12 @@ public final class MongoUndoStack implements UndoStack {
         }
     }
 
-    private final class LegacyReader implements UndoReader {
+    private final class LegacyWholeOp implements LegacyOperation {
 
         private final UndoOperation operation;
         private boolean served = false;
 
-        private LegacyReader(UndoOperation operation) {
+        private LegacyWholeOp(UndoOperation operation) {
             this.operation = operation;
         }
 
