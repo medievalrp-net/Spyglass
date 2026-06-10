@@ -238,36 +238,45 @@ public final class BsonBlobs {
     }
 
     static byte[] encodeRollbackEffects(List<RollbackEffect> effects) {
-        BsonArray array = new BsonArray();
-        for (RollbackEffect effect : effects) {
-            BsonDocument wrapper = new BsonDocument();
-            try (BsonDocumentWriter writer = new BsonDocumentWriter(wrapper)) {
-                writer.writeStartDocument();
-                writer.writeName(VALUE);
-                ROLLBACK_EFFECT_CODEC.encode(writer, effect, EncoderContext.builder().build());
-                writer.writeEndDocument();
+        // Stream the array straight through one binary writer. The
+        // previous shape built a BsonDocument TREE first (one boxed
+        // BsonValue node per field, ~25K wrapper documents per undo
+        // chunk) and then serialized it — measured at ~12µs/effect of
+        // mostly allocation, it dominated large-rollback undo capture
+        // and didn't parallelize (the encode threads just contended in
+        // the allocator). The bytes are identical: same document shape,
+        // same codec, same field order.
+        BasicOutputBuffer buffer = new BasicOutputBuffer();
+        try (BsonBinaryWriter writer = new BsonBinaryWriter(buffer)) {
+            writer.writeStartDocument();
+            writer.writeStartArray("effects");
+            EncoderContext context = EncoderContext.builder().build();
+            for (RollbackEffect effect : effects) {
+                ROLLBACK_EFFECT_CODEC.encode(writer, effect, context);
             }
-            array.add(wrapper.get(VALUE));
+            writer.writeEndArray();
+            writer.writeEndDocument();
         }
-        BsonDocument document = new BsonDocument().append("effects", array);
-        return documentToBytes(document);
+        return buffer.toByteArray();
     }
 
     static List<RollbackEffect> decodeRollbackEffects(byte[] bytes) {
         if (bytes == null || bytes.length == 0) {
             return List.of();
         }
-        BsonDocument document = bytesToDocument(bytes);
-        BsonArray array = document.getArray("effects");
-        List<RollbackEffect> out = new java.util.ArrayList<>(array.size());
-        for (BsonValue value : array) {
-            BsonDocument wrapper = new BsonDocument().append(VALUE, value);
-            try (BsonDocumentReader reader = new BsonDocumentReader(wrapper)) {
-                reader.readStartDocument();
-                reader.readName();
-                out.add(ROLLBACK_EFFECT_CODEC.decode(reader, DecoderContext.builder().build()));
-                reader.readEndDocument();
+        ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        List<RollbackEffect> out = new java.util.ArrayList<>();
+        try (BsonBinaryReader reader = new BsonBinaryReader(new ByteBufferBsonInput(
+                new org.bson.ByteBufNIO(buf)))) {
+            reader.readStartDocument();
+            reader.readName(); // "effects"
+            reader.readStartArray();
+            DecoderContext context = DecoderContext.builder().build();
+            while (reader.readBsonType() != org.bson.BsonType.END_OF_DOCUMENT) {
+                out.add(ROLLBACK_EFFECT_CODEC.decode(reader, context));
             }
+            reader.readEndArray();
+            reader.readEndDocument();
         }
         return out;
     }
