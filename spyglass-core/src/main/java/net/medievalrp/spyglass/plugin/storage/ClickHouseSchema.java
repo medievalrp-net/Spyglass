@@ -57,6 +57,12 @@ final class ClickHouseSchema {
     private ClickHouseSchema() {
     }
 
+    private static final java.util.List<String> COORDINATE_CODEC_COLUMNS = java.util.List.of(
+            "location_x", "location_y", "location_z",
+            "teleport_from_x", "teleport_from_y", "teleport_from_z",
+            "teleport_to_x", "teleport_to_y", "teleport_to_z",
+            "source_command_block_x", "source_command_block_y", "source_command_block_z");
+
     static void ensure(Client client, String database, String eventsTable) {
         // The client's session database is the configured one, which on a
         // first install does not exist yet — and the server rejects any
@@ -75,6 +81,23 @@ final class ClickHouseSchema {
         // included it from the start.
         execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                 + " ADD COLUMN IF NOT EXISTS server LowCardinality(String) DEFAULT ''");
+        // Storage codecs (#21), idempotent for tables created before
+        // them: ids are time-ordered v7 now, so a shared-prefix-aware
+        // codec halves the column that used to be incompressible v4
+        // noise — measured the single largest consumer of store disk,
+        // twice over (the by_player projection duplicates every
+        // column). Coordinates are spatially clustered, so storing
+        // row-to-row differences compresses ~4x. MODIFY COLUMN with an
+        // unchanged codec is a cheap metadata no-op; with a new codec
+        // it applies to new parts immediately and old parts converge
+        // as merges churn them.
+        for (String coordinate : COORDINATE_CODEC_COLUMNS) {
+            String type = coordinate.startsWith("location_") ? "Int32" : "Nullable(Int32)";
+            execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                    + " MODIFY COLUMN " + coordinate + " " + type + " CODEC(Delta, ZSTD(1))");
+        }
+        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                + " MODIFY COLUMN id UUID CODEC(ZSTD(1))");
         // One-shot migration: pre-chunked undo_history shape lacked
         // operation_id / chunk_index / chunk_count. ORDER BY changed,
         // so ALTER can't reshape the key — drop and recreate. Worst
@@ -155,7 +178,7 @@ final class ClickHouseSchema {
     private static String buildEventRecordsTable(String database, String table) {
         return "CREATE TABLE IF NOT EXISTS " + qualifiedTable(database, table) + " (\n"
                 // --- Common (every record) ---
-                + "    id UUID,\n"
+                + "    id UUID CODEC(ZSTD(1)),\n"
                 + "    event LowCardinality(String),\n"
                 + "    occurred DateTime64(3, 'UTC'),\n"
                 + "    expires_at DateTime64(3, 'UTC'),\n"
@@ -169,15 +192,15 @@ final class ClickHouseSchema {
                 + "    source_plugin_name Nullable(String),\n"
                 + "    source_command_block_world_id Nullable(UUID),\n"
                 + "    source_command_block_world_name Nullable(String),\n"
-                + "    source_command_block_x Nullable(Int32),\n"
-                + "    source_command_block_y Nullable(Int32),\n"
-                + "    source_command_block_z Nullable(Int32),\n"
+                + "    source_command_block_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    source_command_block_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    source_command_block_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
                 + "    source_description Nullable(String),\n"
                 + "    location_world_id UUID,\n"
                 + "    location_world_name LowCardinality(String),\n"
-                + "    location_x Int32,\n"
-                + "    location_y Int32,\n"
-                + "    location_z Int32,\n"
+                + "    location_x Int32 CODEC(Delta, ZSTD(1)),\n"
+                + "    location_y Int32 CODEC(Delta, ZSTD(1)),\n"
+                + "    location_z Int32 CODEC(Delta, ZSTD(1)),\n"
                 + "    server LowCardinality(String) DEFAULT '',\n"
                 + "    target Nullable(String),\n"
                 // --- Block events (Break / Place / Use) ---
@@ -218,14 +241,14 @@ final class ClickHouseSchema {
                 // --- Teleport ---
                 + "    teleport_from_world_id Nullable(UUID),\n"
                 + "    teleport_from_world_name Nullable(String),\n"
-                + "    teleport_from_x Nullable(Int32),\n"
-                + "    teleport_from_y Nullable(Int32),\n"
-                + "    teleport_from_z Nullable(Int32),\n"
+                + "    teleport_from_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_from_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_from_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
                 + "    teleport_to_world_id Nullable(UUID),\n"
                 + "    teleport_to_world_name Nullable(String),\n"
-                + "    teleport_to_x Nullable(Int32),\n"
-                + "    teleport_to_y Nullable(Int32),\n"
-                + "    teleport_to_z Nullable(Int32),\n"
+                + "    teleport_to_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_to_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_to_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
                 + "    teleport_cause LowCardinality(Nullable(String)),\n"
                 // --- Entity events (Death / Hit / Mount / Name) ---
                 + "    entity_type LowCardinality(Nullable(String)),\n"
