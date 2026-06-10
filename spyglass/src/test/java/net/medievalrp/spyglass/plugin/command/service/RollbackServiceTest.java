@@ -200,4 +200,83 @@ class RollbackServiceTest {
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("0 reversals") && line.contains("1 skipped"));
     }
+
+    @Test
+    void pushesDecodableUndoReferenceOnSuccess() throws Exception {
+        TestFixture fixture = new TestFixture();
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        UUID operatorId = UUID.randomUUID();
+        when(operator.getUniqueId()).thenReturn(operatorId);
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        org.mockito.ArgumentCaptor<String> blob = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(fixture.undoStack).pushReference(
+                org.mockito.ArgumentMatchers.eq(operatorId),
+                org.mockito.ArgumentMatchers.eq("ROLLBACK"),
+                blob.capture());
+        // The blob must replay-resolve: same limit, ROLLBACK mode, and
+        // a ceiling no later than now.
+        var decoded = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson
+                .decodeBase64(blob.getValue());
+        assertThat(decoded.mode()).isEqualTo("ROLLBACK");
+        assertThat(decoded.request().limit()).isEqualTo(sampleRequest().limit());
+        assertThat(decoded.ceiling()).isBeforeOrEqualTo(java.time.Instant.now());
+    }
+
+    @Test
+    void noUndoReferenceWhenApplyFails() throws Exception {
+        TestFixture fixture = new TestFixture();
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("apply boom")));
+        ServiceTestSupport.captureMessages(operator);
+
+        fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);
+
+        verify(fixture.undoStack, org.mockito.Mockito.never()).pushReference(
+                any(UUID.class), any(String.class), any(String.class));
+    }
+
+    @Test
+    void noUndoReferenceForConsoleSenders() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        verify(fixture.undoStack, org.mockito.Mockito.never()).pushReference(
+                any(UUID.class), any(String.class), any(String.class));
+    }
 }
