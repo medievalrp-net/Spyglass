@@ -103,6 +103,42 @@ class EventParamTest {
         assertThat(new EventParam(ENABLED).aliases()).containsExactly("a", "action", "event");
     }
 
+    @Test
+    void negatedEventProducesNot() throws Exception {
+        QueryPredicate predicate = new EventParam(ENABLED).parse("a", "!place", ctx());
+
+        assertThat(predicate).isInstanceOf(QueryPredicate.Not.class);
+        QueryPredicate inner = ((QueryPredicate.Not) predicate).predicate();
+        assertThat(((QueryPredicate.Eq) inner).value()).isEqualTo("place");
+    }
+
+    @Test
+    void mixedIncludeAndExcludeProducesAndWithNot() throws Exception {
+        QueryPredicate predicate = new EventParam(ENABLED).parse("a", "break,!place,!say", ctx());
+
+        assertThat(predicate).isInstanceOf(QueryPredicate.And.class);
+        var clauses = ((QueryPredicate.And) predicate).predicates();
+        assertThat(clauses).hasSize(2);
+        assertThat(((QueryPredicate.Eq) clauses.get(0)).value()).isEqualTo("break");
+        QueryPredicate excluded = ((QueryPredicate.Not) clauses.get(1)).predicate();
+        assertThat(((QueryPredicate.In) excluded).values().toArray()).containsExactly("place", "say");
+    }
+
+    @Test
+    void negatedUnknownEventStillRejected() {
+        // The exclusion of an unknown event is as much a typo as an
+        // inclusion of one — fail loudly either way.
+        assertThatThrownBy(() -> new EventParam(ENABLED).parse("a", "!warp", ctx()))
+                .isInstanceOf(ParamParseException.class)
+                .hasMessageContaining("warp");
+    }
+
+    @Test
+    void bareExclamationAloneRejected() {
+        assertThatThrownBy(() -> new EventParam(ENABLED).parse("a", "!", ctx()))
+                .isInstanceOf(ParamParseException.class);
+    }
+
     private static ParamContext ctx() {
         return new ParamContext(null, null, 100);
     }

@@ -113,6 +113,38 @@ class PlayerParamTest {
         assertThat(((QueryPredicate.Eq) predicate).field()).isEqualTo("source.playerName");
     }
 
+    @Test
+    void negatedKnownNameProducesNotOnPlayerId() throws Exception {
+        QueryPredicate predicate = withKnownPlayers(Map.of("Alice", ALICE)).parse("p", "!Alice", ctx());
+
+        assertThat(predicate).isInstanceOf(QueryPredicate.Not.class);
+        QueryPredicate inner = ((QueryPredicate.Not) predicate).predicate();
+        assertThat(((QueryPredicate.Eq) inner).field()).isEqualTo("source.playerId");
+        assertThat(((QueryPredicate.Eq) inner).value()).isEqualTo(ALICE);
+    }
+
+    @Test
+    void includeAndExcludeCombineWithAnd() throws Exception {
+        UUID bob = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        QueryPredicate predicate = withKnownPlayers(Map.of("Alice", ALICE, "Bob", bob))
+                .parse("p", "Alice,!Bob", ctx());
+
+        assertThat(predicate).isInstanceOf(QueryPredicate.And.class);
+        var clauses = ((QueryPredicate.And) predicate).predicates();
+        assertThat(((QueryPredicate.Eq) clauses.get(0)).value()).isEqualTo(ALICE);
+        QueryPredicate excluded = ((QueryPredicate.Not) clauses.get(1)).predicate();
+        assertThat(((QueryPredicate.Eq) excluded).value()).isEqualTo(bob);
+    }
+
+    @Test
+    void negatedUnresolvedNameFallsBackToRawNameExclusion() throws Exception {
+        QueryPredicate predicate = withKnownPlayers(Map.of()).parse("p", "!Ghost", ctx());
+
+        QueryPredicate inner = ((QueryPredicate.Not) predicate).predicate();
+        assertThat(((QueryPredicate.Eq) inner).field()).isEqualTo("source.playerName");
+        assertThat(((QueryPredicate.Eq) inner).value()).isEqualTo("Ghost");
+    }
+
     private static ParamContext ctx() {
         return new ParamContext(null, null, 100);
     }
