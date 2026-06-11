@@ -34,13 +34,13 @@ Root: `/spyglass`. Short alias: `/sg`.
 
 ## Query keys
 
-`key:value`. Combine freely; results match all keys.
+`key:value`. Combine freely; results match all keys. On `p:`, `a:`, `b:`, and `c:`, prefix a value with `!` to exclude it instead — `b:stone,!chest` matches stone but never chests; `a:!place` matches everything except placements.
 
 | Key | Aliases | Notes |
 |---|---|---|
-| `p` | `player` | Player(s). Comma-separated for OR |
-| `a` | `action`, `event` | Event type. See `/sg events` |
-| `b` | `block` | Target block material |
+| `p` | `player` | Player(s). Comma-separated for OR; `!name` excludes |
+| `a` | `action`, `event` | Event type. See `/sg events`; `!name` excludes |
+| `b` | `block` | Target block material; `!material` excludes |
 | `i` | `item` | Item material |
 | `iname` | `itemname` | Item display name (substring) |
 | `ilore` | `itemlore`, `d` | Item lore (substring) |

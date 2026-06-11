@@ -20,15 +20,39 @@ public final class BlockParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("Block parameter requires a material.");
         }
-        String[] parts = value.split(",");
-        List<String> names = new ArrayList<>();
-        for (String raw : parts) {
-            Material material = Material.matchMaterial(raw.trim(), false);
-            if (material == null || !material.isBlock()) {
-                throw new ParamParseException("Unknown block: " + raw);
+        // `!`-prefixed materials are excludes (#30). The prefix MUST be
+        // stripped before Material.matchMaterial — Bukkit drops non-word
+        // characters, so an unstripped "!chest" would silently parse as
+        // CHEST and invert the operator's intent.
+        List<String> includes = new ArrayList<>();
+        List<String> excludes = new ArrayList<>();
+        for (String raw : value.split(",")) {
+            String token = raw.trim();
+            if (token.isEmpty() || token.equals("!")) {
+                continue;
             }
-            names.add(material.name());
+            boolean negated = token.startsWith("!");
+            String name = negated ? token.substring(1) : token;
+            Material material = Material.matchMaterial(name, false);
+            if (material == null || !material.isBlock()) {
+                throw new ParamParseException("Unknown block: " + name);
+            }
+            (negated ? excludes : includes).add(material.name());
         }
+        if (includes.isEmpty() && excludes.isEmpty()) {
+            throw new ParamParseException("Block parameter requires at least one material.");
+        }
+        List<QueryPredicate> clauses = new ArrayList<>(2);
+        if (!includes.isEmpty()) {
+            clauses.add(membership(includes));
+        }
+        if (!excludes.isEmpty()) {
+            clauses.add(new QueryPredicate.Not(membership(excludes)));
+        }
+        return clauses.size() == 1 ? clauses.getFirst() : new QueryPredicate.And(clauses);
+    }
+
+    private static QueryPredicate membership(List<String> names) {
         if (names.size() == 1) {
             return new QueryPredicate.Eq("target", names.getFirst());
         }
