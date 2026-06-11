@@ -685,9 +685,37 @@ public final class RollbackEngine {
             }
             BlockLocation loc = effect.location();
             BlockSnapshot replacement = effect.replacement();
-            if (work.ctx != null) {
-                work.ctx.writeBlock(loc.x(), loc.y(), loc.z(), bd);
+            if (work.ctx == null) {
+                // Degraded path (prepareChunk failed): route EVERY cell to
+                // the main-thread half, which writes via the single-block
+                // fallback. Simple cells previously reported Applied here
+                // without any write ever happening.
+                nonSimpleMask.set(j);
+                continue;
             }
+            // Expected-state check (#27): same semantics as the slow
+            // path's matches() — interned NMS states make identity equal
+            // to material+blockData equality. Skipping here is what keeps
+            // a p:<actor> rollback from clobbering another player's newer
+            // edit, and makes re-runs report skips instead of re-applying.
+            BlockSnapshot expected = effect.expectedCurrent();
+            if (expected != null) {
+                org.bukkit.block.data.BlockData expectedBd;
+                try {
+                    expectedBd = blockDataFor(expected.blockData());
+                } catch (RuntimeException thrown) {
+                    expectedBd = null;
+                }
+                if (expectedBd != null
+                        && work.ctx.currentStateMatches(loc.x(), loc.y(), loc.z(), expectedBd) == 0) {
+                    resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                            new RollbackReason.BlockChanged(loc, expected,
+                                    snapshotOfCurrent(work.ctx, loc)));
+                    writes[j] = null;
+                    continue;
+                }
+            }
+            work.ctx.writeBlock(loc.x(), loc.y(), loc.z(), bd);
             if (replacement.simple()) {
                 // No tile entity to apply; the palette write is the whole
                 // apply. Build Applied here on the worker.
@@ -701,6 +729,19 @@ public final class RollbackEngine {
         }
         work.writes = writes;
         work.nonSimpleMask = nonSimpleMask;
+    }
+
+    // Mismatch reporting only — allocates a Bukkit BlockData wrapper, so
+    // it stays off the per-block hot path.
+    private static BlockSnapshot snapshotOfCurrent(
+            ChunkDirectWriter.ChunkContext ctx, BlockLocation loc) {
+        org.bukkit.block.data.BlockData current = ctx.readBlockData(loc.x(), loc.y(), loc.z());
+        if (current == null) {
+            return null;
+        }
+        return new BlockSnapshot(current.getMaterial(), current.getAsString(),
+                java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(), null);
     }
 
     // Main-thread half: apply tile-entity state for the non-simple blocks
@@ -724,8 +765,18 @@ public final class RollbackEngine {
                     BlockLocation loc = effect.location();
                     try {
                         if (work.ctx == null) {
-                            // prepareChunk failed for this chunk; fall back
-                            // to a single-block write here on main.
+                            // prepareChunk failed for this chunk; run the
+                            // expected-state check (#27) via Bukkit, then
+                            // fall back to a single-block write here on main.
+                            Block current = world.getBlockAt(loc.x(), loc.y(), loc.z());
+                            BlockSnapshot expected = effect.expectedCurrent();
+                            if (expected != null
+                                    && !expected.blockData().equals(current.getBlockData().getAsString())) {
+                                resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                                        new RollbackReason.BlockChanged(loc, expected,
+                                                BlockSnapshots.capture(current.getState())));
+                                continue;
+                            }
                             ChunkDirectWriter.writeBlock(
                                     world, loc.x(), loc.y(), loc.z(), writes[j]);
                         }
