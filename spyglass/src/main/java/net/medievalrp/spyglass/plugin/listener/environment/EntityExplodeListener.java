@@ -49,7 +49,7 @@ public final class EntityExplodeListener implements RecordingListener {
         String entityType = entity.getType().getKey().getKey();
         Instant occurred = support.now();
         Origin origin = support.environmentOrigin("entity-explode:" + entityType);
-        Source source = support.entitySource(entity.getUniqueId(), entityType);
+        Source source = explosionSource(entity, entityType);
 
         for (Block block : event.blockList()) {
             emitBreak(block, occurred, origin, source);
@@ -69,6 +69,21 @@ public final class EntityExplodeListener implements RecordingListener {
         for (Block partner : MultiBlockPartners.partnersBeyond(event.blockList())) {
             emitBreak(partner, occurred, origin, source);
         }
+    }
+
+    // Player-lit TNT is the PLAYER's grief (#34): Paper tracks the
+    // priming entity, so the source carries the igniter — one
+    // p:<griefer> rollback covers the crater, which u:<player> can't do
+    // on CoreProtect. The origin keeps the mechanism
+    // ("entity-explode:tnt") either way. Chained / dispenser / redstone
+    // TNT has no player source and stays entity-attributed, so c:tnt
+    // sweeps still cover the unattributed remainder.
+    Source explosionSource(Entity entity, String entityType) {
+        if (entity instanceof org.bukkit.entity.TNTPrimed primed
+                && primed.getSource() instanceof org.bukkit.entity.Player igniter) {
+            return support.playerSource(igniter);
+        }
+        return support.entitySource(entity.getUniqueId(), entityType);
     }
 
     private void emitBreak(Block block, Instant occurred, Origin origin, Source source) {
