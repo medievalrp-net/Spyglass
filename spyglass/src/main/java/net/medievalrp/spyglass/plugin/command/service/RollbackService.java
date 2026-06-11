@@ -273,6 +273,8 @@ public final class RollbackService {
         // the audit emit).
         long queryNanos = 0L, collectNanos = 0L, prewarmNanos = 0L, applyNanos = 0L;
         int windowCount = 0;
+        // Chunks already pre-warmed by an earlier window of this job.
+        Map<UUID, Set<Long>> warmedChunks = new HashMap<>();
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         // Per-world bounding boxes of applied writes — recorded into the
@@ -293,16 +295,20 @@ public final class RollbackService {
         // the wire and folds each one straight into a bounded effect
         // window; this thread consumes windows — prewarm, apply,
         // account — while the reader keeps reading. The two-slot queue
-        // is the backpressure, so heap holds at most ~two windows of
-        // slim effects regardless of the read window size:
+        // is the backpressure, so only a handful of short-lived windows
+        // are ever in flight regardless of the read window size:
         // rollback-page-size is now a query-efficiency dial with no
-        // memory cost, and a 2M rollback pays ~16 window barriers
-        // instead of one per page (measured 13.8s of barrier tax at
-        // the old 20K default).
+        // memory or GC cost, and the barriers are queue handoffs, not
+        // the per-page query+collect+prewarm stalls that cost 13.8s at
+        // the old 20K default.
         final int windowSize = applyWindow;
         final Window readDone = new Window(List.of(), java.util.Map.of(), null, 0);
+        // One slot, not two: a deeper queue only grows the in-flight
+        // live set that MTT=1 promotes (see applyWindow). One queued +
+        // one applying + one accumulating still overlaps read with
+        // apply fully.
         final java.util.concurrent.ArrayBlockingQueue<Window> ready =
-                new java.util.concurrent.ArrayBlockingQueue<>(2);
+                new java.util.concurrent.ArrayBlockingQueue<>(1);
         final java.util.concurrent.atomic.AtomicReference<Throwable> readerFailure =
                 new java.util.concurrent.atomic.AtomicReference<>();
         final java.util.concurrent.atomic.AtomicLong foldNanos =
@@ -375,9 +381,30 @@ public final class RollbackService {
                     checkpoint(job, window, totalApplied, totalSkipped);
                     continue;
                 }
-                long tPrewarm = System.nanoTime();
-                preWarmChunks(window.prewarmChunks()).join();
-                prewarmNanos += System.nanoTime() - tPrewarm;
+                // Only join on chunks this job hasn't warmed yet — the
+                // join is tick-aligned (getChunkAtAsync resolves on the
+                // main thread), so a redundant one stalls the window by
+                // up to a tick. Most windows after the first few skip
+                // it entirely.
+                Map<UUID, Set<Long>> freshChunks = new HashMap<>();
+                for (Map.Entry<UUID, Set<Long>> entry : window.prewarmChunks().entrySet()) {
+                    Set<Long> seenChunks = warmedChunks.computeIfAbsent(
+                            entry.getKey(), k -> new HashSet<>());
+                    Set<Long> fresh = new HashSet<>();
+                    for (Long packed : entry.getValue()) {
+                        if (seenChunks.add(packed)) {
+                            fresh.add(packed);
+                        }
+                    }
+                    if (!fresh.isEmpty()) {
+                        freshChunks.put(entry.getKey(), fresh);
+                    }
+                }
+                if (!freshChunks.isEmpty()) {
+                    long tPrewarm = System.nanoTime();
+                    preWarmChunks(freshChunks).join();
+                    prewarmNanos += System.nanoTime() - tPrewarm;
+                }
                 List<RollbackResult> results;
                 long tApply = System.nanoTime();
                 try {
@@ -579,10 +606,19 @@ public final class RollbackService {
         }
     }
 
-    // Apply-window size: effects per engine dispatch (#19). At 131072
-    // the window's backing array stays around 1 MB — far under G1's
-    // humongous threshold at any common region size — while a 2M
-    // rollback pays only ~16 window barriers instead of one per page.
+    // Apply-window size: effects per engine dispatch (#19). Two costs
+    // pull in opposite directions (both measured 2026-06-10):
+    //  - per-window tax: each window pays tick-aligned scheduling for
+    //    the prewarm join + main-thread apply dispatch (~2-3 ticks).
+    //    16K windows = 123 of them = a 25 s rollback that loses to
+    //    CoreProtect; 131K = 16 = ~2 s hidden inside a 7.6 s run.
+    //  - GC live set: customers run stock Aikar flags
+    //    (MaxTenuringThreshold=1), so effects alive across one young
+    //    GC promote to old gen wholesale. The fix for that is making
+    //    the in-flight bytes small (snapshot interning in the fold,
+    //    single-slot queue), NOT making windows short.
+    // 131072 keeps the backing array (~1 MB) far under the humongous
+    // threshold at every common region size.
     private int applyWindow = 131_072;
 
     // Visible for tests so the windowing can be exercised on small data.
@@ -622,6 +658,19 @@ public final class RollbackService {
     // position. Single-threaded by construction (one reader).
     private static final class WindowAccumulator {
 
+        // Snapshot canonicalizer. Each decoded record carries its own
+        // BlockSnapshot copies, and effects outlive the record while
+        // their window queues for apply — under stock Aikar flags
+        // (MTT=1) those survivors promote to old gen, and two ~120 B
+        // snapshots per effect were most of the promoted bytes. Bulk
+        // rollbacks repeat a handful of materials, so interning turns
+        // the retained pair into two pointers. Bounded: high-entropy
+        // data (unique container payloads) resets the epoch instead of
+        // growing without limit.
+        private static final int INTERN_CAP = 4096;
+        private final Map<net.medievalrp.spyglass.api.event.BlockSnapshot,
+                net.medievalrp.spyglass.api.event.BlockSnapshot> snapshotCache = new HashMap<>();
+
         private final int windowSize;
         private final RollbackMode mode;
         private final java.util.concurrent.atomic.AtomicLong foldNanos;
@@ -649,9 +698,9 @@ public final class RollbackService {
             lastOccurred = record.occurred();
             lastId = record.id();
             if (record instanceof Rollbackable rollbackable) {
-                effects.add(mode == RollbackMode.ROLLBACK
+                effects.add(intern(mode == RollbackMode.ROLLBACK
                         ? rollbackable.rollbackEffect()
-                        : rollbackable.restoreEffect());
+                        : rollbackable.restoreEffect()));
                 BlockLocation loc = record.location();
                 if (loc != null) {
                     long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
@@ -659,6 +708,29 @@ public final class RollbackService {
                 }
             }
             foldNanos.addAndGet(System.nanoTime() - start);
+        }
+
+        private RollbackEffect intern(RollbackEffect effect) {
+            if (!(effect instanceof RollbackEffect.BlockReplace br)) {
+                return effect;
+            }
+            var expected = intern(br.expectedCurrent());
+            var replacement = intern(br.replacement());
+            if (expected == br.expectedCurrent() && replacement == br.replacement()) {
+                return effect;
+            }
+            return new RollbackEffect.BlockReplace(br.location(), expected, replacement);
+        }
+
+        private net.medievalrp.spyglass.api.event.BlockSnapshot intern(
+                net.medievalrp.spyglass.api.event.BlockSnapshot snapshot) {
+            if (snapshot == null) {
+                return null;
+            }
+            if (snapshotCache.size() >= INTERN_CAP) {
+                snapshotCache.clear();
+            }
+            return snapshotCache.computeIfAbsent(snapshot, s -> s);
         }
 
         boolean full() {

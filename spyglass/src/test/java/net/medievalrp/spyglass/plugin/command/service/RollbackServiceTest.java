@@ -227,6 +227,40 @@ class RollbackServiceTest {
     }
 
     @Test
+    void internsRepeatedSnapshotsAcrossFoldedEffects() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        // Distinct records, structurally equal snapshots — the fold
+        // must collapse the retained copies to one canonical instance
+        // per distinct snapshot (the queued-window live set is what
+        // MTT=1 promotes to old gen).
+        BlockBreakRecord a = record();
+        BlockBreakRecord b = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b), null));
+        java.util.concurrent.atomic.AtomicReference<List<RollbackEffect>> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    captured.set(inv.getArgument(0));
+                    return CompletableFuture.completedFuture(List.<RollbackResult>of());
+                });
+        ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        List<RollbackEffect> effects = captured.get();
+        assertThat(effects).hasSize(2);
+        RollbackEffect.BlockReplace first = (RollbackEffect.BlockReplace) effects.get(0);
+        RollbackEffect.BlockReplace second = (RollbackEffect.BlockReplace) effects.get(1);
+        assertThat(first.expectedCurrent()).isSameAs(second.expectedCurrent());
+        assertThat(first.replacement()).isSameAs(second.replacement());
+    }
+
+    @Test
     void warnsWhenNoRollbackables() throws Exception {
         TestFixture fixture = new TestFixture();
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
