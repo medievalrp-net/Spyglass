@@ -96,6 +96,11 @@ class ChatListenerTest {
         when(world.getName()).thenReturn("world");
         Location location = new Location(world, 10, 64, 20);
         when(player.getLocation()).thenReturn(location);
+        // Location holds the world weakly; without a strong path from the
+        // player mock a mid-test GC collects it and getWorld() throws
+        // "World unloaded" (seen when the megabyte-message test's giant
+        // allocation triggered a young collection).
+        when(player.getWorld()).thenReturn(world);
         return player;
     }
 
