@@ -34,33 +34,52 @@ public final class PlayerParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("Player parameter requires a name.");
         }
-        String[] tokens = value.split(",");
+        // `!`-prefixed names are excludes (#30), same syntax as c:.
         List<UUID> ids = new ArrayList<>();
         List<String> rawNames = new ArrayList<>();
-        for (String raw : tokens) {
+        List<UUID> excludeIds = new ArrayList<>();
+        List<String> excludeRawNames = new ArrayList<>();
+        for (String raw : value.split(",")) {
             String trimmed = raw.trim();
-            if (trimmed.isEmpty()) {
+            if (trimmed.isEmpty() || trimmed.equals("!")) {
                 continue;
             }
-            UUID uuidLiteral = tryParseUuid(trimmed);
+            boolean negated = trimmed.startsWith("!");
+            String name = negated ? trimmed.substring(1) : trimmed;
+            List<UUID> idSink = negated ? excludeIds : ids;
+            List<String> nameSink = negated ? excludeRawNames : rawNames;
+            UUID uuidLiteral = tryParseUuid(name);
             if (uuidLiteral != null) {
-                ids.add(uuidLiteral);
+                idSink.add(uuidLiteral);
                 continue;
             }
-            UUID resolved = nameResolver.apply(trimmed);
+            UUID resolved = nameResolver.apply(name);
             if (resolved != null) {
-                ids.add(resolved);
+                idSink.add(resolved);
                 continue;
             }
             // Fallback: Bukkit never saw this player, but the name may still
             // exist verbatim in source.playerName for events captured while
             // the player was connected. Matches v1 behavior, which does a
             // raw string match.
-            rawNames.add(trimmed);
+            nameSink.add(name);
         }
-        if (ids.isEmpty() && rawNames.isEmpty()) {
+        QueryPredicate include = matchPredicate(ids, rawNames);
+        QueryPredicate exclude = matchPredicate(excludeIds, excludeRawNames);
+        if (include == null && exclude == null) {
             throw new ParamParseException("Player parameter requires at least one name.");
         }
+        List<QueryPredicate> clauses = new ArrayList<>(2);
+        if (include != null) {
+            clauses.add(include);
+        }
+        if (exclude != null) {
+            clauses.add(new QueryPredicate.Not(exclude));
+        }
+        return clauses.size() == 1 ? clauses.getFirst() : new QueryPredicate.And(clauses);
+    }
+
+    private static QueryPredicate matchPredicate(List<UUID> ids, List<String> rawNames) {
         QueryPredicate byId = idPredicate(ids);
         QueryPredicate byName = namePredicate(rawNames);
         if (byId != null && byName != null) {
