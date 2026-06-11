@@ -301,7 +301,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         Source source = record.source();
         BlockLocation location = record.location();
 
-        writer.setValue("id", record.id());
+        writer.setValue("id", net.medievalrp.spyglass.api.util.EventIds.sequenceOf(record.id()));
         writer.setString("event", record.event());
         writer.setDateTime("occurred", toLocalDateTime(record.occurred()));
         writer.setDateTime("expires_at", toLocalDateTime(record.expiresAt()));
@@ -545,11 +545,13 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         if (cursor != null) {
             sql.append(" AND ");
-            // Tuple compare with toUUID() forces ClickHouse to evaluate
-            // the id as UUID rather than coerce both sides to strings.
+            // v2 ids are UInt64 sequences; the cursor UUID maps back
+            // through EventIds at this boundary.
             sql.append("(occurred, id) ").append(op).append(" (")
-                    .append(chTimestamp(cursor.occurred())).append(", toUUID('")
-                    .append(cursor.id()).append("'))");
+                    .append(chTimestamp(cursor.occurred())).append(", ")
+                    .append(Long.toUnsignedString(
+                            net.medievalrp.spyglass.api.util.EventIds.sequenceOf(cursor.id())))
+                    .append(")");
         }
         sql.append(" ORDER BY occurred ").append(newestFirst ? "DESC" : "ASC")
                 .append(", id ").append(newestFirst ? "DESC" : "ASC")
@@ -592,7 +594,7 @@ public final class ClickHouseRecordStore implements RecordStore {
                 // null (unknown event). Skipping over an undecodable row
                 // is fine; freezing on it would loop forever.
                 lastOccurred = row.getInstant("occurred");
-                lastId = row.getUUID("id");
+                lastId = net.medievalrp.spyglass.api.util.EventIds.uuidOf(row.getLong("id"));
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
@@ -701,7 +703,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         if (clazz == null) {
             return null;
         }
-        UUID id = row.getUUID("id");
+        UUID id = net.medievalrp.spyglass.api.util.EventIds.uuidOf(row.getLong("id"));
         Instant occurred = row.getInstant("occurred");
         Instant expiresAt = row.getInstant("expires_at");
         Origin origin = readOrigin(row);
