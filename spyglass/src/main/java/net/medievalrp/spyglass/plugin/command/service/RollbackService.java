@@ -93,15 +93,6 @@ public final class RollbackService {
         return configured <= 0 ? Integer.MAX_VALUE : configured;
     }
 
-    // Submit a page read to the prefetch executor so it overlaps the
-    // previous page's apply. cur is a parameter (not the loop's mutable
-    // cursor) so the lambda capture stays effectively-final.
-    private java.util.concurrent.Future<net.medievalrp.spyglass.plugin.storage.QueryPage> submitQuery(
-            java.util.concurrent.ExecutorService exec, QueryRequest req,
-            net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cur, int size) {
-        return exec.submit(() -> store.queryPage(req, cur, size));
-    }
-
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
     // already-applied cells skip with "block changed" on the re-run.
     public boolean resumeFromSaved(RollbackResumeStore.Saved saved, CommandSender sender) {
@@ -256,9 +247,11 @@ public final class RollbackService {
         });
     }
 
-    // Keyset-paginate through the store and apply each page through
-    // the chunked engine. The apply future blocks here before we
-    // fetch the next page, keeping heap bounded.
+    // Stream records off the store into bounded effect windows and
+    // apply them through the chunked engine (#19). A reader thread
+    // folds the wire stream into ≤applyWindow-effect windows; this
+    // thread applies them as they land, with a two-slot queue as the
+    // backpressure that keeps heap bounded regardless of page size.
     private void streamPagesAndApply(RollbackJob job, QueryRequest request, RollbackMode mode,
                                      @org.jetbrains.annotations.Nullable
                                      net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
@@ -279,7 +272,7 @@ public final class RollbackService {
         // (off-main writes + main post-processing + inter-tick yields +
         // the audit emit).
         long queryNanos = 0L, collectNanos = 0L, prewarmNanos = 0L, applyNanos = 0L;
-        int pageCount = 0;
+        int windowCount = 0;
         java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         // Per-world bounding boxes of applied writes — recorded into the
@@ -291,83 +284,106 @@ public final class RollbackService {
         // /spyglass undo replays the same record set in the opposite
         // direction. Nothing is captured per effect.
 
-        net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursor = startCursor;
         if (startCursor != null) {
             support.onMainThread(() -> sender.sendMessage(Feedback.bonus(
                     "Resuming from cursor: " + initialApplied + " applied + "
                             + initialSkipped + " skipped before crash.")));
         }
-        // Prefetch pipeline: the next page's ClickHouse read runs on this
-        // executor while the current page applies, so the query phase (the
-        // timings show it is ~half the rollback wall-clock) overlaps the
-        // off-main apply instead of running serially before it. At most one
-        // read is in flight, so heap holds ~two pages of records.
-        java.util.concurrent.ExecutorService prefetch =
+        // Streaming pipeline (#19): a reader thread streams records off
+        // the wire and folds each one straight into a bounded effect
+        // window; this thread consumes windows — prewarm, apply,
+        // account — while the reader keeps reading. The two-slot queue
+        // is the backpressure, so heap holds at most ~two windows of
+        // slim effects regardless of the read window size:
+        // rollback-page-size is now a query-efficiency dial with no
+        // memory cost, and a 2M rollback pays ~16 window barriers
+        // instead of one per page (measured 13.8s of barrier tax at
+        // the old 20K default).
+        final int windowSize = applyWindow;
+        final Window readDone = new Window(List.of(), java.util.Map.of(), null, 0);
+        final java.util.concurrent.ArrayBlockingQueue<Window> ready =
+                new java.util.concurrent.ArrayBlockingQueue<>(2);
+        final java.util.concurrent.atomic.AtomicReference<Throwable> readerFailure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicLong foldNanos =
+                new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.ExecutorService reader =
                 java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                    Thread t = new Thread(r, "Spyglass-RollbackPrefetch");
+                    Thread t = new Thread(r, "Spyglass-RollbackRead");
                     t.setDaemon(true);
                     return t;
                 });
-        java.util.concurrent.Future<net.medievalrp.spyglass.plugin.storage.QueryPage> pending =
-                submitQuery(prefetch, request, cursor, Math.min(pageSize, hardLimit));
+        final net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor readerStart = startCursor;
+        reader.execute(() -> {
+            WindowAccumulator acc = new WindowAccumulator(windowSize, mode, foldNanos);
+            try {
+                net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cur = readerStart;
+                int seen = 0;
+                while (!cancelFlag.get() && seen < hardLimit) {
+                    int ask = Math.min(pageSize, hardLimit - seen);
+                    int seenBefore = acc.seen();
+                    cur = store.streamRollback(request, cur, ask, record -> {
+                        acc.take(record);
+                        if (acc.full()) {
+                            putWindow(ready, acc.drain());
+                        }
+                    });
+                    int got = acc.seen() - seenBefore;
+                    seen += got;
+                    if (cur == null || got < ask) {
+                        break; // result set exhausted
+                    }
+                }
+                if (acc.hasUndrained()) {
+                    putWindow(ready, acc.drain());
+                }
+                putWindow(ready, readDone);
+            } catch (ReadAborted aborted) {
+                // Consumer tore the pipeline down (cancel/failure);
+                // nothing to report from this side.
+            } catch (Throwable thrown) {
+                readerFailure.set(thrown);
+                ready.clear();
+                ready.offer(readDone);
+            }
+        });
         try {
-            while (pending != null) {
-                // Cancellation is checked between pages so the
-                // current page finishes cleanly.
+            while (true) {
+                // Cancellation is checked between windows so the
+                // current window finishes cleanly.
                 if (cancelFlag.get()) {
                     break;
                 }
-                net.medievalrp.spyglass.plugin.storage.QueryPage page;
+                Window window;
                 long tQuery = System.nanoTime();
                 try {
-                    page = pending.get();
+                    window = ready.take();
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return;
-                } catch (java.util.concurrent.ExecutionException ee) {
-                    Throwable cause = ee.getCause() == null ? ee : ee.getCause();
-                    logger.warning("Spyglass " + mode.label() + " query page failed: " + cause);
-                    final String msg = cause.getMessage();
-                    support.onMainThread(() -> sender.sendMessage(
-                            Feedback.error(mode.label() + " failed: " + msg)));
-                    return;
                 }
-                // tQuery now measures only the *wait* for the prefetch — ~0
-                // once the pipeline is warm, because the read completed during
-                // the previous page's apply.
+                // Measures only the *wait* for the reader — ~0 once the
+                // pipeline is warm, because folding happened during the
+                // previous window's apply.
                 queryNanos += System.nanoTime() - tQuery;
-                pageCount++;
-                if (page.records().isEmpty()) {
+                if (window == readDone) {
                     break;
                 }
-                totalSeen += page.records().size();
-                net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor next = page.next();
-                // Kick off the next page's read now, so it runs during this
-                // page's apply rather than after it.
-                if (next != null && totalSeen < hardLimit) {
-                    pending = submitQuery(prefetch, request, next,
-                            Math.min(pageSize, hardLimit - totalSeen));
-                } else {
-                    pending = null;
-                }
-                long tCollect = System.nanoTime();
-                List<RollbackEffect> effects = collectEffectsFromRecords(page.records(), mode);
-                collectNanos += System.nanoTime() - tCollect;
-                if (effects.isEmpty()) {
-                    cursor = next;
+                windowCount++;
+                totalSeen += window.seenDelta();
+                if (window.effects().isEmpty()) {
+                    checkpoint(job, window, totalApplied, totalSkipped);
                     continue;
                 }
-                // Pre-warm chunks off-thread, then apply. Blocking
-                // on the apply future before fetching the next page
-                // keeps heap bounded to one page's effects.
                 long tPrewarm = System.nanoTime();
-                preWarmChunksForRecords(page.records()).join();
+                preWarmChunks(window.prewarmChunks()).join();
                 prewarmNanos += System.nanoTime() - tPrewarm;
                 List<RollbackResult> results;
                 long tApply = System.nanoTime();
                 try {
                     java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
                             new java.util.concurrent.CompletableFuture<>();
+                    List<RollbackEffect> effects = window.effects();
                     support.onMainThread(() ->
                             engine.applyAllChunked(effects, sender, support, batchSize, cancelFlag)
                                     .whenComplete((r, err) -> {
@@ -377,7 +393,7 @@ public final class RollbackService {
                     results = fut.join();
                 } catch (java.util.concurrent.CompletionException ex) {
                     Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-                    logger.warning("Spyglass " + mode.label() + " page apply failed: " + cause);
+                    logger.warning("Spyglass " + mode.label() + " window apply failed: " + cause);
                     final String msg = cause.getMessage() == null ? cause.toString() : cause.getMessage();
                     support.onMainThread(() -> sender.sendMessage(
                             Feedback.error(mode.label() + " failed: " + msg)));
@@ -420,17 +436,16 @@ public final class RollbackService {
                             net.kyori.adventure.text.Component.text(
                                     "Rolling back: " + appliedSoFar + " applied, " + skippedSoFar + " skipped")));
                 }
-                cursor = next;
-                // Checkpoint to the resume marker so a crash picks
-                // up from here rather than re-querying from the start.
-                RollbackResumeStore.Cursor resumeCursor = cursor == null ? null
-                        : new RollbackResumeStore.Cursor(cursor.occurred(), cursor.id());
-                resumeStore.markProgress(job.id, job.operatorName, job.operatorId,
-                        job.query, job.mode, job.submitTime,
-                        resumeCursor, totalApplied, totalSkipped);
-                if (cursor == null) {
-                    break;
-                }
+                checkpoint(job, window, totalApplied, totalSkipped);
+            }
+            Throwable readFailed = readerFailure.get();
+            if (readFailed != null) {
+                logger.warning("Spyglass " + mode.label() + " stream read failed: " + readFailed);
+                final String msg = readFailed.getMessage() == null
+                        ? readFailed.toString() : readFailed.getMessage();
+                support.onMainThread(() -> sender.sendMessage(
+                        Feedback.error(mode.label() + " failed: " + msg)));
+                return;
             }
         } catch (RuntimeException unexpected) {
             logger.warning("Spyglass " + mode.label() + " streaming failure: " + unexpected);
@@ -439,10 +454,10 @@ public final class RollbackService {
                     Feedback.error(mode.label() + " failed: " + msg)));
             return;
         } finally {
-            // Tear down the prefetch thread on every exit path (normal,
-            // early-return, or exception); shutdownNow interrupts an
-            // in-flight read that the loop already broke away from.
-            prefetch.shutdownNow();
+            // Tear down the reader on every exit path (normal,
+            // early-return, or exception); shutdownNow interrupts a
+            // blocked put or an in-flight wire read.
+            reader.shutdownNow();
         }
 
         if (totalSeen == 0) {
@@ -451,13 +466,16 @@ public final class RollbackService {
         }
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+        // Folding happens on the reader thread; pull its tally into the
+        // collect slot so the breakdown still accounts for it.
+        collectNanos = foldNanos.get();
         logger.info(String.format(
                 "Spyglass %s %s timings: query=%dms collect=%dms prewarm=%dms apply=%dms"
-                        + " | %d pages, %d chunks, %d applied, %dms total",
+                        + " | %d windows, %d chunks, %d applied, %dms total",
                 mode.label(), job.shortId(),
                 queryNanos / 1_000_000L, collectNanos / 1_000_000L,
                 prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
-                pageCount, chunkKeys.size(), totalApplied, elapsedMs));
+                windowCount, chunkKeys.size(), totalApplied, elapsedMs));
         // One reference blob serves both audiences: the undo ledger row
         // (written before the summary so "done" implies /undo is ready)
         // and the rollback-op event record that searches synthesize the
@@ -516,49 +534,35 @@ public final class RollbackService {
     }
 
     // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
-    // pay a chunk-load stall inside its tick budget. No-op outside
-    // a live Bukkit server (tests).
-    private CompletableFuture<Void> preWarmChunksForRecords(List<EventRecord> records) {
+    // pay a chunk-load stall inside its tick budget. Takes the packed
+    // (cx, cz) set the window accumulator built record-by-record.
+    // No-op outside a live Bukkit server (tests).
+    private CompletableFuture<Void> preWarmChunks(Map<UUID, Set<Long>> byWorld) {
         try {
-            Map<UUID, Set<Long>> byWorld = new HashMap<>();
-            for (EventRecord record : records) {
-                if (!(record instanceof Rollbackable)) continue;
-                BlockLocation loc = record.location();
-                if (loc == null) continue;
-                long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
-                byWorld.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
-            }
             if (byWorld.isEmpty() || Bukkit.getServer() == null) {
                 return CompletableFuture.completedFuture(null);
             }
             List<CompletableFuture<?>> futures = new ArrayList<>();
             for (Map.Entry<UUID, Set<Long>> entry : byWorld.entrySet()) {
                 World world = Bukkit.getWorld(entry.getKey());
-                if (world == null) continue;
+                if (world == null) {
+                    continue;
+                }
                 for (long packed : entry.getValue()) {
                     int cx = (int) (packed >> 32);
                     int cz = (int) packed;
                     futures.add(world.getChunkAtAsync(cx, cz));
                 }
             }
-            if (futures.isEmpty()) return CompletableFuture.completedFuture(null);
+            if (futures.isEmpty()) {
+                return CompletableFuture.completedFuture(null);
+            }
             return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
         } catch (Throwable thrown) {
             return CompletableFuture.completedFuture(null);
         }
     }
 
-    private static List<RollbackEffect> collectEffectsFromRecords(List<EventRecord> records, RollbackMode mode) {
-        List<RollbackEffect> effects = new ArrayList<>(records.size());
-        for (EventRecord record : records) {
-            if (record instanceof Rollbackable rollbackable) {
-                effects.add(mode == RollbackMode.ROLLBACK
-                        ? rollbackable.rollbackEffect()
-                        : rollbackable.restoreEffect());
-            }
-        }
-        return effects;
-    }
 
     private void deliverStreamingSummary(CommandSender sender, RollbackMode mode,
                                          Summary summary,
@@ -573,6 +577,125 @@ public final class RollbackService {
             sender.sendMessage(Feedback.bonus(
                     "Undo reference could not be saved; /spyglass undo cannot reverse this op."));
         }
+    }
+
+    // Apply-window size: effects per engine dispatch (#19). At 131072
+    // the window's backing array stays around 1 MB — far under G1's
+    // humongous threshold at any common region size — while a 2M
+    // rollback pays only ~16 window barriers instead of one per page.
+    private int applyWindow = 131_072;
+
+    // Visible for tests so the windowing can be exercised on small data.
+    void applyWindowForTests(int windowSize) {
+        this.applyWindow = Math.max(1, windowSize);
+    }
+
+    // One bounded unit of the streaming pipeline (#19): the effects to
+    // apply, the chunks to pre-warm for them, the keyset position after
+    // the last record folded in (for crash-resume checkpoints), and how
+    // many records were consumed to build it.
+    private record Window(List<RollbackEffect> effects,
+                          Map<UUID, Set<Long>> prewarmChunks,
+                          @org.jetbrains.annotations.Nullable
+                          net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursorAfter,
+                          int seenDelta) {
+    }
+
+    // Unwinds the reader when the consumer tore the pipeline down.
+    private static final class ReadAborted extends RuntimeException {
+        ReadAborted(InterruptedException cause) {
+            super(cause);
+        }
+    }
+
+    private static void putWindow(java.util.concurrent.BlockingQueue<Window> queue, Window window) {
+        try {
+            queue.put(window);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new ReadAborted(ie);
+        }
+    }
+
+    // Folds streamed records into windows on the reader thread: effect
+    // direction by mode, prewarm chunk set, and the running keyset
+    // position. Single-threaded by construction (one reader).
+    private static final class WindowAccumulator {
+
+        private final int windowSize;
+        private final RollbackMode mode;
+        private final java.util.concurrent.atomic.AtomicLong foldNanos;
+        private List<RollbackEffect> effects;
+        private Map<UUID, Set<Long>> prewarm;
+        private java.time.Instant lastOccurred;
+        private UUID lastId;
+        private int seen;
+        private int drainedSeen;
+
+        WindowAccumulator(int windowSize, RollbackMode mode,
+                          java.util.concurrent.atomic.AtomicLong foldNanos) {
+            this.windowSize = windowSize;
+            this.mode = mode;
+            this.foldNanos = foldNanos;
+            this.effects = new ArrayList<>();
+            this.prewarm = new HashMap<>();
+        }
+
+        void take(EventRecord record) {
+            long start = System.nanoTime();
+            seen++;
+            // Always advance the cursor, even for non-rollbackable
+            // records — freezing on one would re-read it forever.
+            lastOccurred = record.occurred();
+            lastId = record.id();
+            if (record instanceof Rollbackable rollbackable) {
+                effects.add(mode == RollbackMode.ROLLBACK
+                        ? rollbackable.rollbackEffect()
+                        : rollbackable.restoreEffect());
+                BlockLocation loc = record.location();
+                if (loc != null) {
+                    long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
+                    prewarm.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
+                }
+            }
+            foldNanos.addAndGet(System.nanoTime() - start);
+        }
+
+        boolean full() {
+            return effects.size() >= windowSize;
+        }
+
+        int seen() {
+            return seen;
+        }
+
+        boolean hasUndrained() {
+            return seen > drainedSeen;
+        }
+
+        Window drain() {
+            Window window = new Window(effects, prewarm,
+                    lastOccurred == null ? null
+                            : new net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor(
+                                    lastOccurred, lastId),
+                    seen - drainedSeen);
+            drainedSeen = seen;
+            effects = new ArrayList<>();
+            prewarm = new HashMap<>();
+            return window;
+        }
+    }
+
+    // Checkpoint AFTER a window's records are applied so a crash
+    // resumes past them; the force-overwrite apply makes any overlap
+    // from a coarser-than-page checkpoint converge.
+    private void checkpoint(RollbackJob job, Window window, int totalApplied, int totalSkipped) {
+        RollbackResumeStore.Cursor resumeCursor = window.cursorAfter() == null ? null
+                : new RollbackResumeStore.Cursor(
+                        window.cursorAfter().occurred(), window.cursorAfter().id());
+        resumeStore.markProgress(job.id, job.operatorName, job.operatorId,
+                job.query, job.mode, job.submitTime,
+                resumeCursor, totalApplied, totalSkipped);
     }
 
     private static BlockLocation locationOf(RollbackEffect effect) {
