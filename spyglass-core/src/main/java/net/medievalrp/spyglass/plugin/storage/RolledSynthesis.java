@@ -64,8 +64,23 @@ public final class RolledSynthesis {
         if (!eventFilterMightIncludeRolled(request.predicates())) {
             return List.of();
         }
+        // Synthesized records always carry Source.environment("ROLLBACK");
+        // a positive source.player* predicate can never match one — same
+        // as the persisted receipts it emulates — so skip the op scan
+        // entirely. This is what kept p:-filtered global searches from
+        // grinding through one store query per op in the window (#33).
+        if (!sourcePredicatesFeasible(request.predicates())) {
+            return List.of();
+        }
         List<EventRecord> out = new ArrayList<>();
         for (EventRecord candidate : findOps(request)) {
+            // Expansion is one store query per op; once the caller's
+            // limit is satisfiable the rest only add rows the merge
+            // would truncate anyway. Newest ops expand first, matching
+            // the default sort's bias.
+            if (out.size() >= request.limit()) {
+                break;
+            }
             if (!(candidate instanceof RollbackOpRecord op) || op.reference() == null) {
                 continue;
             }
@@ -75,9 +90,93 @@ public final class RolledSynthesis {
             } catch (RuntimeException ex) {
                 continue; // unreadable blob — skip the op, never the search
             }
+            if (!boxesIntersectRequest(ref, request.predicates())) {
+                continue; // op landed entirely outside the searched area
+            }
             expandOp(request, op, ref, out);
         }
         return out;
+    }
+
+    /**
+     * False when the request's top-level predicates can never match a
+     * synthesized record (which has playerId/playerName == null). Only
+     * positive forms prune; Not(...) over a source predicate matches an
+     * environment source and stays feasible.
+     */
+    private static boolean sourcePredicatesFeasible(List<QueryPredicate> predicates) {
+        for (QueryPredicate predicate : predicates) {
+            if (isPositiveSourcePlayerPredicate(predicate)) {
+                return false;
+            }
+            if (predicate instanceof QueryPredicate.Or or
+                    && !or.predicates().isEmpty()
+                    && or.predicates().stream().allMatch(RolledSynthesis::isPositiveSourcePlayerPredicate)) {
+                // p:<unresolved-name> parses to Or(byId, byName) — every
+                // branch targets the player source, so none can match.
+                return false;
+            }
+            if (predicate instanceof QueryPredicate.And and
+                    && !sourcePredicatesFeasible(and.predicates())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isPositiveSourcePlayerPredicate(QueryPredicate predicate) {
+        String field = switch (predicate) {
+            case QueryPredicate.Eq eq -> eq.field();
+            case QueryPredicate.In in -> in.field();
+            default -> null;
+        };
+        return field != null
+                && (field.equals("source.playerId") || field.equals("source.playerName"));
+    }
+
+    /**
+     * False when the request constrains location to a box that misses
+     * every bounding box the operation recorded (v2 references). v1
+     * references carry no boxes and always expand.
+     */
+    private static boolean boxesIntersectRequest(UndoReferenceBson.Reference ref,
+                                                 List<QueryPredicate> predicates) {
+        if (ref.boxes() == null || ref.boxes().isEmpty()) {
+            return true;
+        }
+        long[] xRange = coordRange(predicates, "location.x");
+        long[] zRange = coordRange(predicates, "location.z");
+        if (xRange == null && zRange == null) {
+            return true; // unbounded request — every op is in scope
+        }
+        for (UndoReferenceBson.WorldBox box : ref.boxes()) {
+            boolean xOk = xRange == null
+                    || (box.maxX() >= xRange[0] && box.minX() <= xRange[1]);
+            boolean zOk = zRange == null
+                    || (box.maxZ() >= zRange[0] && box.minZ() <= zRange[1]);
+            if (xOk && zOk) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static long @Nullable [] coordRange(List<QueryPredicate> predicates, String field) {
+        for (QueryPredicate predicate : predicates) {
+            if (predicate instanceof QueryPredicate.Range range
+                    && field.equals(range.field())
+                    && range.lowerInclusive() instanceof Number lo
+                    && range.upperInclusive() instanceof Number hi) {
+                return new long[]{lo.longValue(), hi.longValue()};
+            }
+            if (predicate instanceof QueryPredicate.And and) {
+                long[] nested = coordRange(and.predicates(), field);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
     }
 
     private List<EventRecord> findOps(QueryRequest request) {
