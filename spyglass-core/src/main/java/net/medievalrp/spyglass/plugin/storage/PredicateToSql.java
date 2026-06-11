@@ -55,10 +55,20 @@ final class PredicateToSql {
         return sql.toString();
     }
 
+    // v2 id column is the EventIds sequence; UUID literals aimed at it
+    // map through EventIds so Eq("id", uuid) keeps working (#44).
+    private static Object mapIdValue(String field, Object value) {
+        if ("id".equals(field) && value instanceof java.util.UUID uuid) {
+            return net.medievalrp.spyglass.api.util.EventIds.sequenceOf(uuid);
+        }
+        return value;
+    }
+
     private String translate(QueryPredicate predicate) {
         return switch (predicate) {
-            case QueryPredicate.Eq eq -> translateEq(eq.field(), eq.value());
-            case QueryPredicate.In in -> translateIn(in.field(), in.values());
+            case QueryPredicate.Eq eq -> translateEq(eq.field(), mapIdValue(eq.field(), eq.value()));
+            case QueryPredicate.In in -> translateIn(in.field(),
+                    in.values().stream().map(v -> mapIdValue(in.field(), v)).toList());
             case QueryPredicate.Range range -> translateRange(range);
             case QueryPredicate.Exists exists -> translateExists(exists.field(), exists.expected());
             case QueryPredicate.Not not -> "(NOT " + translate(not.predicate()) + ")";
