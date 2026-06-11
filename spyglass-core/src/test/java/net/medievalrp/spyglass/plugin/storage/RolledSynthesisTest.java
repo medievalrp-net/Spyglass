@@ -36,6 +36,7 @@ class RolledSynthesisTest {
      */
     private static final class MemoryStore implements RecordStore {
         final List<EventRecord> rows = new ArrayList<>();
+        int queryCount;
 
         @Override
         public void save(List<EventRecord> records) {
@@ -44,6 +45,7 @@ class RolledSynthesisTest {
 
         @Override
         public QueryResult query(QueryRequest request) {
+            queryCount++;
             List<EventRecord> matched = rows.stream()
                     .filter(r -> PredicateEvaluator.matchesAll(request.predicates(), r))
                     .limit(request.limit())
@@ -183,4 +185,87 @@ class RolledSynthesisTest {
         UUID second = synthesis.synthesize(search).get(0).id();
         assertThat(first).isEqualTo(second);
     }
+    @Test
+    void positivePlayerFilterSkipsSynthesisWithoutAnyStoreQuery() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1),
+                op(coveredQuery(), "ROLLBACK", OP_TIME)));
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        QueryRequest request = new QueryRequest(List.of(
+                new QueryPredicate.Eq("source.playerId", GRIEFER)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 100,
+                EnumSet.of(Flag.NO_GROUP), false);
+        List<EventRecord> out = synthesis.synthesize(request);
+
+        assertThat(out).isEmpty();
+        assertThat(store.queryCount)
+                .as("a p:-filtered request must not pay the op scan (#33)")
+                .isZero();
+    }
+
+    @Test
+    void negatedPlayerFilterStaysFeasible() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1),
+                op(coveredQuery(), "ROLLBACK", OP_TIME)));
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        QueryRequest request = new QueryRequest(List.of(
+                new QueryPredicate.Not(new QueryPredicate.Eq("source.playerId", GRIEFER))),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 100,
+                EnumSet.of(Flag.NO_GROUP), false);
+        List<EventRecord> out = synthesis.synthesize(request);
+
+        assertThat(out)
+                .as("Not(p:) matches the environment source; synthesis must run")
+                .isNotEmpty();
+    }
+
+    @Test
+    void opOutsideTheSearchedBoxIsNotExpanded() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1),
+                op(coveredQuery(), "ROLLBACK", OP_TIME)));   // box spans x 0..10
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        QueryRequest farAway = new QueryRequest(List.of(
+                new QueryPredicate.Range("location.x", 5000, 5016),
+                new QueryPredicate.Range("location.z", -16, 16)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 100,
+                EnumSet.of(Flag.NO_GROUP), false);
+        List<EventRecord> out = synthesis.synthesize(farAway);
+
+        assertThat(out).isEmpty();
+        assertThat(store.queryCount)
+                .as("only the op scan runs; the op expansion is pruned by its box")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void expansionStopsOnceTheLimitIsFilled() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1),
+                op(coveredQuery(), "ROLLBACK", OP_TIME),
+                op(coveredQuery(), "ROLLBACK", OP_TIME)));
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        QueryRequest limited = new QueryRequest(List.of(),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 1,
+                EnumSet.of(Flag.NO_GROUP), false);
+        List<EventRecord> out = synthesis.synthesize(limited);
+
+        assertThat(out).hasSize(1);
+        assertThat(store.queryCount)
+                .as("op scan + exactly one expansion for limit=1")
+                .isEqualTo(2);
+    }
+
+    private static QueryRequest coveredQuery() {
+        return new QueryRequest(List.of(
+                new QueryPredicate.Eq("source.playerId", GRIEFER)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 10000,
+                EnumSet.of(Flag.NO_GROUP), false);
+    }
+
 }
