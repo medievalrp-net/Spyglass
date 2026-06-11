@@ -54,6 +54,8 @@ public final class ChunkDirectWriter {
     private static Method levelChunkSetUnsaved;
     private static Method sectionSetBlockState;
     private static Method craftBlockDataGetState;
+    private static Method sectionGetBlockState;
+    private static Method craftBlockDataFromData;
     // Light engine bits — optional. If lookup fails the writer still
     // works; the chunk packet just carries stale light data and the
     // client briefly sees wrong lighting until the engine catches up.
@@ -137,6 +139,66 @@ public final class ChunkDirectWriter {
         private Object resolveNmsState(BlockData bd) {
             try {
                 return craftBlockDataGetState.invoke(bd);
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+
+        /**
+         * Expected-state check for the parallel apply (#27). NMS block
+         * states are interned, so identity against the section's current
+         * entry is exactly material+blockData equality — the same
+         * semantics as the slow path's snapshot compare — with no
+         * per-block allocation.
+         *
+         * @return 1 = current state equals {@code expected}, 0 = it
+         *         differs, -1 = unreadable (caller writes anyway, the
+         *         pre-#27 behavior).
+         */
+        public int currentStateMatches(int x, int y, int z, BlockData expected) {
+            if (sectionGetBlockState == null) {
+                return -1;
+            }
+            try {
+                int sectionIndex = (y >> 4) - minSection;
+                if (sectionIndex != lastSectionIndex) {
+                    lastSection = levelChunkGetSection.invoke(levelChunk, sectionIndex);
+                    lastSectionIndex = sectionIndex;
+                }
+                if (lastSection == null) {
+                    return -1;
+                }
+                Object expectedNms = NMS_STATE_CACHE.computeIfAbsent(expected, this::resolveNmsState);
+                if (expectedNms == null) {
+                    return -1;
+                }
+                Object current = sectionGetBlockState.invoke(lastSection, x & 15, y & 15, z & 15);
+                return current == expectedNms ? 1 : 0;
+            } catch (Throwable t) {
+                return -1;
+            }
+        }
+
+        /**
+         * The current block's data, for mismatch reporting only — this
+         * allocates a Bukkit wrapper, so it must stay off the per-block
+         * hot path. Null when unreadable.
+         */
+        public BlockData readBlockData(int x, int y, int z) {
+            if (sectionGetBlockState == null || craftBlockDataFromData == null) {
+                return null;
+            }
+            try {
+                int sectionIndex = (y >> 4) - minSection;
+                if (sectionIndex != lastSectionIndex) {
+                    lastSection = levelChunkGetSection.invoke(levelChunk, sectionIndex);
+                    lastSectionIndex = sectionIndex;
+                }
+                if (lastSection == null) {
+                    return null;
+                }
+                Object current = sectionGetBlockState.invoke(lastSection, x & 15, y & 15, z & 15);
+                return current == null ? null : (BlockData) craftBlockDataFromData.invoke(null, current);
             } catch (Throwable t) {
                 return null;
             }
@@ -331,9 +393,23 @@ public final class ChunkDirectWriter {
             // safe path). We're on the main thread so either works.
             sectionSetBlockState = findMethod(sectionClass, "setBlockState",
                     int.class, int.class, int.class, blockStateClass);
+            // getBlockState(int,int,int) — palette read used by the
+            // expected-state check (#27). Best-effort: when missing the
+            // check degrades to write-without-compare, never to a crash.
+            try {
+                sectionGetBlockState = findMethod(sectionClass, "getBlockState",
+                        int.class, int.class, int.class);
+            } catch (NoSuchMethodException ignored) {
+                sectionGetBlockState = null;
+            }
 
             Class<?> craftBlockData = Class.forName("org.bukkit.craftbukkit.block.data.CraftBlockData");
             craftBlockDataGetState = craftBlockData.getMethod("getState");
+            try {
+                craftBlockDataFromData = craftBlockData.getMethod("fromData", blockStateClass);
+            } catch (NoSuchMethodException ignored) {
+                craftBlockDataFromData = null;
+            }
 
             // Light engine — best-effort. checkBlock(BlockPos) re-evaluates
             // light at that position. Without this, the chunk-resender
