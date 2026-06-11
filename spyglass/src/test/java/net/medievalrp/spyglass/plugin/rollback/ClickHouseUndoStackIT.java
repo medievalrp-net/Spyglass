@@ -76,13 +76,24 @@ class ClickHouseUndoStackIT {
                 new BlockLocation(WORLD, "world", x, 64, 0), stone, air);
     }
 
+    // undo_history has a 1-day delete TTL and ClickHouse drops expired
+    // rows as early as insert-part formation — a hardcoded created_at
+    // here was a time bomb that started failing the suite the moment
+    // UTC crossed midnight past the literal's day. Stay relative to the
+    // wall clock, shared across rows so chunks of one operation keep
+    // the legacy writer's single-timestamp shape.
+    private static final String LEGACY_CREATED_AT = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+            .withZone(java.time.ZoneOffset.UTC)
+            .format(java.time.Instant.now().minusSeconds(300));
+
     private void insertLegacyRow(UUID op, UUID player, int chunkIndex, int chunkCount,
                                  String payloadBase64) throws Exception {
         String insert = "INSERT INTO `spyglass_it`.`undo_history` "
                 + "(operation_id, chunk_index, chunk_count, player_id, created_at, "
                 + "operation_type, inverse_effects, deleted) VALUES "
                 + "(toUUID('" + op + "'), " + chunkIndex + ", " + chunkCount + ", "
-                + "toUUID('" + player + "'), '2026-06-10 00:00:00.000', 'ROLLBACK', '"
+                + "toUUID('" + player + "'), '" + LEGACY_CREATED_AT + "', 'ROLLBACK', '"
                 + payloadBase64 + "', 0)";
         store.client().execute(insert).get(30, TimeUnit.SECONDS).close();
     }

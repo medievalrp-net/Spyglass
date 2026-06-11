@@ -69,6 +69,16 @@ class MongoRecordStoreIT {
         }
     }
 
+    @org.junit.jupiter.api.BeforeEach
+    void wipe() {
+        // Same pattern as the ClickHouse IT: tests previously coexisted
+        // only by method-order luck (assertions like "exactly one break
+        // record" against a shared collection). Wiping between tests
+        // removes the cross-test data dependency.
+        rawClient.getDatabase("IT").getCollection("EventRecords")
+                .deleteMany(new org.bson.Document());
+    }
+
     @Test
     void savesAndQueriesAllRecordTypes() {
         Instant now = Instant.parse("2026-04-23T12:00:00Z");
@@ -431,5 +441,75 @@ class MongoRecordStoreIT {
                 List.of(new QueryPredicate.Eq("event", "break")),
                 Sort.NEWEST_FIRST, 5, EnumSet.noneOf(Flag.class), false);
         assertThat(store.query(limited).records()).hasSize(5);
+    }
+
+    @Test
+    void streamRollbackMatchesQueryPageWindowForWindow() {
+        // #19 parity: Mongo serves the rollback stream through the
+        // RecordStore default (streamRollback delegating to queryPage),
+        // so the stream must walk identical records and cursor steps —
+        // pinned here so a future native override can't drift.
+        UUID streamer = UUID.fromString("99999999-9999-9999-9999-999999999999");
+        Instant base = Instant.now().minusSeconds(600);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        Origin origin = Origin.player();
+        Source source = Source.player(streamer, "Streamer");
+        List<EventRecord> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 21; i++) {
+            many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                    base.plusSeconds(i), base.plusSeconds(7200),
+                    origin, source,
+                    new BlockLocation(WORLD, "world", i, 64, -i),
+                    "test", "STONE", stone, air));
+        }
+        for (int i = 0; i < 3; i++) {
+            many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                    base.plusSeconds(30), base.plusSeconds(7200),
+                    origin, source,
+                    new BlockLocation(WORLD, "world", 100 + i, 64, 0),
+                    "test", "STONE", stone, air));
+        }
+        store.save(many);
+
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("source.playerId", streamer)),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        List<UUID> pagedIds = new java.util.ArrayList<>();
+        QueryPage.Cursor pageCursor = null;
+        int pageRounds = 0;
+        while (true) {
+            QueryPage page = store.queryPage(request, pageCursor, 7);
+            page.records().forEach(r -> pagedIds.add(r.id()));
+            pageRounds++;
+            if (page.next() == null) {
+                break;
+            }
+            pageCursor = page.next();
+        }
+
+        List<UUID> streamedIds = new java.util.ArrayList<>();
+        QueryPage.Cursor streamCursor = null;
+        int streamRounds = 0;
+        while (true) {
+            QueryPage.Cursor next = store.streamRollback(
+                    request, streamCursor, 7, r -> streamedIds.add(r.id()));
+            streamRounds++;
+            if (next == null) {
+                break;
+            }
+            streamCursor = next;
+        }
+
+        assertThat(streamedIds)
+                .hasSize(24)
+                .doesNotHaveDuplicates()
+                .containsExactlyElementsOf(pagedIds);
+        assertThat(streamRounds).isEqualTo(pageRounds);
     }
 }

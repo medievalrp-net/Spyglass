@@ -500,6 +500,14 @@ public final class ClickHouseRecordStore implements RecordStore {
 
     @Override
     public QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
+        List<EventRecord> records = new ArrayList<>(Math.min(pageSize, 4096));
+        QueryPage.Cursor next = streamRollback(request, cursor, pageSize, records::add);
+        return new QueryPage(records, next);
+    }
+
+    @Override
+    public QueryPage.Cursor streamRollback(QueryRequest request, QueryPage.Cursor cursor,
+                                           int windowLimit, RecordSink sink) {
         // Keyset-paginated streaming read. Memory is O(pageSize) per
         // call instead of O(matchSet) — required for million-row
         // rollbacks that would otherwise OOM the JVM during the single
@@ -545,7 +553,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         }
         sql.append(" ORDER BY occurred ").append(newestFirst ? "DESC" : "ASC")
                 .append(", id ").append(newestFirst ? "DESC" : "ASC")
-                .append(" LIMIT ").append(pageSize);
+                .append(" LIMIT ").append(windowLimit);
         // CH defaults max_memory_usage to 1 GiB on Pelican-managed
         // installs. A 10M-row LIMIT with sort blows past that during
         // MergeSortingTransform / ParallelFormattingOutputFormat. Raise
@@ -570,17 +578,15 @@ public final class ClickHouseRecordStore implements RecordStore {
         // post-decode List<EventRecord> instead of the heavy
         // intermediate set. Memory at 1M rows drops from ~3 GB to
         // ~100-200 MB.
-        List<EventRecord> records;
         Instant lastOccurred = null;
         UUID lastId = null;
         int rowCount = 0;
         try (Records rows = client.queryRecords(sql.toString()).get()) {
-            records = new ArrayList<>(Math.min(pageSize, 4096));
             for (GenericRecord row : rows) {
                 rowCount++;
                 EventRecord record = decodeRow(row, true);
                 if (record != null) {
-                    records.add(record);
+                    sink.accept(record);
                 }
                 // Always advance the cursor — even if decodeRow returned
                 // null (unknown event). Skipping over an undecodable row
@@ -602,10 +608,9 @@ public final class ClickHouseRecordStore implements RecordStore {
             // throws on an unrecoverable client-side IO problem.
             throw new RuntimeException("ClickHouse paginated query close failed: " + ex.getMessage(), ex);
         }
-        QueryPage.Cursor next = (rowCount == pageSize && lastOccurred != null)
+        return (rowCount == windowLimit && lastOccurred != null)
                 ? new QueryPage.Cursor(lastOccurred, lastId)
                 : null;
-        return new QueryPage(records, next);
     }
 
     private static String chTimestamp(Instant when) {

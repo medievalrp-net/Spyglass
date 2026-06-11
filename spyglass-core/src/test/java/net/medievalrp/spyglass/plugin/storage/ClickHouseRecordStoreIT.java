@@ -296,4 +296,76 @@ class ClickHouseRecordStoreIT {
                 .as("ReplacingMergeTree must collapse duplicate ids on merge")
                 .hasSize(1);
     }
+
+    @Test
+    void streamRollbackMatchesQueryPageWindowForWindow() {
+        // #19: the rollback engine reads via streamRollback. It must
+        // walk the result set in the same order and the same cursor
+        // steps as queryPage — no row duplicated or skipped across a
+        // window boundary — so swapping the read entry point can never
+        // change what a rollback sees. Includes a same-instant cluster
+        // to exercise the (occurred, id) keyset tie-break.
+        Instant base = Instant.now().minusSeconds(600);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        List<EventRecord> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 21; i++) {
+            many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                    base.plusSeconds(i), base.plusSeconds(7200),
+                    origin, source,
+                    new BlockLocation(WORLD, "world", i, 64, -i),
+                    "test", "STONE", stone, air));
+        }
+        for (int i = 0; i < 3; i++) {
+            many.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                    base.plusSeconds(30), base.plusSeconds(7200),
+                    origin, source,
+                    new BlockLocation(WORLD, "world", 100 + i, 64, 0),
+                    "test", "STONE", stone, air));
+        }
+        store.save(many);
+        flushAsyncInserts();
+
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "break")),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        List<UUID> pagedIds = new java.util.ArrayList<>();
+        QueryPage.Cursor pageCursor = null;
+        int pageRounds = 0;
+        while (true) {
+            QueryPage page = store.queryPage(request, pageCursor, 7);
+            page.records().forEach(r -> pagedIds.add(r.id()));
+            pageRounds++;
+            if (page.next() == null) {
+                break;
+            }
+            pageCursor = page.next();
+        }
+
+        List<UUID> streamedIds = new java.util.ArrayList<>();
+        QueryPage.Cursor streamCursor = null;
+        int streamRounds = 0;
+        while (true) {
+            QueryPage.Cursor next = store.streamRollback(
+                    request, streamCursor, 7, r -> streamedIds.add(r.id()));
+            streamRounds++;
+            if (next == null) {
+                break;
+            }
+            streamCursor = next;
+        }
+
+        assertThat(streamedIds)
+                .hasSize(24)
+                .doesNotHaveDuplicates()
+                .containsExactlyElementsOf(pagedIds);
+        assertThat(streamRounds).isEqualTo(pageRounds);
+    }
 }

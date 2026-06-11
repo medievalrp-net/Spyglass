@@ -96,6 +96,10 @@ class CommandListenerTest {
         when(world.getName()).thenReturn("world");
         Location location = new Location(world, 5, 64, 5);
         when(player.getLocation()).thenReturn(location);
+        // Location holds the world weakly — keep a strong path from the
+        // player mock so a mid-test GC can't collect it (see
+        // ChatListenerTest.mockPlayer).
+        when(player.getWorld()).thenReturn(world);
         return player;
     }
 
