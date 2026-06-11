@@ -69,6 +69,10 @@ Root: `/spyglass`. Short alias: `/sg`.
 | `-ex` | `-extended` | Show extra detail columns |
 | `-nod:<keys>` | `-nodefault:` | Suppress defaults (e.g. `-nod:r,t`) |
 
+## Explosion grief
+
+Player-lit TNT records the igniter as the source — `p:<griefer>` searches and rollbacks cover the crater directly. Chained, dispensed, or redstone-primed TNT and mob explosions (creeper, wither) are entity-attributed: sweep those with `c:tnt`, `c:creeper`, etc.
+
 ## Time formats
 
 `30s`, `15m`, `4h`, `2d`, `1w`, `1mo`. Combine: `t:1d12h`.
