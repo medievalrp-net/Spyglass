@@ -217,6 +217,10 @@ public final class SpyglassPlugin extends JavaPlugin {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toUnmodifiableSet());
 
+        // Bind the per-server id stream before any listener can mint a
+        // record id (#44): instance bits keep sequences collision-free
+        // when multiple backends share one store.
+        net.medievalrp.spyglass.api.util.EventIds.bindInstance(config.server().name().hashCode());
         RecordingSupport support = new RecordingSupport(config.storage().retention(), config.server().name());
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
 

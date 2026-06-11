@@ -100,8 +100,21 @@ final class ClickHouseSchema {
             execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                     + " MODIFY COLUMN " + coordinate + " " + type + " CODEC(Delta, ZSTD(1))");
         }
-        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
-                + " MODIFY COLUMN id UUID CODEC(ZSTD(1))");
+
+        // Storage v2 (#44) cannot be reached by ALTER from the v1
+        // layout (the id column changes type and the sort key keys on
+        // it). Refuse loudly rather than migrate destructively: the
+        // operator renames the old table, lets ensure() create the v2
+        // shape, and backfills with INSERT SELECT at their own pace.
+        if (hasLegacyEventRecords(client, database, eventsTable)) {
+            throw new IllegalStateException(
+                    "Spyglass storage v2: existing table " + qualifiedTable(database, eventsTable)
+                    + " uses the v1 UUID id layout. Rename it (RENAME TABLE ... TO event_records_v1),"
+                    + " restart so the v2 table is created, then backfill with"
+                    + " INSERT INTO ... SELECT * REPLACE(sipHash64(toString(id)) AS id) FROM event_records_v1"
+                    + " or start fresh. Refusing to start against the v1 layout.");
+        }
+
         // One-shot migration: pre-chunked undo_history shape lacked
         // operation_id / chunk_index / chunk_count. ORDER BY changed,
         // so ALTER can't reshape the key — drop and recreate. Worst
@@ -120,6 +133,20 @@ final class ClickHouseSchema {
      * operation_id} column). Used by {@link #ensure} to trigger the
      * one-shot drop+recreate migration.
      */
+    /** v1 event_records stored ids as UUID; v2 stores the EventIds sequence. */
+    private static boolean hasLegacyEventRecords(Client client, String database, String table) {
+        String sql = "SELECT count() AS hits FROM system.columns "
+                + "WHERE database = '" + database.replace("'", "\\'") + "' "
+                + "  AND table = '" + table.replace("'", "\\'") + "' "
+                + "  AND name = 'id' AND type = 'UUID'";
+        try {
+            var rows = client.queryAll(sql);
+            return !rows.isEmpty() && rows.get(0).getLong("hits") > 0;
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
     private static boolean hasLegacyUndoHistory(Client client, String database) {
         // system.columns is queryable without privileged grants on a
         // self-managed instance; a fresh install returns 0 in `total`
@@ -182,7 +209,13 @@ final class ClickHouseSchema {
     private static String buildEventRecordsTable(String database, String table) {
         return "CREATE TABLE IF NOT EXISTS " + qualifiedTable(database, table) + " (\n"
                 // --- Common (every record) ---
-                + "    id UUID CODEC(ZSTD(1)),\n"
+                // Storage v2 (#44): the id is the 62-bit EventIds
+                // sequence (monotonic per instance), not a UUID — Delta
+                // collapses the column to ~1-2 B/row where even v7
+                // UUIDs carried 10 incompressible random bytes. The
+                // public API still speaks UUID; EventIds maps both ways
+                // at this boundary.
+                + "    id UInt64 CODEC(Delta, ZSTD(1)),\n"
                 + "    event LowCardinality(String),\n"
                 + "    occurred DateTime64(3, 'UTC'),\n"
                 + "    expires_at DateTime64(3, 'UTC'),\n"
@@ -270,14 +303,15 @@ final class ClickHouseSchema {
                 // --- Skip indexes ---
                 + "    INDEX idx_loc_xz (location_x, location_z) TYPE minmax GRANULARITY 4,\n"
                 + "    INDEX idx_world location_world_id TYPE bloom_filter GRANULARITY 4,\n"
-                // --- Projection: by_player gives player-scoped lookups
-                //     a primary-key seek instead of a near-full scan.
-                //     id is in the projection sort key so the projection
-                //     dedups in lockstep with the parent table. ---
-                + "    PROJECTION by_player (\n"
-                + "        SELECT *\n"
-                + "        ORDER BY (source_player_id, occurred, id)\n"
-                + "    )\n"
+                // Storage v2 (#44): player-scoped lookups skip granules
+                // via a bloom filter instead of the old by_player
+                // projection — the projection was a full second sorted
+                // copy of the table (measured costlier than the base
+                // table itself). Every player query already carries a
+                // time bound, so granule skipping + the occurred sort
+                // key bounds the read. Deep-history (150M+ row) latency
+                // is re-validated as part of the v2 rollout.
+                + "    INDEX idx_player source_player_id TYPE bloom_filter(0.01) GRANULARITY 4\n"
                 // ReplacingMergeTree (no version column) keeps the most-
                 // recently-inserted row for each unique sort-key tuple.
                 // Sort key includes id so two replays of the same record
@@ -288,14 +322,7 @@ final class ClickHouseSchema {
                 + "PARTITION BY toYYYYMM(occurred)\n"
                 + "ORDER BY (event, occurred, id)\n"
                 + "TTL toDateTime(expires_at)\n"
-                // deduplicate_merge_projection_mode = 'rebuild' lets the
-                // by_player projection coexist with ReplacingMergeTree on
-                // CH 24.8+. Without it the server refuses the projection
-                // (SUPPORT_IS_DISABLED, code 344) since dedup-during-merge
-                // and projection rebuild interact non-trivially. 'rebuild'
-                // re-projects the deduplicated parent on every part merge.
-                + "SETTINGS index_granularity = 8192,"
-                + " deduplicate_merge_projection_mode = 'rebuild'";
+                + "SETTINGS index_granularity = 8192";
     }
 
     // ---------------------------------------------------------------
