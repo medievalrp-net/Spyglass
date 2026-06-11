@@ -9,9 +9,11 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Death record. Rollback re-spawns the entity from its captured NBT; note that
- * NBT schema is version-brittle across Minecraft releases, so rollback across
- * a server upgrade may fail silently.
+ * Death record. Rollback re-spawns the entity from its captured NBT when a
+ * snapshot exists, falling back to a fresh spawn of {@link #entityType()}
+ * otherwise (#29 — Paper refuses to serialize dying entities, so most death
+ * records carry no NBT). NBT, when present, is version-brittle across
+ * Minecraft releases; a failed deserialize also falls back to by-type.
  */
 public record EntityDeathRecord(
         UUID id,
