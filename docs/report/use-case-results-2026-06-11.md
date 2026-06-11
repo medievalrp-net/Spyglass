@@ -9,6 +9,14 @@ First full execution of the [comparison catalog](../../regression/use-cases.md) 
 
 Every Spyglass failure is a filed issue; every CoreProtect failure is reproduced evidence, not an assumption.
 
+## Post-fix re-run (same day)
+
+All eight findings were fixed and merged the same session (PRs [#36](https://github.com/medievalrp-net/Spyglass/pull/36)–[#43](https://github.com/medievalrp-net/Spyglass/pull/43), issues #27–#34 closed). The twelve previously-failing cases re-ran green on the merged build — A5, G3 (#27 expected-state check), C1 (#28 deposit pair), D1 (#29 by-type resurrection), G13 + H7 (#30 negation), G4 (#31 undo unwind), H3–H5 (#32 CH item filters; H5 needed one flake re-run), H11 (#33 synthesis pruning), F2 (#34 igniter attribution).
+
+**Post-fix suite score: Spyglass 47 pass / 0 fail / 59 manual.** CoreProtect's four reproduced failures stand.
+
+Perf re-validated after the hot-path change (#27 adds one palette read per block): 2M rollback **8.0 s** / undo 7.9 s (pre-fix 7.7/7.8 — within run noise), all 2,000,376 effects applied (no false skips on uncontended grief), worst tick 88 ms, in-window GC ≤237 ms transient on a store now ~170M rows; CoreProtect same-run 11.4/11.9 s with 286/358 ms ticks.
+
 ## Spyglass findings (filed)
 
 | Issue | Cases | Finding |
