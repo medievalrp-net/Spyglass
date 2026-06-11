@@ -13,8 +13,10 @@ Measured side-by-side with CoreProtect (ClickHouse edition) on the same server, 
 | TPS during the operation | **20.0 flat** | dips to 11–12 |
 | Worst single tick | **88 ms** | 286–358 ms |
 | Store growth per rollback | **+1 row** | re-logs rolled blocks |
+| Disk per stored event | **5.0 bytes** | 6.4 bytes |
+| Disk per 2M-event cycle (ingest + rollback + undo) | **~9.5 MiB** | ~15–16 MiB |
 
-Speed does not degrade with history depth: keyset pagination and a by-player projection keep rollback reads flat at 150 M+ stored rows. Behavioral parity is verified by a [106-case comparison suite](regression/use-cases.md) executed against both plugins on a live server — current score 47 automated passes, 0 failures ([results](docs/report/use-case-results-2026-06-11.md)).
+Speed does not degrade with history depth: keyset pagination keeps rollback reads flat at 150 M+ stored rows, and per-player search routes through a bloom-filter skip index. Behavioral parity is verified by a [106-case comparison suite](regression/use-cases.md) executed against both plugins on a live server — current score 47 automated passes, 0 failures ([results](docs/report/use-case-results-2026-06-11.md)).
 
 ## Status
 
@@ -244,7 +246,7 @@ Event flow, end to end:
 1. Bukkit listeners (`spyglass/.../listener/`, ~40 files) hook every interesting event at `EventPriority.MONITOR, ignoreCancelled=true`. Each listener builds an immutable `EventRecord` and hands it to `Recorder.record()`.
 2. `AsyncRecorder` (`spyglass/.../pipeline/AsyncRecorder.java`) puts the record onto an unbounded `LinkedBlockingDeque` and returns immediately. No I/O on the main thread. A `RecordCommittedEvent` is published synchronously to the calling thread so reactive integrations can hook it without coupling to the recorder.
 3. A virtual-thread drain (`spyglass-drain`) polls the queue, batches up to 10 000 records, optionally fsyncs the batch to a per-batch WAL file (`<plugindata>/wal/pending/<uuid>.wal`), then pushes the batch to the configured `RecordStore`. Save failures retry with exponential backoff; the WAL file is deleted only after the DB ack.
-4. The store is either `MongoRecordStore` (single polymorphic collection, codec-dispatched on the `event` field) or `ClickHouseRecordStore` (wide flat table, ReplacingMergeTree, time-ordered UUIDv7 ids, delta-coded coordinate columns, deep snapshots stored as ZSTD-compressed BSON blobs). Both implement keyset pagination so the rollback engine can stream million-row result sets without OOM.
+4. The store is either `MongoRecordStore` (single polymorphic collection, codec-dispatched on the `event` field) or `ClickHouseRecordStore` (wide flat table, ReplacingMergeTree, delta-coded sequence ids and coordinates, a bloom-filter player index, deep snapshots stored as ZSTD-compressed BSON blobs). Both implement keyset pagination so the rollback engine can stream million-row result sets without OOM.
 5. Queries flow the other way: `QueryStringParser` parses `key:value` tokens against `QueryParamHandler`s registered on `SpyglassApiImpl`, builds a `QueryRequest`, and hands it to the store. Mongo uses `PredicateToBson`; ClickHouse uses `PredicateToSql` (values inlined with explicit string-escaping, no user-supplied wildcards). Predicates ClickHouse cannot push down — item name / lore / enchantment paths inside the snapshot blobs — are split off and evaluated in memory against the decoded rows, bounded to a 20 000-row scan past the pushable predicates.
 
 Rollback adds a second pipeline on top of that:
@@ -259,7 +261,7 @@ Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL b
 
 ## Operations / production notes
 
-**Log volume.** A single Paper backend at typical RP load (~30 players) writes ~200-600 events/sec sustained. WorldEdit pastes and TNT bursts spike to 100k+ events/sec for short windows. At the default 4-week `storage.retention`, expect 100-300 GB on Mongo or 20-60 GB on ClickHouse — the CH schema ships time-ordered UUIDv7 ids and delta+ZSTD coordinate codecs (measured ~36% smaller than the same data under the v1.0 schema), and the synthesized rollback audit keeps rollbacks themselves from growing the store.
+**Log volume.** A single Paper backend at typical RP load (~30 players) writes ~200-600 events/sec sustained. WorldEdit pastes and TNT bursts spike to 100k+ events/sec for short windows. At the default 4-week `storage.retention`, expect 100-300 GB on Mongo or 5-15 GB on ClickHouse — the v2 schema stores delta-coded sequence ids (~0.1 B/row; the id column was 74% of v1 disk) and measured **5.0 bytes per event total against CoreProtect-ClickHouse's 6.4 on identical workloads**, with the full forensic payload intact. The synthesized rollback audit keeps rollbacks themselves from growing the store.
 
 **Retention.** A TTL index on `expires_at` ages records out automatically (Mongo runs it every 60 s; ClickHouse drops parts at merge time). `expires_at` is stamped at record time from `storage.retention`, so changing the retention only affects records written after the change - old records keep their original TTL. To force-shrink an existing log, lower the retention, then write a one-off update across the collection (Mongo) or run `OPTIMIZE TABLE ... FINAL` after the TTL fires (ClickHouse).
 
