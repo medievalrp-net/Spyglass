@@ -61,15 +61,16 @@ If you're seeing first-crossing warnings during normal play, raise the threshold
 
 ## Large rollbacks: heap, GC, and what the TPS metric hides
 
-A multi-million-block rollback is read- and GC-bound — the apply runs off-main, so the main thread stays ~90% parked and MSPT stays flat regardless. Whether it is also *freeze-free* is decided by `rollback-page-size`, which since [#17](https://github.com/medievalrp-net/Spyglass/issues/17) governs `/spyglass undo` identically (shared pipeline). Measured 2026-06-10 sweep — 2M blocks, stock Aikar flags, 6 GB heap, local ClickHouse:
+A multi-million-block rollback is read- and GC-bound — the apply runs off-main, so the main thread stays ~90% parked and MSPT stays flat regardless. Since [#19](https://github.com/medievalrp-net/Spyglass/issues/19) the engine never materializes a page of records: rows stream off the wire into small bounded effect windows (repeated block snapshots interned, at most a few windows in flight), so the old speed-vs-smoothness trade-off is gone and `rollback-page-size` is only a query-efficiency knob. [#17](https://github.com/medievalrp-net/Spyglass/issues/17) makes `/spyglass undo` ride the identical pipeline. Measured 2026-06-10 — 2M blocks, stock Aikar flags, 6 GB heap, local ClickHouse, same-run CoreProtect for reference:
 
-| `rollback-page-size` | 2M rollback / undo | player experience (worst tick + GC log) |
+| config | 2M rollback / undo | in-op GC log (worst pause, old-gen delta) |
 |---|---|---|
-| 20,000 (default) | ~20 s / ~20 s | worst tick ~32 ms, GC < 80 ms — **invisible** |
-| 400,000 | ~11 s / ~10 s | occasional 150–330 ms GC pauses; worst tick can reach ~500 ms |
-| 1,000,000 | ~7–9 s / ~10 s | occasional 250–450 ms GC pauses |
+| **default (500K page, 4K batch)** | **7.7 s / 7.8 s** | 110–122 ms pauses; old +~220 MB transient, reclaimed within seconds |
+| 1,000,000 page | 8.3 s / 7.4 s | 200–265 ms pauses; old transient ~1 GB — bigger read bursts, no speed gain |
+| pre-#19 default (20K page) | ~20 s / ~20 s | <80 ms — smooth but 2.6× slower |
+| CoreProtect, same runs | 9.4–11.6 s | 280–434 ms worst ticks, TPS 12–18 for the duration |
 
-The smoothness cliff sits **between the default and 400K**: any large page keeps ~two pages of records resident, which G1 promotes under Aikar's `MaxTenuringThreshold=1` and then evacuates mid-operation ([#19](https://github.com/medievalrp-net/Spyglass/issues/19) removes that transient, for both directions). Keep the default on player-facing servers; raise it only when finishing a huge rollback fast matters more than a few sub-half-second hitches. For reference, CoreProtect on the same runs: 9–16 s wall-clock with 250–660 ms worst ticks and TPS sag for the whole duration.
+Keep the shipped default: it is the fastest measured configuration *and* the smooth one — raising the page size past 500K only enlarges read bursts (bigger transient promotion under Aikar's `MaxTenuringThreshold=1`) without finishing sooner. Lowering it just adds keyset round trips. The apply-window size is internal and not configurable; per-window scheduling is tick-aligned, which is why the engine uses few large windows rather than many small ones.
 
 - **Undo is replay-by-reference** ([#17](https://github.com/medievalrp-net/Spyglass/issues/17)): completing a rollback/restore writes one small ledger row — the resolved query plus a time ceiling — and `/spyglass undo` re-streams the same records through the engine in the opposite direction. There is no per-effect capture, so undo adds ~zero cost to the rollback and any operation size is undoable; an undo costs about the same as the rollback it reverses. `rollback-undo-cap` is parsed but ignored.
 - **Don't trust `/mspt` averages for freeze claims.** Off-main work means a GC pause lands *between* measured ticks: the bench showed "flat 20 TPS" while the GC log recorded an 849 ms stop-the-world pause. Judge a config with the `/mspt` **max** column and the JVM GC log (`grep 'Pause Young' logs/gc*.log`) during a trial rollback — `regression/bot/compare.js` prints a WORST SINGLE TICK row for exactly this reason.
