@@ -619,22 +619,54 @@ public final class ClickHouseRecordStore implements RecordStore {
         return "toDateTime64('" + s + "." + String.format("%03d", ms) + "', 3, 'UTC')";
     }
 
-    private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
-        StringBuilder sql = new StringBuilder("SELECT ")
-                .append(includeHeavy ? fullSelect : summarySelect)
-                .append(" FROM ").append(qualifiedTable);
+    // Post-filter fallback (#32): rows scanned per query when part of
+    // the predicate tree (item.name / lore / enchants — opaque BSON on
+    // CH) must be evaluated in memory. The pushable predicates (player,
+    // time, radius, event) bound the scan in practice; this bounds it
+    // in pathology.
+    private static final int POST_FILTER_SCAN_CAP = 20_000;
 
+    private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
         List<QueryPredicate> predicates = new ArrayList<>(request.predicates());
         if (request.flags().contains(Flag.NO_CHAT)) {
             predicates.add(new QueryPredicate.Exists(RecordFields.MESSAGE, false));
         }
-        String where = predicateToSql.translate(predicates);
+
+        // Full pushdown first; on an unsupported path, split the
+        // top-level AND list into pushable SQL + an in-memory residual
+        // evaluated against the decoded records (#32). Residual fields
+        // live inside the heavy blobs, so the scan hydrates them even
+        // for summary queries.
+        String where;
+        List<QueryPredicate> residual = List.of();
+        try {
+            where = predicateToSql.translate(predicates);
+        } catch (PredicateToSql.UnsupportedPredicateException unsupported) {
+            List<QueryPredicate> pushable = new ArrayList<>();
+            List<QueryPredicate> inMemory = new ArrayList<>();
+            for (QueryPredicate predicate : predicates) {
+                try {
+                    predicateToSql.translate(List.of(predicate));
+                    pushable.add(predicate);
+                } catch (PredicateToSql.UnsupportedPredicateException ex) {
+                    inMemory.add(predicate);
+                }
+            }
+            residual = inMemory;
+            where = predicateToSql.translate(pushable);
+        }
+        boolean postFilter = !residual.isEmpty();
+        boolean hydrate = includeHeavy || postFilter;
+
+        StringBuilder sql = new StringBuilder("SELECT ")
+                .append(hydrate ? fullSelect : summarySelect)
+                .append(" FROM ").append(qualifiedTable);
         if (!where.isEmpty()) {
             sql.append(" WHERE ").append(where);
         }
         sql.append(" ORDER BY occurred ")
                 .append(request.sort() == Sort.OLDEST_FIRST ? "ASC" : "DESC");
-        sql.append(" LIMIT ").append(request.limit());
+        sql.append(" LIMIT ").append(postFilter ? POST_FILTER_SCAN_CAP : request.limit());
 
         List<GenericRecord> rows;
         try {
@@ -642,11 +674,18 @@ public final class ClickHouseRecordStore implements RecordStore {
         } catch (RuntimeException ex) {
             throw new RuntimeException("ClickHouse query failed: " + ex.getMessage(), ex);
         }
-        List<EventRecord> records = new ArrayList<>(rows.size());
+        List<EventRecord> records = new ArrayList<>(postFilter ? 64 : rows.size());
         for (GenericRecord row : rows) {
-            EventRecord record = decodeRow(row, includeHeavy);
-            if (record != null) {
-                records.add(record);
+            EventRecord record = decodeRow(row, hydrate);
+            if (record == null) {
+                continue;
+            }
+            if (postFilter && !PredicateEvaluator.matchesAll(residual, record)) {
+                continue;
+            }
+            records.add(record);
+            if (postFilter && records.size() >= request.limit()) {
+                break;
             }
         }
         List<QueryResult.RecordAggregation> aggregations =
