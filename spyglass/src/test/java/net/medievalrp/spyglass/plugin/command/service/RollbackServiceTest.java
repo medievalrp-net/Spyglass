@@ -357,6 +357,35 @@ class RollbackServiceTest {
     }
 
     @Test
+    void replayOpsNeverPushAnUndoReference() throws Exception {
+        // An undo replay consumes the popped reference; pushing a new one
+        // would make repeated /undo ping-pong on the newest op instead of
+        // unwinding the stack (#31).
+        TestFixture fixture = new TestFixture();
+        org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
+        when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(operator.getName()).thenReturn("Operator");
+        BlockBreakRecord r = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(r.location(), r.originalBlock(), r.newBlock());
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        List.of(new RollbackResult.Applied(r.rollbackEffect(), inverse))));
+        ServiceTestSupport.captureMessages(operator);
+        java.util.concurrent.atomic.AtomicBoolean consumed = new java.util.concurrent.atomic.AtomicBoolean();
+
+        fixture.subject.executeReplay(operator, sampleRequest(), RollbackMode.RESTORE,
+                "undo of abc123", () -> consumed.set(true));
+
+        assertThat(consumed).as("clean replay completion fires onDone").isTrue();
+        verify(fixture.undoStack, org.mockito.Mockito.never())
+                .pushReference(any(), any(), any());
+    }
+
+    @Test
     void pushesDecodableUndoReferenceOnSuccess() throws Exception {
         TestFixture fixture = new TestFixture();
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);

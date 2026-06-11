@@ -138,16 +138,17 @@ public final class RollbackService {
                               @org.jetbrains.annotations.Nullable
                               net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                               int initialApplied, int initialSkipped,
-                              @org.jetbrains.annotations.Nullable Runnable onDone) {
+                              @org.jetbrains.annotations.Nullable Runnable onDone,
+                              boolean replay) {
         JobContext(QueryRequest request, RollbackMode mode) {
-            this(request, mode, null, 0, 0, null);
+            this(request, mode, null, 0, 0, null, false);
         }
 
         JobContext(QueryRequest request, RollbackMode mode,
                    @org.jetbrains.annotations.Nullable
                    net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                    int initialApplied, int initialSkipped) {
-            this(request, mode, startCursor, initialApplied, initialSkipped, null);
+            this(request, mode, startCursor, initialApplied, initialSkipped, null, false);
         }
     }
 
@@ -167,7 +168,7 @@ public final class RollbackService {
                 : RollbackJob.Mode.ROLLBACK;
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operator.getUniqueId(),
                 operator.getName(), queueLabel, jobMode, Instant.now(), operator);
-        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone));
+        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true));
         resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
         int position = jobQueue.submit(job);
         if (position > 0) {
@@ -228,7 +229,8 @@ public final class RollbackService {
                             "Recorder still draining; rollback may miss the most recent events.")));
                 }
                 streamPagesAndApply(job, ctx.request(), ctx.mode(),
-                        ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped());
+                        ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped(),
+                        ctx.replay());
                 // Cancellation wins over done if the operator hit
                 // /sg rbqueue cancel mid-flight.
                 jobQueue.finish(job, job.cancelFlag.get()
@@ -255,7 +257,8 @@ public final class RollbackService {
     private void streamPagesAndApply(RollbackJob job, QueryRequest request, RollbackMode mode,
                                      @org.jetbrains.annotations.Nullable
                                      net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
-                                     int initialApplied, int initialSkipped) {
+                                     int initialApplied, int initialSkipped,
+                                     boolean replayOp) {
         CommandSender sender = job.sender;
         AtomicBoolean cancelFlag = job.cancelFlag;
         long startNanos = System.nanoTime();
@@ -518,7 +521,12 @@ public final class RollbackService {
         String reference = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
                 request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped);
         boolean undoUnavailable = false;
-        if (sender instanceof Player operator && totalApplied > 0) {
+        // Replay ops (undo) do NOT push a reference: the popped reference
+        // is consumed on clean completion, so repeated /undo unwinds the
+        // per-operator stack oldest-ward instead of ping-ponging on the
+        // newest operation (#31). Redoing an undone op is /sg restore of
+        // the same query.
+        if (!replayOp && sender instanceof Player operator && totalApplied > 0) {
             try {
                 undoStack.pushReference(operator.getUniqueId(), mode.name(), reference);
             } catch (RuntimeException ex) {
