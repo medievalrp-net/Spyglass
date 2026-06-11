@@ -105,22 +105,46 @@ public final class ContainerTransactionListener implements RecordingListener {
         String containerType = containerTarget.type();
         StoredItem before = ItemSerialization.storedItem(slot, slotItem);
 
+        // (before, after) must be the SLOT's exact state pair — the
+        // rollback effect writes `before` back only when the live slot
+        // still matches `after`. MONITOR fires before the click applies,
+        // so `after` is computed from the action (#28; a hardcoded null
+        // here made every deposit rollback skip on "slot changed").
         switch (direction) {
             case DEPOSIT -> {
+                ItemStack afterStack;
+                if (slotItem == null || slotItem.getType() == Material.AIR) {
+                    afterStack = cursor == null ? null : cursor.clone();
+                    if (afterStack != null) {
+                        afterStack.setAmount(amount);
+                    }
+                } else {
+                    afterStack = slotItem.clone();
+                    afterStack.setAmount(Math.min(slotItem.getMaxStackSize(),
+                            slotItem.getAmount() + amount));
+                }
+                StoredItem after = ItemSerialization.storedItem(slot, afterStack);
                 String target = cursor == null ? "UNKNOWN" : cursor.getType().name();
                 recorder.record(new ContainerDepositRecord(
                         support.newId(), "deposit", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
-                        location, support.serverName(), target, containerType, slot, amount, before, null));
+                        location, support.serverName(), target, containerType, slot, amount, before, after));
             }
             case WITHDRAW -> {
+                ItemStack afterStack = null;
+                if (slotItem != null && slotItem.getType() != Material.AIR
+                        && slotItem.getAmount() > amount) {
+                    afterStack = slotItem.clone();
+                    afterStack.setAmount(slotItem.getAmount() - amount);
+                }
+                StoredItem after = ItemSerialization.storedItem(slot, afterStack);
                 String target = slotItem == null ? "UNKNOWN" : slotItem.getType().name();
                 recorder.record(new ContainerWithdrawRecord(
                         support.newId(), "withdraw", occurred,
                         support.expiresAt(occurred),
                         support.playerOrigin(), support.playerSource(player),
-                        location, support.serverName(), target, containerType, slot, amount, before, null));
+                        location, support.serverName(), target, containerType, slot, amount, before, after));
             }
         }
     }
@@ -183,23 +207,26 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
         BlockLocation location = containerTarget.location();
         String containerType = containerTarget.type();
+        // A hotbar swap replaces the container slot's contents with the
+        // hotbar stack (or empties it): one (before=slotItem,
+        // after=hotbarItem) state pair shared by both records (#28).
+        StoredItem beforePair = slotHadItem ? ItemSerialization.storedItem(slot, slotItem) : null;
+        StoredItem afterPair = hotbarHadItem ? ItemSerialization.storedItem(slot, hotbarItem) : null;
         if (slotHadItem) {
-            StoredItem stored = ItemSerialization.storedItem(slot, slotItem);
             recorder.record(new ContainerWithdrawRecord(
                     support.newId(), "withdraw", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, support.serverName(), slotItem.getType().name(), containerType, slot,
-                    slotItem.getAmount(), stored, null));
+                    slotItem.getAmount(), beforePair, afterPair));
         }
         if (hotbarHadItem) {
-            StoredItem stored = ItemSerialization.storedItem(slot, hotbarItem);
             recorder.record(new ContainerDepositRecord(
                     support.newId(), "deposit", occurred,
                     support.expiresAt(occurred),
                     support.playerOrigin(), support.playerSource(player),
                     location, support.serverName(), hotbarItem.getType().name(), containerType, slot,
-                    hotbarItem.getAmount(), null, stored));
+                    hotbarItem.getAmount(), beforePair, afterPair));
         }
     }
 
