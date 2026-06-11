@@ -85,6 +85,12 @@ class RollbackServiceTest {
             // explicitly per-case.
             when(store.queryPage(any(QueryRequest.class), any(), org.mockito.ArgumentMatchers.anyInt()))
                     .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(), null));
+            // The service reads via the streamRollback default method,
+            // which delegates to queryPage — run the real default so the
+            // per-test queryPage stubs keep driving the pipeline.
+            when(store.streamRollback(any(QueryRequest.class), any(),
+                    org.mockito.ArgumentMatchers.anyInt(), any()))
+                    .thenCallRealMethod();
             RollbackJobQueue queue = new RollbackJobQueue();
             // Test resume store points at a temp dir — no real
             // persistence is needed for these tests, but the
@@ -180,6 +186,78 @@ class RollbackServiceTest {
         // Summary message matches v1's " N reversals" format when nothing was skipped.
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void smallApplyWindowSplitsOnePageIntoMultipleApplies() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord a = record();
+        BlockBreakRecord b = record();
+        BlockBreakRecord c = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b, c), null));
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    List<RollbackEffect> effects = inv.getArgument(0);
+                    // One-effect windows: the apply must never see more than
+                    // the configured window's worth of effects at once.
+                    assertThat(effects).hasSize(1);
+                    RollbackEffect.BlockReplace replace = (RollbackEffect.BlockReplace) effects.get(0);
+                    RollbackEffect inverse = new RollbackEffect.BlockReplace(
+                            replace.location(), replace.replacement(), replace.expectedCurrent());
+                    return CompletableFuture.completedFuture(
+                            List.<RollbackResult>of(new RollbackResult.Applied(effects.get(0), inverse)));
+                });
+        fixture.subject.applyWindowForTests(1);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        // 3 records folded through 1-effect windows = 3 separate applies,
+        // summed into one final tally.
+        verify(fixture.engine, org.mockito.Mockito.times(3)).applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any());
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("3 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void internsRepeatedSnapshotsAcrossFoldedEffects() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+        // Distinct records, structurally equal snapshots — the fold
+        // must collapse the retained copies to one canonical instance
+        // per distinct snapshot (the queued-window live set is what
+        // MTT=1 promotes to old gen).
+        BlockBreakRecord a = record();
+        BlockBreakRecord b = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b), null));
+        java.util.concurrent.atomic.AtomicReference<List<RollbackEffect>> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    captured.set(inv.getArgument(0));
+                    return CompletableFuture.completedFuture(List.<RollbackResult>of());
+                });
+        ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        List<RollbackEffect> effects = captured.get();
+        assertThat(effects).hasSize(2);
+        RollbackEffect.BlockReplace first = (RollbackEffect.BlockReplace) effects.get(0);
+        RollbackEffect.BlockReplace second = (RollbackEffect.BlockReplace) effects.get(1);
+        assertThat(first.expectedCurrent()).isSameAs(second.expectedCurrent());
+        assertThat(first.replacement()).isSameAs(second.replacement());
     }
 
     @Test
