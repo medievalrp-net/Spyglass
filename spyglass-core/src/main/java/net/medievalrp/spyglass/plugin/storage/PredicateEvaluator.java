@@ -2,7 +2,16 @@ package net.medievalrp.spyglass.plugin.storage;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
+import net.medievalrp.spyglass.api.event.BlockBreakRecord;
+import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
+import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
+import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
+import net.medievalrp.spyglass.api.event.ItemPickupRecord;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
@@ -65,6 +74,16 @@ final class PredicateEvaluator {
         if (actual == null || expected == null) {
             return actual == null && expected == null;
         }
+        // Multi-valued fields (lore lines, enchant strings, container
+        // items) match when ANY element matches — same semantics as the
+        // Mongo array-field queries the iname:/ilore:/ench: params were
+        // designed against.
+        if (actual instanceof List<?> list) {
+            return list.stream().anyMatch(element -> equalsValue(element, expected));
+        }
+        if (expected instanceof Pattern pattern) {
+            return pattern.matcher(String.valueOf(actual)).find();
+        }
         if (actual instanceof Number a && expected instanceof Number b) {
             return a.doubleValue() == b.doubleValue();
         }
@@ -102,8 +121,106 @@ final class PredicateEvaluator {
             case "location.x" -> record.location() == null ? null : record.location().x();
             case "location.y" -> record.location() == null ? null : record.location().y();
             case "location.z" -> record.location() == null ? null : record.location().z();
+            default -> itemPathValue(record, field);
+        };
+    }
+
+    // ── nested item / snapshot paths (#32) ───────────────────────
+    // These live in opaque blobs on ClickHouse; the store's post-filter
+    // fallback (and the synthesis parity filter) resolve them here from
+    // the decoded records instead.
+
+    private static @Nullable Object itemPathValue(EventRecord record, String field) {
+        int dot = field.indexOf('.');
+        if (dot < 0) {
+            return null;
+        }
+        String root = field.substring(0, dot);
+        String rest = field.substring(dot + 1);
+        return switch (root) {
+            case "item" -> storedItemField(itemOf(record), rest);
+            case "beforeItem" -> storedItemField(beforeItemOf(record), rest);
+            case "afterItem" -> storedItemField(afterItemOf(record), rest);
+            case "originalBlock" -> snapshotField(originalBlockOf(record), rest);
+            case "newBlock" -> snapshotField(newBlockOf(record), rest);
             default -> null;
         };
+    }
+
+    private static @Nullable StoredItem itemOf(EventRecord record) {
+        return switch (record) {
+            case ItemDropRecord r -> r.item();
+            case ItemPickupRecord r -> r.item();
+            default -> null;
+        };
+    }
+
+    private static @Nullable StoredItem beforeItemOf(EventRecord record) {
+        return switch (record) {
+            case ContainerDepositRecord r -> r.beforeItem();
+            case ContainerWithdrawRecord r -> r.beforeItem();
+            default -> null;
+        };
+    }
+
+    private static @Nullable StoredItem afterItemOf(EventRecord record) {
+        return switch (record) {
+            case ContainerDepositRecord r -> r.afterItem();
+            case ContainerWithdrawRecord r -> r.afterItem();
+            default -> null;
+        };
+    }
+
+    private static @Nullable BlockSnapshot originalBlockOf(EventRecord record) {
+        return switch (record) {
+            case BlockBreakRecord r -> r.originalBlock();
+            case BlockPlaceRecord r -> r.originalBlock();
+            default -> null;
+        };
+    }
+
+    private static @Nullable BlockSnapshot newBlockOf(EventRecord record) {
+        return switch (record) {
+            case BlockBreakRecord r -> r.newBlock();
+            case BlockPlaceRecord r -> r.newBlock();
+            default -> null;
+        };
+    }
+
+    private static @Nullable Object storedItemField(@Nullable StoredItem item, String rest) {
+        if (item == null) {
+            return null;
+        }
+        return switch (rest) {
+            case "name" -> item.name();
+            case "material" -> item.material();
+            case "data" -> item.data();
+            case "slot" -> item.slot();
+            case "lore" -> item.lore();
+            case "enchants" -> item.enchants();
+            // hasMetadata() probes array non-emptiness via ".0".
+            case "lore.0" -> item.lore().isEmpty() ? null : item.lore().get(0);
+            case "enchants.0" -> item.enchants().isEmpty() ? null : item.enchants().get(0);
+            default -> null;
+        };
+    }
+
+    private static @Nullable Object snapshotField(@Nullable BlockSnapshot snapshot, String rest) {
+        if (snapshot == null) {
+            return null;
+        }
+        if (!rest.startsWith("containerItems")) {
+            return null;
+        }
+        List<StoredItem> items = snapshot.containerItems();
+        if (rest.equals("containerItems")) {
+            return items;
+        }
+        String sub = rest.substring("containerItems.".length());
+        return items.stream()
+                .map(item -> storedItemField(item, sub))
+                .filter(Objects::nonNull)
+                .toList();
     }
 
 }

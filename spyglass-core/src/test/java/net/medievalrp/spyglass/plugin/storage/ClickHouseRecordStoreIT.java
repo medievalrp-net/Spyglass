@@ -368,4 +368,59 @@ class ClickHouseRecordStoreIT {
                 .containsExactlyElementsOf(pagedIds);
         assertThat(streamRounds).isEqualTo(pageRounds);
     }
+    @Test
+    void itemFieldFiltersPostFilterInMemory() {
+        // #32: iname:/ilore:/ench: paths live inside opaque BSON on CH.
+        // The store pushes what it can and applies the item predicates
+        // in memory — this drives the exact Or-of-paths shape the params
+        // emit, Pattern values included.
+        Instant now = Instant.now().minusSeconds(60);
+        StoredItem excaliblur = new StoredItem(0, "DIAMOND_SWORD", "AAAA",
+                "Excaliblur",
+                List.of("Forged in primordial fire"),
+                List.of("sharpness=5"));
+        StoredItem mundane = new StoredItem(0, "IRON_SWORD", "BBBB",
+                null, List.of(), List.of());
+        store.save(List.of(
+                new net.medievalrp.spyglass.api.event.ItemDropRecord(
+                        UUID.randomUUID(), "drop", now, now.plusSeconds(3600),
+                        Origin.player(), Source.player(ALICE, "Alice"),
+                        new BlockLocation(WORLD, "world", 1, 64, 1), "test",
+                        "DIAMOND_SWORD", 1, excaliblur),
+                new net.medievalrp.spyglass.api.event.ItemDropRecord(
+                        UUID.randomUUID(), "drop", now, now.plusSeconds(3600),
+                        Origin.player(), Source.player(ALICE, "Alice"),
+                        new BlockLocation(WORLD, "world", 2, 64, 2), "test",
+                        "IRON_SWORD", 1, mundane)));
+        flushAsyncInserts();
+
+        java.util.function.Function<QueryPredicate, QueryRequest> req = p ->
+                new QueryRequest(List.of(
+                        new QueryPredicate.Eq("source.playerId", ALICE), p),
+                        Sort.NEWEST_FIRST, 100, EnumSet.noneOf(Flag.class), false);
+        java.util.function.BiFunction<String, String, QueryPredicate> anyItem = (sub, term) -> {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                    java.util.regex.Pattern.quote(term), java.util.regex.Pattern.CASE_INSENSITIVE);
+            List<QueryPredicate> clauses = new java.util.ArrayList<>();
+            for (String path : List.of("item", "beforeItem", "afterItem",
+                    "originalBlock.containerItems", "newBlock.containerItems")) {
+                clauses.add(new QueryPredicate.Eq(path + "." + sub, pattern));
+            }
+            return new QueryPredicate.Or(List.copyOf(clauses));
+        };
+
+        assertThat(store.query(req.apply(anyItem.apply("name", "excali"))).records())
+                .hasSize(1)
+                .allMatch(r -> "DIAMOND_SWORD".equals(r.target()));
+        assertThat(store.query(req.apply(anyItem.apply("lore", "primordial"))).records())
+                .hasSize(1);
+        assertThat(store.query(req.apply(anyItem.apply("enchants", "sharpness"))).records())
+                .hasSize(1);
+        assertThat(store.query(req.apply(anyItem.apply("name", "nonexistent"))).records())
+                .isEmpty();
+        // Summary entry point must hydrate + filter identically.
+        assertThat(store.querySummary(req.apply(anyItem.apply("name", "excali"))).records())
+                .hasSize(1);
+    }
+
 }
