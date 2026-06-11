@@ -48,6 +48,36 @@ public interface RecordStore extends AutoCloseable {
         return new QueryPage(full.records(), null);
     }
 
+    /** Per-record consumer for {@link #streamRollback}. */
+    interface RecordSink {
+        void accept(EventRecord record);
+    }
+
+    /**
+     * Stream one read window of up to {@code windowLimit} rollback-shaped
+     * records to {@code sink}, starting after {@code cursor} ({@code null}
+     * = from the beginning), returning the cursor for the next window or
+     * {@code null} when the result set is exhausted.
+     *
+     * <p>This is {@link #queryPage} without the list: the caller decides
+     * what (if anything) stays resident per record, so the read window
+     * can be sized for query efficiency alone — heap is bounded by
+     * whatever the sink retains, not by {@code windowLimit} (#19).
+     *
+     * <p>Default implementation materializes one page via
+     * {@link #queryPage} and replays it into the sink, so test doubles
+     * and stores without a wire-streaming reader (Mongo) keep today's
+     * behavior and memory profile.
+     */
+    default QueryPage.Cursor streamRollback(QueryRequest request, QueryPage.Cursor cursor,
+                                            int windowLimit, RecordSink sink) {
+        QueryPage page = queryPage(request, cursor, windowLimit);
+        for (EventRecord record : page.records()) {
+            sink.accept(record);
+        }
+        return page.next();
+    }
+
     /**
      * Display-only query: hydrates just the fields the search renderer
      * needs (event, origin, source, location, target, scalar extras like
