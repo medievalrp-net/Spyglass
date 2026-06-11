@@ -1072,24 +1072,52 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyEntitySpawn(RollbackEffect.EntitySpawn effect) {
-        if (effect.serializedEntity() == null || effect.serializedEntity().isBlank()) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
-                    "Entity NBT not captured (record is pre-Block-11)."));
-        }
         Optional<World> world = BlockLocations.resolveWorld(effect.location());
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
         Location location = new Location(world.get(),
                 effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
-        try {
-            byte[] bytes = Base64.getDecoder().decode(effect.serializedEntity());
-            Entity entity = Bukkit.getUnsafe().deserializeEntity(bytes, world.get(), true, false);
-            if (entity == null) {
-                return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
-                        "Entity deserialization returned null."));
+        // Full-NBT resurrection when a snapshot exists. In practice it
+        // rarely does: Paper's serializeEntity rejects dying entities,
+        // so death records ship with null NBT (#29) — hence the
+        // by-type fallback below rather than a skip.
+        if (effect.serializedEntity() != null && !effect.serializedEntity().isBlank()) {
+            try {
+                byte[] bytes = Base64.getDecoder().decode(effect.serializedEntity());
+                Entity entity = Bukkit.getUnsafe().deserializeEntity(bytes, world.get(), true, false);
+                if (entity != null) {
+                    entity.teleport(location);
+                    RollbackEffect inverse = new RollbackEffect.EntityRemove(
+                            effect.location(), effect.entityType(), entity.getUniqueId().toString());
+                    return new RollbackResult.Applied(effect, inverse);
+                }
+            } catch (Throwable thrown) {
+                // Version-brittle NBT (documented on EntityDeathRecord);
+                // fall through to the by-type spawn.
             }
-            entity.teleport(location);
+        }
+        return spawnByType(effect, world.get(), location);
+    }
+
+    // Resurrection without a snapshot: a fresh entity of the recorded
+    // type. Loses name/tame/equipment fidelity but beats refusing the
+    // rollback outright — and matches what operators get elsewhere.
+    private RollbackResult spawnByType(RollbackEffect.EntitySpawn effect, World world, Location location) {
+        if (effect.entityType() == null || effect.entityType().isBlank()) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                    "No entity NBT and no entity type recorded."));
+        }
+        try {
+            org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.minecraft(
+                    effect.entityType().toLowerCase(java.util.Locale.ROOT));
+            org.bukkit.entity.EntityType type =
+                    org.bukkit.Registry.ENTITY_TYPE.get(key);
+            if (type == null || !type.isSpawnable()) {
+                return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                        "Entity type '" + effect.entityType() + "' is not spawnable."));
+            }
+            Entity entity = world.spawnEntity(location, type);
             RollbackEffect inverse = new RollbackEffect.EntityRemove(
                     effect.location(), effect.entityType(), entity.getUniqueId().toString());
             return new RollbackResult.Applied(effect, inverse);
