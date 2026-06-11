@@ -37,8 +37,15 @@ export default [
             await slabGrief(bot, plot);
             check(r, 'sg', await allAre(samples, 'air'), 'grief landed', 'grief setup failed');
             const rb = await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:16`);
-            check(r, 'sg', rb.applied >= 64 && await allAre(samples, 'stone'),
-                `rollback restored all samples (${rb.line.trim()})`, `samples not all stone: ${rb.line.trim()}`);
+            // World truth is the assertion; the applied count tolerates
+            // ClickHouse async-insert duplicates (a double-flushed row's
+            // second copy skips on the expected-state check and the
+            // world converges — applied+skipped still covers the slab).
+            const skippedMatch = rb.line.match(/(\d+)\s+skipped/);
+            const covered = rb.applied + (skippedMatch ? parseInt(skippedMatch[1], 10) : 0);
+            check(r, 'sg', covered >= 64 && await allAre(samples, 'stone'),
+                `rollback restored all samples (${rb.line.trim()})`,
+                `world wrong or short coverage (${covered}/64): ${rb.line.trim()}`);
             await sgOp(bot, 'undo', '');
             await coOp(bot, 'rollback', `u:${bot.username} t:60s r:16`);
             check(r, 'cp', await allAre(samples, 'stone'),
