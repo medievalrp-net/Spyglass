@@ -25,21 +25,35 @@ public final class EventParam implements QueryParamHandler {
         if (value == null || value.isBlank()) {
             throw new ParamParseException("Event parameter requires a value.");
         }
-        String[] parts = value.split(",");
-        List<String> names = new java.util.ArrayList<>();
-        for (String raw : parts) {
-            String name = raw.trim().toLowerCase(java.util.Locale.ROOT);
-            if (name.isEmpty()) {
+        // `!`-prefixed names are excludes, same syntax as c: (#30).
+        List<String> includes = new java.util.ArrayList<>();
+        List<String> excludes = new java.util.ArrayList<>();
+        for (String raw : value.split(",")) {
+            String token = raw.trim().toLowerCase(java.util.Locale.ROOT);
+            if (token.isEmpty() || token.equals("!")) {
                 continue;
             }
+            boolean negated = token.startsWith("!");
+            String name = negated ? token.substring(1) : token;
             if (!enabledEvents.contains(name)) {
                 throw new ParamParseException("Unknown or disabled event: " + name);
             }
-            names.add(name);
+            (negated ? excludes : includes).add(name);
         }
-        if (names.isEmpty()) {
+        if (includes.isEmpty() && excludes.isEmpty()) {
             throw new ParamParseException("Event parameter requires at least one name.");
         }
+        List<QueryPredicate> clauses = new java.util.ArrayList<>(2);
+        if (!includes.isEmpty()) {
+            clauses.add(membership(includes));
+        }
+        if (!excludes.isEmpty()) {
+            clauses.add(new QueryPredicate.Not(membership(excludes)));
+        }
+        return clauses.size() == 1 ? clauses.getFirst() : new QueryPredicate.And(clauses);
+    }
+
+    private static QueryPredicate membership(List<String> names) {
         if (names.size() == 1) {
             return new QueryPredicate.Eq("event", names.getFirst());
         }
