@@ -34,6 +34,7 @@ import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
+import net.medievalrp.spyglass.plugin.storage.UndoReferenceBson;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.ApiStatus;
@@ -95,25 +96,41 @@ public final class RollbackService {
 
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
     // already-applied cells skip with "block changed" on the re-run.
+    //
+    // Replays the marker's RESOLVED request verbatim (#49) — never
+    // re-parse saved.query() here: r:/t: defaults would re-anchor to
+    // THIS sender's position and the current clock, so a resume from
+    // a different place (or hours later) would target a different
+    // region and time window than the interrupted operation, and the
+    // saved cursor would then page through the wrong match set.
     public boolean resumeFromSaved(RollbackResumeStore.Saved saved, CommandSender sender) {
-        QueryRequest request;
-        try {
-            RollbackMode mode = saved.mode() == RollbackJob.Mode.RESTORE
-                    ? RollbackMode.RESTORE : RollbackMode.ROLLBACK;
-            request = forceNoGroup(parser.parse(sender, saved.query(),
-                    rollbackResultLimit()), mode);
-        } catch (ParamParseException ex) {
-            sender.sendMessage(Feedback.error(
-                    "Resume failed: " + ex.getMessage() + " (query: " + saved.query() + ")"));
+        if (saved.requestBase64() == null) {
+            // Pre-#49 marker, or an undo replay (whose label is not a
+            // query and whose recovery path is /spyglass undo).
+            sender.sendMessage(Feedback.error("Resume entry " + saved.shortId()
+                    + " has no stored query plan (written by an older Spyglass,"
+                    + " or left by an undo replay). Re-run the original command"
+                    + " instead; discard the entry with /sg rbqueue cancel "
+                    + saved.shortId() + "."));
             return false;
         }
+        QueryRequest stored;
+        try {
+            stored = UndoReferenceBson.decodeBase64(saved.requestBase64()).request();
+        } catch (RuntimeException ex) {
+            sender.sendMessage(Feedback.error("Resume entry " + saved.shortId()
+                    + " is unreadable: " + ex.getMessage() + ". Discard it with"
+                    + " /sg rbqueue cancel " + saved.shortId() + "."));
+            return false;
+        }
+        RollbackMode mode = saved.mode() == RollbackJob.Mode.RESTORE
+                ? RollbackMode.RESTORE : RollbackMode.ROLLBACK;
+        QueryRequest request = forceNoGroup(stored, mode);
         // Fresh job id so the current sender (which may differ from
         // the original operator) gets progress messages.
         UUID operatorId = sender instanceof Player p ? p.getUniqueId() : null;
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operatorId, sender.getName(),
                 saved.query(), saved.mode(), Instant.now(), sender);
-        RollbackMode rmode = saved.mode() == RollbackJob.Mode.RESTORE
-                ? RollbackMode.RESTORE : RollbackMode.ROLLBACK;
         // Resume from the saved cursor so we don't re-query the
         // already-applied prefix on big rollbacks.
         net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor = null;
@@ -121,7 +138,7 @@ public final class RollbackService {
             startCursor = new net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor(
                     saved.cursor().occurred(), saved.cursor().id());
         }
-        pendingContexts.put(job.id, new JobContext(request, rmode, startCursor,
+        pendingContexts.put(job.id, new JobContext(request, mode, startCursor,
                 saved.appliedSoFar(), saved.skippedSoFar()));
 
         int position = jobQueue.submit(job);
@@ -169,7 +186,10 @@ public final class RollbackService {
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operator.getUniqueId(),
                 operator.getName(), queueLabel, jobMode, Instant.now(), operator);
         pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true));
-        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
+        // No stored request: a crashed replay's recovery path is
+        // /spyglass undo (the reference stays poppable), not rbqueue
+        // resume — the marker exists for visibility only.
+        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode, null);
         int position = jobQueue.submit(job);
         if (position > 0) {
             operator.sendMessage(Feedback.bonus("Undo queued at position " + position
@@ -198,7 +218,8 @@ public final class RollbackService {
 
         // Persist before queueing so pending jobs also survive a
         // restart and show up as resumable.
-        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
+        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode,
+                encodeResumeRequest(request, job.mode));
 
         int position = jobQueue.submit(job);
         if (position > 0) {
@@ -215,7 +236,8 @@ public final class RollbackService {
             return;
         }
         job.sender.sendMessage(Feedback.querying());
-        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode);
+        resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode,
+                ctx.replay() ? null : encodeResumeRequest(ctx.request(), job.mode));
         net.medievalrp.spyglass.api.util.Duration flushTimeout =
                 config.limits().rollbackFlushTimeout();
         // Flush the recorder first so the store has caught up to
@@ -261,6 +283,10 @@ public final class RollbackService {
                                      boolean replayOp) {
         CommandSender sender = job.sender;
         AtomicBoolean cancelFlag = job.cancelFlag;
+        // Encoded once per job: checkpoint() re-writes the whole marker
+        // after every applied window and must carry the same resolved
+        // plan markStart wrote (#49). Null for replays — see runJob.
+        String resumeRequest = replayOp ? null : encodeResumeRequest(request, job.mode);
         long startNanos = System.nanoTime();
         int pageSize = Math.max(100, config.limits().rollbackPageSize());
         int batchSize = config.limits().rollbackBatchSize();
@@ -381,7 +407,7 @@ public final class RollbackService {
                 windowCount++;
                 totalSeen += window.seenDelta();
                 if (window.effects().isEmpty()) {
-                    checkpoint(job, window, totalApplied, totalSkipped);
+                    checkpoint(job, window, totalApplied, totalSkipped, resumeRequest);
                     continue;
                 }
                 // Only join on chunks this job hasn't warmed yet — the
@@ -466,7 +492,7 @@ public final class RollbackService {
                             net.kyori.adventure.text.Component.text(
                                     "Rolling back: " + appliedSoFar + " applied, " + skippedSoFar + " skipped")));
                 }
-                checkpoint(job, window, totalApplied, totalSkipped);
+                checkpoint(job, window, totalApplied, totalSkipped, resumeRequest);
             }
             Throwable readFailed = readerFailure.get();
             if (readFailed != null) {
@@ -769,13 +795,26 @@ public final class RollbackService {
     // Checkpoint AFTER a window's records are applied so a crash
     // resumes past them; the force-overwrite apply makes any overlap
     // from a coarser-than-page checkpoint converge.
-    private void checkpoint(RollbackJob job, Window window, int totalApplied, int totalSkipped) {
+    private void checkpoint(RollbackJob job, Window window, int totalApplied, int totalSkipped,
+                            @org.jetbrains.annotations.Nullable String requestBase64) {
         RollbackResumeStore.Cursor resumeCursor = window.cursorAfter() == null ? null
                 : new RollbackResumeStore.Cursor(
                         window.cursorAfter().occurred(), window.cursorAfter().id());
         resumeStore.markProgress(job.id, job.operatorName, job.operatorId,
-                job.query, job.mode, job.submitTime,
+                job.query, job.mode, requestBase64, job.submitTime,
                 resumeCursor, totalApplied, totalSkipped);
+    }
+
+    /**
+     * The resume marker stores the RESOLVED request (#49) — the same
+     * rule {@link UndoReferenceBson} documents for undo references:
+     * relative params are already anchored, so replaying the plan can
+     * never re-anchor to the resumer's position or clock. The mode
+     * and ceiling ride along for the blob format; resume reads only
+     * the request.
+     */
+    private static String encodeResumeRequest(QueryRequest request, RollbackJob.Mode mode) {
+        return UndoReferenceBson.encodeBase64(request, mode.name(), Instant.now());
     }
 
     private static BlockLocation locationOf(RollbackEffect effect) {
