@@ -86,6 +86,40 @@ Keep the shipped default: it is the fastest measured configuration *and* the smo
 - Hides the event from `/spyglass search` results (it's not in the store).
 - Does **not** retroactively delete already-recorded rows; lower `storage.retention` if you want them to age out.
 
+## Security
+
+The store holds the network's most sensitive data: full chat history, command
+lines, and player IPs. The config template's authless-localhost defaults are
+fine only while the database and the server share one host. The moment the
+store crosses hosts — which is the whole premise of the Velocity companion —
+treat it like any internet-adjacent database:
+
+- **MongoDB**: enable auth (`security.authorization: enabled`) and connect with
+  a least-privilege user scoped to the Spyglass database, credentials in the
+  `database.uri` (`mongodb://spyglass:<pw>@host/...`). Never expose the port
+  beyond the hosts that need it — bind to the private interface and firewall
+  the rest. Use TLS (`?tls=true`) or a private network/VPN between hosts.
+- **ClickHouse**: create a dedicated user with a password instead of riding
+  `default`, set `database.clickhouse.ssl = true` when the connection leaves
+  the host, and firewall ports 8123/9000 the same way. Don't enable the
+  library bridge — Spyglass doesn't use it.
+- **Patch floors** (both advisories are server-side; the bundled client
+  libraries are unaffected):
+  - MongoDB "MongoBleed" **CVE-2025-14847** — unauthenticated memory read,
+    actively exploited in the wild. Run at least 8.2.3 / 8.0.17 / 7.0.28 /
+    6.0.27 / 5.0.32 / 4.4.30.
+  - ClickHouse **CVE-2025-1385** — RCE via the library-bridge API when that
+    feature is enabled. Run at least 25.1.5.5 / 24.12.5.65 / 24.11.5.34 /
+    24.8.14.27 / 24.3.18.6.
+- **On-disk spill**: `wal/pending/` and `resume/` under the plugin data folder
+  carry database-grade content (chat, command lines, IPs, resolved query
+  plans). Keep them inside the same backup and file-permission hygiene as the
+  database itself — don't ship them to a world-readable backup target.
+- **In-game tiers**: `spyglass.search` does not reveal IPs; that needs
+  `spyglass.search.ip` (see commands.md). Auth-style command arguments are
+  redacted at the recorder by `events.command.redact` — extend that list if
+  your plugins add new credential-bearing commands.
+
 ## Things NOT to do
 
 - Don't `OPTIMIZE TABLE … FINAL` on a hot path or in a tight loop — it rewrites parts on disk and can cost minutes on a year of data.
