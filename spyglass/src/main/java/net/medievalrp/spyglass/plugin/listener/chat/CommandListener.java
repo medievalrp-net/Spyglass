@@ -27,10 +27,13 @@ public final class CommandListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    private final CommandRedaction redaction;
 
-    public CommandListener(Recorder recorder, RecordingSupport support) {
+    public CommandListener(Recorder recorder, RecordingSupport support,
+                           CommandRedaction redaction) {
         this.recorder = recorder;
         this.support = support;
+        this.redaction = redaction;
     }
 
     @Override
@@ -44,7 +47,7 @@ public final class CommandListener implements RecordingListener {
         BlockLocation location = BlockLocations.fromLocation(event.getPlayer().getLocation());
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
         String head = extractHead(line);
-        recorder.record(CommandRecord.of(ctx, head, line));
+        recorder.record(CommandRecord.of(ctx, head, redaction.apply(head, line)));
     }
 
     /**
@@ -72,7 +75,7 @@ public final class CommandListener implements RecordingListener {
         }
 
         RecordContext ctx = support.context(origin, source, location);
-        recorder.record(CommandRecord.of(ctx, head, line));
+        recorder.record(CommandRecord.of(ctx, head, redaction.apply(head, line)));
     }
 
     /**

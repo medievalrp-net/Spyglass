@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
@@ -32,7 +33,8 @@ class CommandListenerTest {
     void setUp() {
         recorder = new CapturingRecorder();
         RecordingSupport support = new RecordingSupport(new Duration(3600), "test");
-        listener = new CommandListener(recorder, support);
+        listener = new CommandListener(recorder, support,
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT));
     }
 
     @Test
@@ -71,6 +73,40 @@ class CommandListenerTest {
         CommandRecord record = (CommandRecord) recorder.records.get(0);
         assertThat(record.target()).isEqualTo("emote");
         assertThat(record.commandLine()).isEqualTo("emote wave");
+    }
+
+    @Test
+    void redactsAuthCommandArgsOnPlayerPath() {
+        Player alice = mockPlayer();
+        PlayerCommandPreprocessEvent event = mock(PlayerCommandPreprocessEvent.class);
+        when(event.getPlayer()).thenReturn(alice);
+        when(event.getMessage()).thenReturn("/login hunter2");
+
+        listener.onCommand(event);
+
+        CommandRecord record = (CommandRecord) recorder.records.get(0);
+        assertThat(record.target()).isEqualTo("login");
+        assertThat(record.commandLine()).isEqualTo("/login ***");
+    }
+
+    @Test
+    void redactsAuthCommandArgsOnConsolePath() {
+        org.bukkit.event.server.ServerCommandEvent event =
+                mock(org.bukkit.event.server.ServerCommandEvent.class);
+        when(event.getSender()).thenReturn(mock(org.bukkit.command.CommandSender.class));
+        when(event.getCommand()).thenReturn("login hunter2");
+
+        // sentinelLocation() asks Bukkit for the world list; no server
+        // runs in unit tests, so pin the static to the empty fallback.
+        try (org.mockito.MockedStatic<org.bukkit.Bukkit> bukkit =
+                     org.mockito.Mockito.mockStatic(org.bukkit.Bukkit.class)) {
+            bukkit.when(org.bukkit.Bukkit::getWorlds).thenReturn(List.of());
+            listener.onServerCommand(event);
+        }
+
+        CommandRecord record = (CommandRecord) recorder.records.get(0);
+        assertThat(record.target()).isEqualTo("login");
+        assertThat(record.commandLine()).isEqualTo("login ***");
     }
 
     @Test
