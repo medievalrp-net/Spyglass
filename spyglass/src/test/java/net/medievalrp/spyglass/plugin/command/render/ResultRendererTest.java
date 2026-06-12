@@ -50,7 +50,7 @@ class ResultRendererTest {
         when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
 
-        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
 
         assertThat(plain).contains("SCULK_SENSOR");
@@ -74,7 +74,7 @@ class ResultRendererTest {
         when(api.displayRenderer("sculk")).thenReturn(Optional.of(custom));
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
 
-        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
 
         assertThat(plain).contains("CUSTOM_TARGET").doesNotContain("SCULK_SENSOR");
@@ -86,7 +86,7 @@ class ResultRendererTest {
         when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
 
-        Component rendered = renderer.renderSingle(useRecord(), EnumSet.of(Flag.EXTENDED));
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.of(Flag.EXTENDED), true);
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
 
         assertThat(plain).contains("x: 10").contains("y: 64").contains("z: 20").contains("world: world");
@@ -98,7 +98,7 @@ class ResultRendererTest {
         when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
 
-        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
 
         assertThat(findRunCommand(rendered))
                 .as("click event on a single result should be /spyglass tele")
@@ -120,6 +120,57 @@ class ResultRendererTest {
         return null;
     }
 
+    private static net.medievalrp.spyglass.api.event.JoinRecord joinRecord() {
+        Instant now = Instant.now();
+        return new net.medievalrp.spyglass.api.event.JoinRecord(
+                UUID.randomUUID(), "join",
+                now, now.plusSeconds(60),
+                Origin.player(),
+                Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 10, 64, 20),
+                "test",
+                "Alice",
+                "203.0.113.7");
+    }
+
+    private static String hoverPlain(Component rendered) {
+        net.kyori.adventure.text.event.HoverEvent<?> hover = rendered.hoverEvent();
+        assertThat(hover).isNotNull();
+        return PlainTextComponentSerializer.plainText()
+                .serialize((Component) hover.value());
+    }
+
+    @Test
+    void joinIpRendersForViewerWithIpPermission() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("join")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("join", "joined"));
+
+        Component rendered = renderer.renderSingle(joinRecord(), EnumSet.noneOf(Flag.class), true);
+
+        assertThat(PlainTextComponentSerializer.plainText().serialize(rendered))
+                .contains("203.0.113.7");
+        assertThat(hoverPlain(rendered))
+                .contains("IP: 203.0.113.7");
+    }
+
+    @Test
+    void joinIpMasksInLineAndHoverWithoutIpPermission() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("join")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("join", "joined"));
+
+        Component rendered = renderer.renderSingle(joinRecord(), EnumSet.noneOf(Flag.class), false);
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+        assertThat(plain)
+                .contains(ResultRenderer.IP_HIDDEN)
+                .doesNotContain("203.0.113.7");
+        assertThat(hoverPlain(rendered))
+                .contains("IP: " + ResultRenderer.IP_HIDDEN)
+                .doesNotContain("203.0.113.7");
+    }
+
     @Test
     void rendererExceptionFallsBackToDefault() {
         SpyglassApi api = mock(SpyglassApi.class);
@@ -133,7 +184,7 @@ class ResultRendererTest {
         when(api.displayRenderer("sculk")).thenReturn(Optional.of(broken));
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
 
-        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class));
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
 
         // Falls back to the default SCULK_SENSOR target instead of throwing.

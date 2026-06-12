@@ -68,7 +68,33 @@ class IpParamTest {
                 .isInstanceOf(ParamParseException.class);
     }
 
+    @Test
+    void rejectedWithoutIpPermission() {
+        IpParam param = new IpParam(ip -> List.of(PLAYER_A));
+        org.bukkit.command.CommandSender sender =
+                org.mockito.Mockito.mock(org.bukkit.command.CommandSender.class);
+        org.mockito.Mockito.when(sender.hasPermission("spyglass.search.ip")).thenReturn(false);
+
+        assertThatThrownBy(() -> param.parse("ip", "10.0.0.1",
+                new ParamContext(sender, null, 100)))
+                .isInstanceOf(ParamParseException.class)
+                .hasMessageContaining("spyglass.search.ip");
+    }
+
+    @Test
+    void rejectedForNullSender() {
+        IpParam param = new IpParam(ip -> List.of());
+        assertThatThrownBy(() -> param.parse("ip", "10.0.0.1",
+                new ParamContext(null, null, 100)))
+                .isInstanceOf(ParamParseException.class)
+                .hasMessageContaining("spyglass.search.ip");
+    }
+
+    /** Sender holding spyglass.search.ip — the param's happy path. */
     private static ParamContext ctx() {
-        return new ParamContext(null, null, 100);
+        org.bukkit.command.CommandSender sender =
+                org.mockito.Mockito.mock(org.bukkit.command.CommandSender.class);
+        org.mockito.Mockito.when(sender.hasPermission("spyglass.search.ip")).thenReturn(true);
+        return new ParamContext(sender, null, 100);
     }
 }
