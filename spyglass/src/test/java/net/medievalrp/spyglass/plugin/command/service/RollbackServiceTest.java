@@ -145,6 +145,83 @@ class RollbackServiceTest {
                 true);
     }
 
+    // #49: resume must replay the marker's RESOLVED request — never
+    // re-parse the raw query with the resumer's location/clock context.
+    @Test
+    void resumeReplaysStoredRequestWithoutReparsing() throws Exception {
+        TestFixture fixture = new TestFixture();
+        Instant anchor = Instant.parse("2026-06-01T10:00:00Z");
+        QueryRequest original = new QueryRequest(
+                List.of(new net.medievalrp.spyglass.api.query.QueryPredicate.Range(
+                                "occurred", anchor.minusSeconds(3600), null),
+                        new net.medievalrp.spyglass.api.query.QueryPredicate.Range(
+                                "location.x", 100, 160)),
+                Sort.NEWEST_FIRST, 10_000,
+                java.util.EnumSet.noneOf(Flag.class), true);
+        String encoded = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson
+                .encodeBase64(original, "ROLLBACK", anchor);
+        UUID cursorId = UUID.randomUUID();
+        RollbackResumeStore.Saved saved = new RollbackResumeStore.Saved(
+                UUID.randomUUID(), null, "Alice", "p:Griefer r:30",
+                RollbackJob.Mode.ROLLBACK, anchor,
+                new RollbackResumeStore.Cursor(anchor.minusSeconds(60), cursorId),
+                42, 3, encoded, java.nio.file.Path.of("unused.resume"));
+
+        boolean ok = fixture.subject.resumeFromSaved(saved, fixture.sender);
+
+        assertThat(ok).isTrue();
+        // The whole point: no re-parse — the parser (which would anchor
+        // r:/t: to THIS sender) is never consulted on resume.
+        org.mockito.Mockito.verifyNoInteractions(fixture.parser);
+        // The job ran (synchronous support) against the stored filter:
+        // identical predicates to the original operation's plan, with
+        // the saved cursor continuing against that same filter.
+        org.mockito.ArgumentCaptor<QueryRequest> sent =
+                org.mockito.ArgumentCaptor.forClass(QueryRequest.class);
+        org.mockito.ArgumentCaptor<net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor> cursor =
+                org.mockito.ArgumentCaptor.forClass(
+                        net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor.class);
+        verify(fixture.store, org.mockito.Mockito.atLeastOnce())
+                .queryPage(sent.capture(), cursor.capture(), anyInt());
+        assertThat(sent.getValue().predicates()).isEqualTo(original.predicates());
+        assertThat(cursor.getAllValues().get(0).occurred()).isEqualTo(anchor.minusSeconds(60));
+        assertThat(cursor.getAllValues().get(0).id()).isEqualTo(cursorId);
+    }
+
+    @Test
+    void resumeRefusesLegacyMarkerWithoutStoredRequest() {
+        TestFixture fixture = new TestFixture();
+        RollbackResumeStore.Saved saved = new RollbackResumeStore.Saved(
+                UUID.randomUUID(), null, "Alice", "p:Griefer r:30",
+                RollbackJob.Mode.ROLLBACK, Instant.now(), null, 0, 0,
+                null, java.nio.file.Path.of("unused.resume"));
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        boolean ok = fixture.subject.resumeFromSaved(saved, fixture.sender);
+
+        assertThat(ok).isFalse();
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("Re-run the original command"));
+        verify(fixture.store, never()).queryPage(any(QueryRequest.class), any(), anyInt());
+    }
+
+    @Test
+    void resumeRefusesCorruptStoredRequest() {
+        TestFixture fixture = new TestFixture();
+        RollbackResumeStore.Saved saved = new RollbackResumeStore.Saved(
+                UUID.randomUUID(), null, "Alice", "p:Griefer",
+                RollbackJob.Mode.ROLLBACK, Instant.now(), null, 0, 0,
+                "!!!not-a-reference!!!", java.nio.file.Path.of("unused.resume"));
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        boolean ok = fixture.subject.resumeFromSaved(saved, fixture.sender);
+
+        assertThat(ok).isFalse();
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("unreadable"));
+        verify(fixture.store, never()).queryPage(any(QueryRequest.class), any(), anyInt());
+    }
+
     @Test
     void reportsParamErrors() throws Exception {
         TestFixture fixture = new TestFixture();
