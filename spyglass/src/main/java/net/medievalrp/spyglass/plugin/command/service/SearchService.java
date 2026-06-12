@@ -98,14 +98,18 @@ public final class SearchService {
         // Keeping the underlying records/aggregations list closed-over is
         // cheap — the typed record graph is already allocated by the
         // Mongo decode.
+        // Evaluated once at search time and captured: the page cache is
+        // per-sender, so the viewer on every later page flip is the same
+        // sender this bit was computed for (#48).
+        boolean showIp = sender.hasPermission("spyglass.search.ip");
         IntFunction<Component> lines;
         if (grouping) {
             List<QueryResult.RecordAggregation> aggregations = result.aggregations();
-            lines = index -> renderer.renderAggregation(aggregations.get(index));
+            lines = index -> renderer.renderAggregation(aggregations.get(index), showIp);
         } else {
             List<EventRecord> records = result.records();
             var flags = request.flags();
-            lines = index -> renderer.renderSingle(records.get(index), flags);
+            lines = index -> renderer.renderSingle(records.get(index), flags, showIp);
         }
         pageCache.store(sender, count, lines);
         pageCache.show(sender, 1);

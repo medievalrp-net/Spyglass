@@ -104,19 +104,23 @@ public final class ProxyResultRenderer {
             Map.entry("rolled-place", "placed"),
             Map.entry("rolled-break", "broke"));
 
-    public Component renderAggregation(QueryResult.RecordAggregation aggregation) {
+    /** Mirrors Paper's ResultRenderer.IP_HIDDEN — shown where a join IP
+     *  would render when the viewer lacks {@code spyglass.search.ip}. */
+    public static final String IP_HIDDEN = "(ip hidden)";
+
+    public Component renderAggregation(QueryResult.RecordAggregation aggregation, boolean showIp) {
         return line(aggregation.sample(), aggregation.count(), true, false,
-                EnumSet.noneOf(Flag.class));
+                EnumSet.noneOf(Flag.class), showIp);
     }
 
-    public Component renderSingle(EventRecord record, EnumSet<Flag> flags) {
+    public Component renderSingle(EventRecord record, EnumSet<Flag> flags, boolean showIp) {
         EnumSet<Flag> safe = flags == null ? EnumSet.noneOf(Flag.class) : flags;
         boolean extended = safe.contains(Flag.EXTENDED);
-        return line(record, 1, false, extended, safe);
+        return line(record, 1, false, extended, safe, showIp);
     }
 
     private Component line(EventRecord record, long count, boolean grouped, boolean extended,
-                           EnumSet<Flag> flags) {
+                           EnumSet<Flag> flags, boolean showIp) {
         var builder = Component.text()
                 .append(Component.text("= ", NamedTextColor.GRAY));
         if (grouped) {
@@ -133,7 +137,7 @@ public final class ProxyResultRenderer {
         if (qty > 0) {
             builder.append(Component.text(" " + qty, NamedTextColor.GREEN));
         }
-        String targetText = targetOf(record);
+        String targetText = targetOf(record, showIp);
         if (!targetText.isEmpty()) {
             builder.append(Component.text(" " + targetText, NamedTextColor.AQUA));
         }
@@ -141,7 +145,7 @@ public final class ProxyResultRenderer {
             builder.append(Component.text(" x" + count, NamedTextColor.GREEN));
         }
         builder.append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.WHITE))
-                .hoverEvent(HoverEvent.showText(hover(record, count)));
+                .hoverEvent(HoverEvent.showText(hover(record, count, showIp)));
         if (grouped) {
             // Drill-down: same trick as Paper's renderer. Click runs a
             // narrowed search restricted to this player + event + server,
@@ -166,14 +170,14 @@ public final class ProxyResultRenderer {
         return builder.build();
     }
 
-    private Component hover(EventRecord record, long count) {
+    private Component hover(EventRecord record, long count, boolean showIp) {
         List<Component> lines = new ArrayList<>();
         lines.add(kv("Source", record.sourceName()));
         lines.add(kv("Event", record.event()));
         if (count > 1) {
             lines.add(kv("Count", String.valueOf(count)));
         }
-        lines.add(kv("Target", targetOf(record)));
+        lines.add(kv("Target", targetOf(record, showIp)));
         lines.add(kv("When", fullTimestamp(record.occurred())));
         lines.add(kv("Origin", originText(record.origin())));
         lines.add(kv("Location", locationText(record.location())));
@@ -190,7 +194,7 @@ public final class ProxyResultRenderer {
             lines.add(kv("Line", command.commandLine()));
         }
         if (record instanceof JoinRecord join && join.address() != null && !join.address().isBlank()) {
-            lines.add(kv("IP", join.address()));
+            lines.add(kv("IP", showIp ? join.address() : IP_HIDDEN));
         }
         if (record instanceof EntityHitRecord hit) {
             lines.add(kv("Damage", String.format(Locale.ROOT, "%.1f", hit.damage())));
@@ -248,7 +252,7 @@ public final class ProxyResultRenderer {
         return item + " IN " + containerType;
     }
 
-    private static String targetOf(EventRecord record) {
+    private static String targetOf(EventRecord record, boolean showIp) {
         return switch (record) {
             case BlockBreakRecord r -> r.target();
             case BlockPlaceRecord r -> r.target();
@@ -259,7 +263,9 @@ public final class ProxyResultRenderer {
             case RollbackOpRecord r -> r.mode() == null ? "" : r.mode().toUpperCase(java.util.Locale.ROOT);
             case ChatRecord r -> r.target();
             case CommandRecord r -> "/" + r.target();
-            case JoinRecord r -> r.address() == null ? "" : r.address();
+            case JoinRecord r -> r.address() == null || r.address().isEmpty()
+                    ? ""
+                    : (showIp ? r.address() : IP_HIDDEN);
             case QuitRecord r -> "";
             case ItemDropRecord r -> r.target();
             case ItemPickupRecord r -> r.target();

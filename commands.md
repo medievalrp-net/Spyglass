@@ -10,6 +10,7 @@ All default to `op`.
 |---|---|
 | `spyglass.use` | help, events, page |
 | `spyglass.search` | search |
+| `spyglass.search.ip` | reveals join IPs in results and unlocks the `ip:` key (without it IPs render as `(ip hidden)`) |
 | `spyglass.rollback` | rollback, restore, undo, rbqueue |
 | `spyglass.tool` | inspection wand |
 | `spyglass.tele` | teleport (used by clickable result rows) |
