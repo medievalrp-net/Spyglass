@@ -47,25 +47,31 @@ public final class ResultRenderer {
         this.config = config;
     }
 
-    public Component renderAggregation(QueryResult.RecordAggregation aggregation) {
+    /** Stand-in shown where a join IP would render when the viewer
+     *  lacks {@code spyglass.search.ip} (#48). */
+    public static final String IP_HIDDEN = "(ip hidden)";
+
+    public Component renderAggregation(QueryResult.RecordAggregation aggregation, boolean showIp) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
         // Aggregations span multiple locations; `-ex` location-append is
         // skipped because any one sample.location() would be misleading.
         return line(sample, count, true, false, java.util.EnumSet.noneOf(
-                net.medievalrp.spyglass.api.query.Flag.class));
+                net.medievalrp.spyglass.api.query.Flag.class), showIp);
     }
 
-    public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags) {
+    public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                  boolean showIp) {
         java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
                 ? java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class)
                 : flags;
         boolean extended = safe.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
-        return line(record, 1, false, extended, safe);
+        return line(record, 1, false, extended, safe, showIp);
     }
 
     private Component line(EventRecord record, long count, boolean grouped, boolean extended,
-                           java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags) {
+                           java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                           boolean showIp) {
         // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
         // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
@@ -88,7 +94,7 @@ public final class ResultRenderer {
         // useful to put there (e.g. QuitRecord), otherwise rendered as
         // " TARGET" with a single leading space so the line stays
         // tidy regardless of whether quantity/target are present.
-        String targetText = targetOf(record);
+        String targetText = targetOf(record, showIp);
         if (!targetText.isEmpty()) {
             Component defaultTarget = Component.text(" " + targetText, NamedTextColor.AQUA);
             java.util.Optional<DisplayRenderer> custom = api == null
@@ -109,7 +115,7 @@ public final class ResultRenderer {
             builder.append(Component.text(" x" + count, NamedTextColor.GREEN));
         }
         builder.append(Component.text(" " + timeAgo(record.occurred()), NamedTextColor.WHITE))
-                .hoverEvent(HoverEvent.showText(hover(record, count)));
+                .hoverEvent(HoverEvent.showText(hover(record, count, showIp)));
         if (grouped) {
             // Grouped result: click drills down into the per-player,
             // per-event stream. Matches v1's buildDetailCommand shape.
@@ -184,14 +190,14 @@ public final class ResultRenderer {
                         Component.text("Page " + targetPage, NamedTextColor.RED)));
     }
 
-    private Component hover(EventRecord record, long count) {
+    private Component hover(EventRecord record, long count, boolean showIp) {
         List<Component> lines = new ArrayList<>();
         lines.add(kv("Source", record.sourceName()));
         lines.add(kv("Event", record.event()));
         if (count > 1) {
             lines.add(kv("Count", String.valueOf(count)));
         }
-        lines.add(kv("Target", targetOf(record)));
+        lines.add(kv("Target", targetOf(record, showIp)));
         lines.add(kv("When", fullTimestamp(record.occurred())));
         lines.add(kv("Origin", originText(record.origin())));
         lines.add(kv("Location", locationText(record.location())));
@@ -205,7 +211,7 @@ public final class ResultRenderer {
             lines.add(kv("Line", command.commandLine()));
         }
         if (record instanceof JoinRecord join && !join.address().isBlank()) {
-            lines.add(kv("IP", join.address()));
+            lines.add(kv("IP", showIp ? join.address() : IP_HIDDEN));
         }
         if (record instanceof EntityHitRecord hit) {
             lines.add(kv("Damage", String.format(Locale.ROOT, "%.1f", hit.damage())));
@@ -283,7 +289,7 @@ public final class ResultRenderer {
         return item + " IN " + containerType;
     }
 
-    private static String targetOf(EventRecord record) {
+    private static String targetOf(EventRecord record, boolean showIp) {
         return switch (record) {
             case BlockBreakRecord breakRec -> breakRec.target();
             case BlockPlaceRecord placeRec -> placeRec.target();
@@ -301,7 +307,9 @@ public final class ResultRenderer {
             // so the line reads "<player> joined <ip>". Quit has no
             // companion field so the target span gets suppressed
             // entirely (the line() builder skips empty targets).
-            case JoinRecord join -> join.address() == null ? "" : join.address();
+            case JoinRecord join -> join.address() == null || join.address().isEmpty()
+                    ? ""
+                    : (showIp ? join.address() : IP_HIDDEN);
             case QuitRecord quit -> "";
             case ItemDropRecord drop -> drop.target();
             case ItemPickupRecord pickup -> pickup.target();

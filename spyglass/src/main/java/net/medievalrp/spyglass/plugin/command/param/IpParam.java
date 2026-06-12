@@ -45,6 +45,14 @@ public final class IpParam implements QueryParamHandler {
 
     @Override
     public QueryPredicate parse(String alias, String value, ParamContext context) throws ParamParseException {
+        // IP→player correlation is PII (#48); spyglass.search alone
+        // does not unlock it. Mirrors the renderer-side masking.
+        // Fail closed on a null sender — there is no one to attribute
+        // the permission to.
+        if (context.sender() == null
+                || !context.sender().hasPermission("spyglass.search.ip")) {
+            throw new ParamParseException("Missing permission spyglass.search.ip.");
+        }
         if (value == null || value.isBlank()) {
             throw new ParamParseException("ip requires an address.");
         }

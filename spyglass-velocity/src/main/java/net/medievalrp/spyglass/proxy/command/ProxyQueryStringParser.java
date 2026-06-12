@@ -46,7 +46,12 @@ public final class ProxyQueryStringParser {
         this.ipToPlayerIds = ipToPlayerIds;
     }
 
-    public QueryRequest parse(String raw) throws ParseException {
+    /**
+     * @param allowIp whether the invoking source holds
+     *     {@code spyglass.search.ip}; the {@code ip:} param (IP→player
+     *     correlation, PII) is rejected without it (#48)
+     */
+    public QueryRequest parse(String raw, boolean allowIp) throws ParseException {
         List<QueryPredicate> predicates = new ArrayList<>();
         EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
         Sort sort = Sort.NEWEST_FIRST;
@@ -106,7 +111,12 @@ public final class ProxyQueryStringParser {
                                             ".*" + java.util.regex.Pattern.quote(value) + ".*",
                                             java.util.regex.Pattern.CASE_INSENSITIVE)));
                     case "target", "trg" -> predicates.add(new QueryPredicate.Eq("target", value));
-                    case "ip" -> predicates.add(resolveIpPredicate(value));
+                    case "ip" -> {
+                        if (!allowIp) {
+                            throw new ParseException("Missing permission spyglass.search.ip.");
+                        }
+                        predicates.add(resolveIpPredicate(value));
+                    }
                     case "w", "world" -> predicates.add(new QueryPredicate.Eq("location.worldName", value));
                     default -> throw new ParseException("Unknown parameter: " + alias);
                 }

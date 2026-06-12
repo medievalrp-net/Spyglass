@@ -116,9 +116,12 @@ public final class SpyglassCommand implements SimpleCommand {
             sendHelp(source);
             return;
         }
+        // One permission read per invocation: gates the ip: param at
+        // parse time and decides whether join IPs render or mask (#48).
+        boolean showIp = source.hasPermission("spyglass.search.ip");
         QueryRequest request;
         try {
-            request = parser.parse(raw);
+            request = parser.parse(raw, showIp);
         } catch (ProxyQueryStringParser.ParseException ex) {
             source.sendMessage(Component.text(ex.getMessage(), NamedTextColor.RED));
             return;
@@ -134,13 +137,14 @@ public final class SpyglassCommand implements SimpleCommand {
                                 "Query failed: " + error.getMessage(), NamedTextColor.RED));
                         return;
                     }
-                    deliver(source, key, result, request.flags());
+                    deliver(source, key, result, request.flags(), showIp);
                 });
     }
 
-    private void deliver(CommandSource source, UUID key, QueryResult result, EnumSet<Flag> flags) {
+    private void deliver(CommandSource source, UUID key, QueryResult result, EnumSet<Flag> flags,
+                         boolean showIp) {
         boolean grouping = !flags.contains(Flag.NO_GROUP);
-        List<Component> rendered = renderRows(result, flags, grouping);
+        List<Component> rendered = renderRows(result, flags, grouping, showIp);
         if (rendered.isEmpty()) {
             source.sendMessage(Component.text("No matching records.", NamedTextColor.GRAY));
             buffers.remove(key);
@@ -151,15 +155,16 @@ public final class SpyglassCommand implements SimpleCommand {
         sendPage(source, buffer, 1);
     }
 
-    private List<Component> renderRows(QueryResult result, EnumSet<Flag> flags, boolean grouping) {
+    private List<Component> renderRows(QueryResult result, EnumSet<Flag> flags, boolean grouping,
+                                       boolean showIp) {
         List<Component> rows = new ArrayList<>();
         if (grouping && !flags.contains(Flag.NO_GROUP) && !result.aggregations().isEmpty()) {
             for (QueryResult.RecordAggregation agg : result.aggregations()) {
-                rows.add(renderer.renderAggregation(agg));
+                rows.add(renderer.renderAggregation(agg, showIp));
             }
         } else {
             for (EventRecord record : result.records()) {
-                rows.add(renderer.renderSingle(record, flags));
+                rows.add(renderer.renderSingle(record, flags, showIp));
             }
         }
         return rows;

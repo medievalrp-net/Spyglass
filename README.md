@@ -50,6 +50,7 @@ All default to `op`. Grant via your permissions plugin to scope access.
 |---|---|
 | `spyglass.use` | `/spyglass help`, `/spyglass events`, `/spyglass page` |
 | `spyglass.search` | `/spyglass search` |
+| `spyglass.search.ip` | See join IPs in results and use the `ip:` key, on Paper and the proxy alike. Without it IPs render as `(ip hidden)` and `ip:` errors. |
 | `spyglass.rollback` | `/spyglass rollback`, `/spyglass restore`, `/spyglass undo`, `/spyglass rbqueue` |
 | `spyglass.tool` | `/spyglass tool` (inspection wand) |
 | `spyglass.tele` | `/spyglass tele` (jump to a search result) |
