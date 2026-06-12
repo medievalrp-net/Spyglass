@@ -41,13 +41,18 @@ public final class RollbackResumeStore {
     }
 
     // Best-effort: a write failure here logs but does not abort the
-    // rollback.
+    // rollback. {@code requestBase64} is the RESOLVED query plan
+    // (UndoReferenceBson-encoded, #49) — resume replays it verbatim
+    // instead of re-parsing {@code query}, whose r:/t: defaults would
+    // re-anchor to the resumer's position and clock. Null for jobs
+    // that must not be resumed from the marker (undo replays).
     public void markStart(UUID jobId, String operatorName, @Nullable UUID operatorId,
-                          String query, RollbackJob.Mode mode) {
+                          String query, RollbackJob.Mode mode,
+                          @Nullable String requestBase64) {
         Path file = baseDir.resolve(filename(jobId));
         try {
             Files.writeString(file, serialize(
-                    jobId, operatorName, operatorId, query, mode,
+                    jobId, operatorName, operatorId, query, mode, requestBase64,
                     Instant.now(), null, 0, 0), StandardCharsets.UTF_8);
         } catch (IOException ex) {
             logger.log(Level.WARNING, "Spyglass: failed to write resume marker for "
@@ -58,12 +63,13 @@ public final class RollbackResumeStore {
     // Updates the marker with cursor and counters after each page
     // completes so a crash resumes from here rather than the start.
     public void markProgress(UUID jobId, String operatorName, @Nullable UUID operatorId,
-                             String query, RollbackJob.Mode mode, Instant startedAt,
+                             String query, RollbackJob.Mode mode,
+                             @Nullable String requestBase64, Instant startedAt,
                              @Nullable Cursor cursor, int appliedSoFar, int skippedSoFar) {
         Path file = baseDir.resolve(filename(jobId));
         try {
             Files.writeString(file, serialize(
-                    jobId, operatorName, operatorId, query, mode,
+                    jobId, operatorName, operatorId, query, mode, requestBase64,
                     startedAt, cursor, appliedSoFar, skippedSoFar),
                     StandardCharsets.UTF_8);
         } catch (IOException ex) {
@@ -74,7 +80,8 @@ public final class RollbackResumeStore {
 
     private static String serialize(UUID jobId, String operatorName,
                                     @Nullable UUID operatorId, String query,
-                                    RollbackJob.Mode mode, Instant startedAt,
+                                    RollbackJob.Mode mode,
+                                    @Nullable String requestBase64, Instant startedAt,
                                     @Nullable Cursor cursor, int appliedSoFar,
                                     int skippedSoFar) {
         StringBuilder sb = new StringBuilder();
@@ -83,6 +90,7 @@ public final class RollbackResumeStore {
         if (operatorId != null) sb.append("operatorId=").append(operatorId).append('\n');
         sb.append("mode=").append(mode.name()).append('\n');
         sb.append("query=").append(escape(query)).append('\n');
+        if (requestBase64 != null) sb.append("request=").append(escape(requestBase64)).append('\n');
         sb.append("startedAt=").append(startedAt.toString()).append('\n');
         if (cursor != null) {
             sb.append("cursor.occurred=").append(cursor.occurred().toString()).append('\n');
@@ -128,7 +136,7 @@ public final class RollbackResumeStore {
         try {
             String text = Files.readString(file, StandardCharsets.UTF_8);
             UUID id = null, operatorId = null;
-            String operatorName = null, query = null;
+            String operatorName = null, query = null, requestBase64 = null;
             RollbackJob.Mode mode = RollbackJob.Mode.ROLLBACK;
             Instant startedAt = null;
             Instant cursorOccurred = null;
@@ -144,6 +152,7 @@ public final class RollbackResumeStore {
                     case "operatorId" -> operatorId = UUID.fromString(v);
                     case "operatorName" -> operatorName = v;
                     case "query" -> query = v;
+                    case "request" -> requestBase64 = v;
                     case "mode" -> mode = RollbackJob.Mode.valueOf(v);
                     case "startedAt" -> startedAt = Instant.parse(v);
                     case "cursor.occurred" -> cursorOccurred = Instant.parse(v);
@@ -161,7 +170,7 @@ public final class RollbackResumeStore {
             Cursor cursor = (cursorOccurred != null && cursorId != null)
                     ? new Cursor(cursorOccurred, cursorId) : null;
             return new Saved(id, operatorId, operatorName, query, mode, startedAt,
-                    cursor, applied, skipped, file);
+                    cursor, applied, skipped, requestBase64, file);
         } catch (Exception ex) {
             logger.log(Level.WARNING, "Spyglass: failed to read resume marker "
                     + file.getFileName(), ex);
@@ -200,6 +209,9 @@ public final class RollbackResumeStore {
         return sb.toString();
     }
 
+    /** {@code requestBase64} — the resolved query plan written at
+     *  submit time; null on markers from older Spyglass versions and
+     *  on undo-replay jobs, both of which refuse to resume (#49). */
     public record Saved(UUID id,
                         @Nullable UUID operatorId,
                         String operatorName,
@@ -209,6 +221,7 @@ public final class RollbackResumeStore {
                         @Nullable Cursor cursor,
                         int appliedSoFar,
                         int skippedSoFar,
+                        @Nullable String requestBase64,
                         Path file) {
         public String shortId() {
             return id.toString().substring(0, 8);
