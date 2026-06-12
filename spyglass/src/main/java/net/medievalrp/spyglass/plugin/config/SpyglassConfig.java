@@ -17,8 +17,20 @@ public record SpyglassConfig(
         Defaults defaults,
         Limits limits,
         Map<String, EventSettings> events,
+        java.util.List<String> commandRedact,
         Tool tool,
         Server server) {
+
+    /**
+     * Default heads for {@code events.command.redact} (#47): the common
+     * auth-plugin command set whose arguments are credentials. Applied
+     * when the key is absent from an existing on-disk config so old
+     * installs pick up redaction on upgrade; an explicit
+     * {@code redact = []} opts out.
+     */
+    public static final java.util.List<String> DEFAULT_COMMAND_REDACT = java.util.List.of(
+            "login", "register", "l", "reg", "changepassword", "changepw",
+            "unregister", "premium", "2fa", "totp", "auth");
 
     public static SpyglassConfig load(JavaPlugin plugin) throws IOException {
         Path path = plugin.getDataFolder().toPath().resolve("config.conf");
@@ -47,6 +59,8 @@ public record SpyglassConfig(
                 new EventSettings(
                         value.node("enabled").getBoolean(true),
                         value.node("past-tense").getString(String.valueOf(key)))));
+
+        java.util.List<String> commandRedact = parseCommandRedact(root);
 
         String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
@@ -97,8 +111,26 @@ public record SpyglassConfig(
                         // faster wall-clock at the cost of TPS.
                         root.node("limits", "rollback-tick-budget-ms").getLong(15L)),
                 Map.copyOf(events),
+                commandRedact,
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
                 new Server(root.node("server", "name").getString("default")));
+    }
+
+    /**
+     * Absent key (configs predating #47) → the default auth set; an
+     * explicit empty list is the operator's record-everything opt-out,
+     * so it must NOT fall back to the default. Null elements (HOCON
+     * oddities) are dropped rather than failing plugin enable.
+     */
+    static java.util.List<String> parseCommandRedact(ConfigurationNode root)
+            throws org.spongepowered.configurate.serialize.SerializationException {
+        ConfigurationNode redactNode = root.node("events", "command", "redact");
+        if (redactNode.virtual()) {
+            return DEFAULT_COMMAND_REDACT;
+        }
+        return redactNode.getList(String.class, java.util.List.of()).stream()
+                .filter(java.util.Objects::nonNull)
+                .toList();
     }
 
     public boolean enabled(String eventName) {

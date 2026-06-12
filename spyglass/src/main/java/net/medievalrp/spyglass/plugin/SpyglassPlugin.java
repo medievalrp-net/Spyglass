@@ -53,6 +53,7 @@ import net.medievalrp.spyglass.plugin.listener.block.FallingBlockLandListener;
 import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakListener;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatListener;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandListener;
+import net.medievalrp.spyglass.plugin.listener.chat.CommandRedaction;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerDragListener;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerInteractListener;
 import net.medievalrp.spyglass.plugin.listener.container.ContainerTransactionListener;
@@ -243,7 +244,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockUseListener(recorder, support),
                 new ContainerDropListener(recorder, support),
                 new ChatListener(recorder, support),
-                new CommandListener(recorder, support),
+                new CommandListener(recorder, support,
+                        new CommandRedaction(config.commandRedact())),
                 new JoinListener(recorder, support),
                 new QuitListener(recorder, support),
                 new LeavesDecayListener(recorder, support),
