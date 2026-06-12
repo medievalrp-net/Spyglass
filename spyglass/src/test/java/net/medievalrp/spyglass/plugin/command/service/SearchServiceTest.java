@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.command.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -64,8 +65,10 @@ class SearchServiceTest {
                 ServiceSupport.synchronous(), Logger.getLogger("test"));
 
         TestFixture() {
-            when(renderer.renderSingle(any(EventRecord.class), any())).thenReturn(Component.text("rendered"));
-            when(renderer.renderAggregation(any())).thenReturn(Component.text("rendered-agg"));
+            when(renderer.renderSingle(any(EventRecord.class), any(), anyBoolean()))
+                    .thenReturn(Component.text("rendered"));
+            when(renderer.renderAggregation(any(), anyBoolean()))
+                    .thenReturn(Component.text("rendered-agg"));
         }
     }
 

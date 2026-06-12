@@ -13,6 +13,11 @@ permissions:
     default: op
   spyglass.search:
     default: op
+  # Reveals player IPs in search results (join lines/hover) and
+  # unlocks the ip: param. Separate from spyglass.search so block-log
+  # access doesn't imply PII access (#48).
+  spyglass.search.ip:
+    default: op
   spyglass.rollback:
     default: op
   spyglass.tool:
