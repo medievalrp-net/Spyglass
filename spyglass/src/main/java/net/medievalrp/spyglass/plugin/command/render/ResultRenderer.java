@@ -84,6 +84,12 @@ public final class ResultRenderer {
         if (!tag.isEmpty()) {
             builder.append(Component.text(tag + " ", NamedTextColor.AQUA));
         }
+        // Extension-supplied leading tags (e.g. WhisperNet's channel) render
+        // between the origin tag and the actor name. Components arrive
+        // fully formed; we just space them out.
+        for (Component leadingTag : leadingTags(record)) {
+            builder.append(leadingTag).append(Component.space());
+        }
         builder.append(Component.text(displaySourceName(record), NamedTextColor.GREEN))
                 .append(Component.text(" " + verb(record), NamedTextColor.WHITE));
         int qty = quantityOf(record);
@@ -143,6 +149,27 @@ public final class ResultRenderer {
                                     Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
         return builder.build();
+    }
+
+    /**
+     * Leading tags contributed by a registered {@link DisplayRenderer} for
+     * this record's event. Mirrors the {@code renderTarget} contract: a
+     * {@code null} return or a thrown {@link RuntimeException} yields no tags.
+     */
+    private List<Component> leadingTags(EventRecord record) {
+        if (api == null) {
+            return List.of();
+        }
+        return api.displayRenderer(record.event())
+                .map(renderer -> {
+                    try {
+                        List<Component> tags = renderer.leadingTags(record);
+                        return tags == null ? List.<Component>of() : tags;
+                    } catch (RuntimeException ex) {
+                        return List.<Component>of();
+                    }
+                })
+                .orElse(List.of());
     }
 
     private static ClickEvent teleportClick(BlockLocation loc) {

@@ -64,4 +64,22 @@ public interface DisplayRenderer {
     default List<Component> hoverLines(EventRecord record) {
         return List.of();
     }
+
+    /**
+     * Leading tags rendered at the front of the result line — immediately
+     * after the origin tag (e.g. {@code [WhisperNet]}) and before the actor
+     * name. Each entry becomes its own bracket-style label, so a hook that
+     * parks context in a record field (a chat channel, a faction, a world
+     * shard) can surface it up front:
+     * "{@code [WhisperNet] [OOC] Alice said: hi}".
+     *
+     * <p>Return fully-formed components (including any brackets and colour);
+     * Spyglass appends each followed by a single space and does not wrap
+     * them. Return an empty list (the default) to add nothing. Same threading
+     * and error-handling contract as {@link #renderTarget}: main-thread only,
+     * and a {@code null}/throwing result falls back to no leading tags.
+     */
+    default List<Component> leadingTags(EventRecord record) {
+        return List.of();
+    }
 }
