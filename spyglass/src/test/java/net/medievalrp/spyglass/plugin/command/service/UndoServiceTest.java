@@ -48,12 +48,9 @@ class UndoServiceTest {
         SpyglassConfig.Limits limits = new SpyglassConfig.Limits(
                 250,         // maxRadius
                 1_000,       // searchResult
-                10_000,      // rollbackResult
                 50,          // chatDump
                 4_000,       // rollbackBatchSize
                 Duration.parse("30s"),  // rollbackFlushTimeout
-                20_000,      // rollbackPageSize
-                5_000_000,   // rollbackUndoCap
                 40L);        // rollbackTickBudgetMs
         return mock(SpyglassConfig.class, invocation -> {
             if ("limits".equals(invocation.getMethod().getName())) return limits;
