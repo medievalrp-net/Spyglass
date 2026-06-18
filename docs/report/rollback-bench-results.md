@@ -1,114 +1,88 @@
 # Spyglass vs CoreProtect — rollback throughput & TPS bench
 
-Head-to-head rollback of a **2,000,376-block** cube (126³), with **both** plugins on the **same ClickHouse** (`127.0.0.1:8123`; Spyglass → `spyglass` db, CoreProtect → `coreprotect` db via the `coreprotect-clickhouse` bridge). Run on `../RP_Server` (Paper 1.21.8, Java 21) under the **6 GB benchmark heap** (`start-bench.sh`), driven by [`regression/bot/compare.js`](../../regression/bot/compare.js). Profiling by the **Sundial** plugin (`/sundial`) + the JVM GC log (`logs/gc-bench.log`).
+Head-to-head rollback of a **2,000,376-block** cube (126³), with **both** plugins on the **same ClickHouse** (`127.0.0.1:8123`; Spyglass → `spyglass` db, CoreProtect → `coreprotect` db via the `coreprotect-clickhouse` bridge). Run on `../RP_Server` (Paper 1.21.8, Java 21) under the **6 GB benchmark heap** (`start-bench.sh`), driven by [`regression/bot/compare.js`](../../regression/bot/compare.js). GC from the JVM GC log (`logs/gc-bench.log`).
 
-Date of run: 2026-06-03. ClickHouse held ~65 M Spyglass / ~62 M CoreProtect rows from prior runs; all rollback queries are scoped per-bot (`p:`/`u:` + `t:`), so DB size is not a confound for the apply path.
+**Re-run 2026-06-18** on current `main` — after #19 (streaming collect), #44 (storage v2), and #59 (rollback-cap removal). **Two back-to-back runs**; numbers are reported `run1 / run2`. This supersedes the 2026-06-03 run. Two things changed materially since then:
 
-> **Read this first.** The wall-clock and MSPT numbers below make Spyglass look like it holds a flat 20 TPS. **It does not, at the config used.** A 2M rollback triggers G1 **stop-the-world GC pauses of ~0.5–1.0 s** that the MSPT metric cannot see (the rollback's work is off-main, so the pauses land in the inter-tick idle gap rather than extending a measured tick). See [The TPS metric is lying](#the-tps-metric-is-lying) and [Root cause](#root-cause-of-the-gc-freezes). The freezes are config-driven and have a known fix; this document records the *measured* state, warts included.
+1. **`/spyglass undo` now completes.** It used to materialize the whole inverse-effect list in heap and OOM'd above ~250 K effects, so the old run skipped it. It now streams, and reverses a 2M cube in ~8.6 s.
+2. **The rollback-time GC freezes are roughly halved.** The dials that drove them — `rollback-page-size` / `rollback-undo-cap` at 1M / 10M — are gone (#59); the engine now streams **16 bounded ~500 K-row windows** instead of one 1M-row window plus a 2M-element live undo list, so the +2 GB old-gen promotion that caused the freezes no longer happens.
 
 ## TL;DR
 
 | Dimension (2M blocks, ClickHouse) | **Spyglass** | **CoreProtect** | Winner |
 |---|---|---|---|
-| Rollback wall-clock | **13.7 s** (146 k blk/s) | 26.9 s (74 k blk/s) | SG (1.96×) |
-| Restore / re-apply wall-clock | n/a (undo skipped¹) | 14.1 s (142 k blk/s) | — |
-| MSPT 5 s-avg during op (avg) | **5.6 ms** | 66.3 ms | SG |
-| Worst single tick (MSPT 5 s-max) | 90 ms | 1132 ms | SG — but see caveat |
-| Main-thread CPU during rollback (Sundial) | **2.3 %** (90 % parked) | sustained on-main | SG |
-| **Worst GC stop-the-world pause** | **849 ms** | 429 ms | **CoreProtect** |
-| GC pauses > 500 ms during op | **3** (758/849/518 ms) | 2 (424/429 ms) | CoreProtect |
-| Sustained TPS feel | 20 TPS *between* GC freezes | ~15 TPS the **whole** op | SG |
+| Rollback wall-clock | **8.4 / 9.3 s** (~226 k blk/s) | 12.7 / 12.2 s (~161 k blk/s) | **SG ~1.4×** |
+| Undo / restore-to-air wall-clock | **8.8 / 8.4 s** (now works) | 12.8 / 15.3 s | **SG** |
+| MSPT 5 s-avg during op | **5.3 / 5.5 ms** | 44.1 / 36.7–55.9 ms | **SG** |
+| Worst single tick (MSPT 5 s-max) | **129 / 75 ms** | 276 / 603 ms | **SG** |
+| Sustained TPS during op | **20.0 / 20.0** | 17.1 / 15.7 (min 8–12) | **SG** |
+| Worst GC pause *during the rollback* | **307 / 424 ms** (was 849 ms) | on-main — folds into the tick | — |
 
-¹ `/spyglass undo` is skipped in the bench — it currently materializes the full inverse-effect list in heap on replay and OOMs above ~250 K effects. This is part of the same heap problem documented below and is covered by the fix.
-
-**Verdict.** Spyglass is ~2× faster than CoreProtect on the same ClickHouse and moves essentially all rollback work off the main thread (main is 90 % parked; tick *bodies* stay ~5 ms). CoreProtect does its apply on the main thread, so it lags *continuously* for the full 27 s (~15 TPS) and additionally throws its own 0.4 s GC freezes. **But Spyglass is not freeze-free:** at the throughput-tuned config it provokes a handful of ~0.5–1.0 s stop-the-world GC pauses per 2M rollback — its *largest* single pause (849 ms) is actually bigger than CoreProtect's (429 ms). Spyglass wins decisively on sustained smoothness and speed; it loses on worst-case single-pause length, and "flat 20 TPS" is an artifact of the metric, not reality. Eliminating the GC freezes is tracked as the rollback-heap fix.
-
-## Verification — the rollback actually changes blocks
-
-Before trusting any timing, confirmed the rollback physically rewrites the world (the completion message also fires on "No results", so a no-op would look instant). Via [`regression/bot/verify-rollback.js`](../../regression/bot/verify-rollback.js) on a 16³ cube, reading server-side ground truth (`execute if block`) at 9 sample points:
-
-| Stage | Server truth |
-|---|---|
-| after `fill stone` | stone ×9 |
-| after `//replace stone air` | air ×9 |
-| after `/spyglass rollback` | **stone ×9** |
-
-Engine reported `4096 reversals across 4 chunks`. Durability confirmed via [`regression/bot/persist-test.js`](../../regression/bot/persist-test.js): rolled-back blocks survive both a `save-all flush` and a *passive* chunk unload→reload (`ChunkDirectWriter.finishChunk` → `setUnsaved(true)` works on this Paper build). Note: the engine applies **unconditionally** (force-overwrite) — `applied` = blocks written, and re-running a rollback re-writes rather than skipping.
-
-## Methodology
-
-`compare.js` (size = 2M): `/fill stone` (RCON, unlogged) → `//replace stone air` (WorldEdit, logged by both plugins) → drain → baseline-TPS wait → time `/spyglass rollback p:<bot> t:30m -g` → `/fill air` reset → time `/co rollback` → time `/co restore`. TPS/MSPT sampled from `/mspt` every 1.5 s (5 s-window avg **and** max). **Sundial profiling is OFF during the timing run** — all-thread sampling forces a safepoint every 5 ms and biases SG's MSPT; it is run separately for attribution. Profiling rollbacks are issued from the console (RCON) against the leftover data, so they re-apply the real 2M set without re-ingesting.
-
-**Config used (the live `RP_Server/plugins/Spyglass/config.conf`):**
-
-| key | value used | shipped default |
-|---|---|---|
-| `rollback-page-size` | **1,000,000** | 20,000 |
-| `rollback-batch-size` | **1,000,000** | 4,000 |
-| `rollback-undo-cap` | **10,000,000** | 500,000 |
-
-These were raised during the perf push to maximize throughput. They are the direct cause of the GC behavior below.
+**Verdict.** On the same ClickHouse, Spyglass rolls back **~1.4× faster** than CoreProtect and holds a real **20 TPS** by doing the apply off-main (main thread ~parked the whole time); CoreProtect applies on-main and sags to ~16–18 TPS (dipping to 8–12) for the *entire* operation. `/spyglass undo` now reverses a 2M rollback in ~8.6 s — the heap blowup that forced it to be skipped is fixed. The rollback-time GC freezes the 2026-06-03 run flagged (3 pauses up to **849 ms**) are down to **one or two ~300–425 ms** Young (Mixed) pauses: the streaming windows removed the +2 GB old-gen promotion and the humongous 1M-row arrays that drove them. They are **reduced, not eliminated** — a 2M rollback still costs a couple of sub-half-second pauses. The *largest* pauses in the run (550–669 ms) are now during the **synthetic 2M ingest flood** (both plugins recording ~4M rows in ~15 s), not the rollback.
 
 ## Results
 
 ```
-Size  | Blocks    | SG rollback        | CP rollback        | CP restore
-------|-----------|--------------------|--------------------|-------------------
-2M    | 2,000,376 | 13.7s  146002 bps  | 26.9s   74444 bps  | 14.1s  141579 bps
+Size  | Blocks    | SG rollback        | SG undo            | CP rollback        | CP restore
+------|-----------|--------------------|--------------------|--------------------|-------------------
+run1  | 2,000,376 |  8.4s 237829 bps   |  8.8s 226159 bps   | 12.7s 157622 bps   | 12.8s 156732 bps
+run2  | 2,000,376 |  9.3s 215140 bps   |  8.4s 239079 bps   | 12.2s 164383 bps   | 15.3s 130966 bps
 
-mspt-5s-AVG during op (max-of-avgs / avg ms):
-2M    | SG 7.8/5.6 ms      | CP rb 178.0/66.3 ms   | CP restore 104.1/45.4 ms
+MSPT 5 s-AVG during op (max-of-avgs / avg ms):
+run1  | SG rb 6.6/5.3 | SG undo 5.5/4.7 | CP rb 100.6/44.1 | CP restore 102.5/46.7
+run2  | SG rb 6.1/5.5 | SG undo 6.6/5.5 | CP rb  85.1/36.7 | CP restore 122.2/55.9
 
-WORST SINGLE TICK (mspt 5s-window max):
-2M    | SG 90.1 ms         | CP rb 1132.4 ms       | CP restore 534.4 ms
+WORST SINGLE TICK (MSPT 5 s-window max):
+run1  | SG rb 128.8 | SG undo  40.2 | CP rb 276.0 | CP restore 370.8
+run2  | SG rb  74.6 | SG undo 157.4 | CP rb 269.0 | CP restore 603.4
 
-TPS (min/avg, derived from mspt — see caveat):
-2M    | SG 20.0/20.0       | CP rb 5.6/14.8        | CP restore 9.6/16.9
+TPS (min/avg, derived from MSPT — see caveat):
+run1  | SG rb 20.0/20.0 | SG undo 20.0/20.0 | CP rb 9.9/17.1 | CP restore 9.8/16.9
+run2  | SG rb 20.0/20.0 | SG undo 20.0/20.0 | CP rb 11.8/18.0 | CP restore 8.2/15.7
 ```
 
-**Where Spyglass spends the 13.3 s** (engine's own instrumentation): `query=7227ms (54%)` ≫ `prewarm=1210ms` `collect=612ms` `apply=2020ms (15%)`. The rollback is **read-bound on ClickHouse**, not write-bound. Per-page CH read (1M rows): `submit≈1.0s fetch≈2.2s decode≈0.9s`.
+**Where Spyglass spends the rollback** (engine instrumentation, run1 / run2): `query = 5117 / 5492 ms (~60 %)` ≫ `collect = 441 / 377 ms` `prewarm = 34 / 54 ms` `apply = 2296 / 2808 ms (~28 %)`, over **16 windows / 64 chunks**. Still **read-bound on ClickHouse**, not write-bound — the off-main apply is ~2.5 s of the ~9 s. Undo is the same shape in reverse (`query ≈ 4.8–5.3 s`, `apply ≈ 2.3 s`).
 
-**Sundial main-thread profile** (during SG rollback): `90.3% Unsafe.park` — the main thread is parked the whole time; Spyglass's own main-thread footprint is **2.3%**. Confirms the off-main design works.
+## The GC story (the 2026-06-03 caveat, re-measured)
 
-### The TPS metric is lying
+The old run's headline warning was that the throughput-tuned config (`rollback-page-size`/`rollback-batch-size`/`rollback-undo-cap` = 1M/1M/10M) provoked **3 stop-the-world pauses of 518 / 758 / 849 ms** during a single 2M rollback, by promoting ~2 GB to old gen (the 2M-element live undo list) and allocating humongous 1M-element arrays straight into old gen.
 
-During the SG rollback the GC log shows stop-the-world pauses of **131 / 758 / 849 / 518 ms** — yet the bench reported a 90 ms worst tick and "flat 20 TPS." MSPT measures **tick-body** time; with the rollback's work off-main the main thread is ~90 % parked, so a GC pause mostly lands in the inter-tick idle budget and never extends a measured tick. `compare.js` derives TPS *from* MSPT, so it inherits the blind spot. The tell: SG's **larger** 849 ms pause produced a **smaller** worst tick (90 ms) than CoreProtect's 429 ms pause (1132 ms tick) — only possible because CoreProtect works on-main (pause hits the tick body) and SG does not. Real player-visible effect of an 849 ms pause is an 849 ms freeze regardless of how MSPT accounts it.
+Those dials are gone. Correlating `logs/gc-bench.log` pause timestamps against the rollback window (the `Spyglass rollback … 8313ms` / `9208ms` log lines):
 
-### Root cause of the GC freezes
+| | 2026-06-03 (tuned) | **2026-06-18 (current)** |
+|---|---|---|
+| Pauses > 500 ms *during the rollback* | 3 | **0** |
+| Worst pause *during the rollback* | **849 ms** | **307 / 424 ms** |
+| Apply windows | 1 (one 1M-row page) | **16 (bounded ~500 K)** |
+| Largest pause anywhere in the run | 849 ms (rollback) | 550 / 669 ms (**ingest flood**, not rollback) |
 
-The big pauses are **"Pause Young (Mixed)"** — G1 evacuating *old-gen* regions, i.e. long-lived data was promoted. G1 region accounting across one 2M rollback (region size 8 MB, 6 GB heap):
+So the rollback no longer drives the old gen up by 2 GB; it streams. What remains: a 2M rollback still pays one or two ~300–425 ms Young (Mixed) pauses (the apply churns short-lived per-window effect objects), and the heaviest pauses in a bench *run* are now the ingest of 2M edits recorded by both plugins at once — an artificial condition you'd never hit in normal play.
 
-| | start | peak | meaning |
-|---|---|---|---|
-| Old regions | 223 (~1.8 GB) | **470 (~3.8 GB)** | **+~2 GB promoted to old gen mid-rollback** |
-| Humongous regions | 25 | 38 | the 1M-element backing arrays (~8 MB each) |
-| GC pause | — | **0.5–1.0 s** | back-to-back Mixed GCs evacuating the swollen old gen |
+### The TPS metric still has the same blind spot
 
-Two config dials drive it:
-1. **`rollback-undo-cap = 10M`** — `RollbackService` keeps one inverse `RollbackEffect` per applied block, for the **whole** rollback (2M live objects), pushing to `undo_history` only at the end. These survive Young GCs and promote to old gen — most of the +2 GB. (config's own comment: *"the inverse list itself becomes a heap problem."*)
-2. **`rollback-page-size` / `rollback-batch-size = 1M`** — a 1M-element `Object[]`/`RollbackResult[]` is ~8 MB, over G1's 4 MB **humongous** threshold, so each lands directly in old gen (the 25–38 humongous regions). Prefetch keeps two 1M-row pages live at once.
+MSPT measures **tick-body** time. With Spyglass's apply off-main the main thread is ~parked, so a GC pause lands in the inter-tick idle budget and never extends a measured tick — `compare.js` derives TPS from MSPT and inherits the blind spot. That's why SG shows "20.0/20.0" even though the GC log has 300–425 ms pauses: real player-visible effect of a 400 ms pause is a 400 ms hitch regardless of how MSPT accounts it. CoreProtect, working on-main, takes the pause *in* the tick body, which is why its worst ticks (269–603 ms) and its TPS sag (down to 8–12) are visible directly.
 
-On a 6 GB heap this drives old gen 1.8 → 3.8 GB, and G1 can't honor `MaxGCPauseMillis=200` evacuating a 470-region old gen. It is **retention during the op, not a leak** — old regions fall back afterward. Small rollbacks never hit it (4 096 blocks: 256 ms, zero GC drama).
+## Verification — the rollback actually changes blocks
 
-The fix (tracked separately) keeps undo fully functional for arbitrarily large rollbacks by **streaming inverse effects to `undo_history` per page** (the table is already chunked, keyed on `operation_id, chunk_index`) and **paging the undo replay**, plus bounding apply sub-batches under the 4 MB humongous threshold — so `undo-cap` can stay high (undo is the safety net for an accidental huge rollback) at near-zero heap cost.
+Timing is meaningless if the rollback no-ops (the completion message also fires on "No results"). Confirmed independently with [`regression/bot/verify-rollback-count.js`](../../regression/bot/verify-rollback-count.js): fill a 64³ cube with stone (RCON, unlogged), `//set air` (logged), `/sg rollback`, then count restored blocks server-side via `/fill … replace`. Result: **262,144 / 262,144 (100 %)** restored, 0 air, 0 corrupted, every chunk full. (This same harness caught #59: at a `rollback-result=10000` cap only 10,000 / 262,144 came back.)
+
+## Methodology
+
+`compare.js` (size = 2M): `/fill stone` (RCON, unlogged) → `//replace stone air` (WorldEdit, logged by both plugins) → drain → baseline-TPS wait → time `/spyglass rollback p:<bot> t:30m -g` → `/spyglass undo` → time `/co rollback` → `/co restore`. Each bot has a unique name + Z offset so per-user rollbacks (`p:` SG / `u:` CP) never cross-contaminate. TPS/MSPT sampled from `/mspt` every 1.5 s (5 s-window avg **and** max).
+
+**Config:** the shipped defaults (post-#59) — `rollback-batch-size = 4000`, `rollback-tick-budget-ms = 15`, page size a fixed 500 K internal default. No throughput-tuning dials remain to set.
 
 ## Reproduction
 
 ```
-# Server up on the bench heap (≥6 GB; the 3 GB prod heap drops the bot mid-ingest):
-../RP_Server/start-bench.sh
+# Server on the 6 GB bench heap (the 3 GB prod heap drops the bot mid-ingest):
+../RP_Server/start-bench.sh      # Spyglass backend=clickhouse, coreprotect-clickhouse bridge
 
-# Timing head-to-head (Sundial OFF):
-node regression/bot/compare.js                 # 2M cube; SG vs CP rollback + CP restore
+node regression/bot/compare.js              # 2M cube; SG vs CP rollback + undo + restore
+node regression/bot/verify-rollback-count.js  # independent before/after block count
 
-# Verify blocks change + durability:
-node regression/bot/verify-rollback.js
-node regression/bot/persist-test.js            # add 'nosave' arg for passive-unload test
-
-# Profile a rollback (Sundial main + all) against existing data, no re-ingest:
-bash regression/bot/profile-rollback.sh <botTag>     # reports under RP_Server/plugins/Sundial/reports/
-
-# GC pauses for a window:  grep 'Pause Young' RP_Server/logs/gc-bench.log
+# GC pauses for the run:
+grep -E '\) Pause (Young|Full|Remark).*[0-9.]+ms$' ../RP_Server/logs/gc-bench.log
 ```
 
 RCON: `127.0.0.1:25576` (pw `test123`); one-shot helper `regression/bot/rcon-send.js "<cmd>"`.
