@@ -21,7 +21,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.SpyglassApi;
-import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryRequest;
@@ -29,9 +28,9 @@ import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.rollback.RollbackResult;
-import net.medievalrp.spyglass.api.rollback.Rollbackable;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
+import net.medievalrp.spyglass.plugin.rollback.BlockColumns;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.UndoReferenceBson;
@@ -306,9 +305,10 @@ public final class RollbackService {
         // the audit emit).
         long queryNanos = 0L, collectNanos = 0L, prewarmNanos = 0L, applyNanos = 0L;
         int windowCount = 0;
-        // Chunks already pre-warmed by an earlier window of this job.
+        // Chunks already pre-warmed by an earlier window of this job. Doubles
+        // as the distinct-chunk tally for the summary (every effect's chunk
+        // lands here), so no separate string set is built per applied cell.
         Map<UUID, Set<Long>> warmedChunks = new HashMap<>();
-        java.util.HashSet<String> chunkKeys = new java.util.HashSet<>();
         java.util.LinkedHashMap<String, Integer> skipCounts = new java.util.LinkedHashMap<>();
         // Per-world bounding boxes of applied writes — recorded into the
         // operation reference so search synthesis (#22) and operators
@@ -335,7 +335,8 @@ public final class RollbackService {
         // the per-page query+collect+prewarm stalls that cost 13.8s at
         // the old 20K default.
         final int windowSize = applyWindow;
-        final Window readDone = new Window(List.of(), java.util.Map.of(), null, 0);
+        final Window readDone = new Window(
+                java.util.Map.of(), List.of(), java.util.Map.of(), java.util.Map.of(), null, 0);
         // One slot, not two: a deeper queue only grows the in-flight
         // live set that MTT=1 promotes (see applyWindow). One queued +
         // one applying + one accumulating still overlaps read with
@@ -353,20 +354,44 @@ public final class RollbackService {
                     return t;
                 });
         final net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor readerStart = startCursor;
+        final boolean rollbackDirection = mode == RollbackMode.ROLLBACK;
         reader.execute(() -> {
-            WindowAccumulator acc = new WindowAccumulator(windowSize, mode, foldNanos);
+            WindowAccumulator acc = new WindowAccumulator(windowSize, foldNanos);
             try {
                 net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cur = readerStart;
                 int seen = 0;
                 while (!cancelFlag.get() && seen < hardLimit) {
                     int ask = Math.min(pageSize, hardLimit - seen);
                     int seenBefore = acc.seen();
-                    cur = store.streamRollback(request, cur, ask, record -> {
-                        acc.take(record);
-                        if (acc.full()) {
-                            putWindow(ready, acc.drain());
-                        }
-                    });
+                    // Lean effect stream (#67): the store folds each row
+                    // straight into the columnar accumulator in the requested
+                    // direction. A simple block-replace arrives as primitives
+                    // (no effect/snapshot object); only tile-entity blocks,
+                    // containers, and entities arrive as built effects.
+                    cur = store.streamRollbackEffects(request, cur, ask, rollbackDirection,
+                            new net.medievalrp.spyglass.plugin.storage.RecordStore.RollbackEffectSink() {
+                                @Override
+                                public void block(UUID worldId, int x, int y, int z, String blockData,
+                                                  String expectedData, Instant occurred, UUID id) {
+                                    acc.block(worldId, x, y, z, blockData, expectedData, occurred, id);
+                                    if (acc.full()) {
+                                        putWindow(ready, acc.drain());
+                                    }
+                                }
+
+                                @Override
+                                public void complex(RollbackEffect effect, Instant occurred, UUID id) {
+                                    acc.complex(effect, occurred, id);
+                                    if (acc.full()) {
+                                        putWindow(ready, acc.drain());
+                                    }
+                                }
+
+                                @Override
+                                public void skip(Instant occurred, UUID id) {
+                                    acc.skip(occurred, id);
+                                }
+                            });
                     int got = acc.seen() - seenBefore;
                     seen += got;
                     if (cur == null || got < ask) {
@@ -410,7 +435,7 @@ public final class RollbackService {
                 }
                 windowCount++;
                 totalSeen += window.seenDelta();
-                if (window.effects().isEmpty()) {
+                if (window.isEmpty()) {
                     checkpoint(job, window, totalApplied, totalSkipped, resumeRequest);
                     continue;
                 }
@@ -438,19 +463,43 @@ public final class RollbackService {
                     preWarmChunks(freshChunks).join();
                     prewarmNanos += System.nanoTime() - tPrewarm;
                 }
-                List<RollbackResult> results;
+                // Apply: simple block-replaces via the columnar engine path
+                // (counts only, no per-cell objects — the apply-side fix that
+                // stops old-gen promotion under MTT=1), the rare complex
+                // effects via the object path. Both run their writes off-main
+                // and yield by tick, so TPS stays at ~20.
                 long tApply = System.nanoTime();
+                RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                List<RollbackResult> complexResults = List.of();
                 try {
-                    java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
-                            new java.util.concurrent.CompletableFuture<>();
-                    List<RollbackEffect> effects = window.effects();
-                    support.onMainThread(() ->
-                            engine.applyAllChunked(effects, sender, support, batchSize, cancelFlag)
-                                    .whenComplete((r, err) -> {
-                                        if (err != null) fut.completeExceptionally(err);
-                                        else fut.complete(r);
-                                    }));
-                    results = fut.join();
+                    for (Map.Entry<UUID, BlockColumns> worldCols : window.columnsByWorld().entrySet()) {
+                        BlockColumns cols = worldCols.getValue();
+                        if (cols.count() == 0) {
+                            continue;
+                        }
+                        UUID worldId = worldCols.getKey();
+                        java.util.concurrent.CompletableFuture<RollbackEngine.ApplyCounts> fut =
+                                new java.util.concurrent.CompletableFuture<>();
+                        support.onMainThread(() ->
+                                engine.applyColumnsChunked(worldId, cols, sender, support, batchSize, cancelFlag)
+                                        .whenComplete((c, err) -> {
+                                            if (err != null) fut.completeExceptionally(err);
+                                            else fut.complete(c);
+                                        }));
+                        counts.add(fut.join());
+                    }
+                    if (!window.complex().isEmpty()) {
+                        java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
+                                new java.util.concurrent.CompletableFuture<>();
+                        List<RollbackEffect> complex = window.complex();
+                        support.onMainThread(() ->
+                                engine.applyAllChunked(complex, sender, support, batchSize, cancelFlag)
+                                        .whenComplete((r, err) -> {
+                                            if (err != null) fut.completeExceptionally(err);
+                                            else fut.complete(r);
+                                        }));
+                        complexResults = fut.join();
+                    }
                 } catch (java.util.concurrent.CompletionException ex) {
                     Throwable cause = ex.getCause() == null ? ex : ex.getCause();
                     logger.warning("Spyglass " + mode.label() + " window apply failed: " + cause);
@@ -460,22 +509,18 @@ public final class RollbackService {
                     return;
                 }
                 applyNanos += System.nanoTime() - tApply;
-                for (RollbackResult r : results) {
-                    if (r instanceof RollbackResult.Applied applied) {
+                // Columnar block-replace counts.
+                totalApplied += (int) counts.applied;
+                totalSkipped += (int) counts.skipped();
+                totalErrors += (int) counts.errors();
+                mergeSkip(skipCounts, "block changed", counts.blockChanged);
+                mergeSkip(skipCounts, "Unparseable blockdata", counts.unparseable);
+                mergeSkip(skipCounts, "invalid location", counts.invalidLocation);
+                mergeSkip(skipCounts, "Cancelled by operator", counts.cancelled);
+                // The rare complex effects' per-cell results.
+                for (RollbackResult r : complexResults) {
+                    if (r instanceof RollbackResult.Applied) {
                         totalApplied++;
-                        BlockLocation loc = locationOf(applied.effect());
-                        if (loc != null) {
-                            chunkKeys.add(loc.worldId() + ":"
-                                    + (loc.x() >> 4) + ":" + (loc.z() >> 4));
-                            int[] box = worldBoxes.computeIfAbsent(loc.worldId(), k ->
-                                    new int[]{loc.x(), loc.y(), loc.z(), loc.x(), loc.y(), loc.z()});
-                            box[0] = Math.min(box[0], loc.x());
-                            box[1] = Math.min(box[1], loc.y());
-                            box[2] = Math.min(box[2], loc.z());
-                            box[3] = Math.max(box[3], loc.x());
-                            box[4] = Math.max(box[4], loc.y());
-                            box[5] = Math.max(box[5], loc.z());
-                        }
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
                         skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
@@ -486,6 +531,24 @@ public final class RollbackService {
                             totalErrors++;
                         }
                     }
+                }
+                // Per-world bounding box of this window (block + complex). A
+                // superset of the applied box — safe: the op reference is only
+                // emitted when applied > 0, and synthesis (#22) re-filters
+                // within it.
+                for (Map.Entry<UUID, int[]> boxEntry : window.boxes().entrySet()) {
+                    int[] wb = boxEntry.getValue();
+                    worldBoxes.merge(boxEntry.getKey(),
+                            new int[]{wb[0], wb[1], wb[2], wb[3], wb[4], wb[5]},
+                            (a, b) -> {
+                                a[0] = Math.min(a[0], b[0]);
+                                a[1] = Math.min(a[1], b[1]);
+                                a[2] = Math.min(a[2], b[2]);
+                                a[3] = Math.max(a[3], b[3]);
+                                a[4] = Math.max(a[4], b[4]);
+                                a[5] = Math.max(a[5], b[5]);
+                                return a;
+                            });
                 }
                 job.appliedCount.set(totalApplied);
                 job.skippedCount.set(totalSkipped);
@@ -529,13 +592,18 @@ public final class RollbackService {
         // Folding happens on the reader thread; pull its tally into the
         // collect slot so the breakdown still accounts for it.
         collectNanos = foldNanos.get();
+        // Distinct chunks touched == every chunk that was pre-warmed.
+        int chunkCount = 0;
+        for (Set<Long> set : warmedChunks.values()) {
+            chunkCount += set.size();
+        }
         logger.info(String.format(
                 "Spyglass %s %s timings: query=%dms collect=%dms prewarm=%dms apply=%dms"
                         + " | %d windows, %d chunks, %d applied, %dms total",
                 mode.label(), job.shortId(),
                 queryNanos / 1_000_000L, collectNanos / 1_000_000L,
                 prewarmNanos / 1_000_000L, applyNanos / 1_000_000L,
-                windowCount, chunkKeys.size(), totalApplied, elapsedMs));
+                windowCount, chunkCount, totalApplied, elapsedMs));
         // One reference blob serves both audiences: the undo ledger row
         // (written before the summary so "done" implies /undo is ready)
         // and the rollback-op event record that searches synthesize the
@@ -592,7 +660,7 @@ public final class RollbackService {
             }
         }
         Summary summary = new Summary(totalApplied, totalSkipped, totalErrors,
-                chunkKeys.size(), elapsedMs);
+                chunkCount, elapsedMs);
         boolean undoUnavailableFinal = undoUnavailable;
         support.onMainThread(() -> deliverStreamingSummary(
                 sender, mode, summary, skipCounts, undoUnavailableFinal));
@@ -664,15 +732,29 @@ public final class RollbackService {
         this.applyWindow = Math.max(1, windowSize);
     }
 
-    // One bounded unit of the streaming pipeline (#19): the effects to
-    // apply, the chunks to pre-warm for them, the keyset position after
-    // the last record folded in (for crash-resume checkpoints), and how
-    // many records were consumed to build it.
-    private record Window(List<RollbackEffect> effects,
+    // One bounded unit of the streaming pipeline (#19, #67): simple
+    // block-replaces as columnar primitives (per world), the rare complex
+    // effects as objects, the chunks to pre-warm, the per-world bounding
+    // box, the keyset position after the last row folded in (for
+    // crash-resume checkpoints), and how many rows were consumed to build it.
+    private record Window(Map<UUID, BlockColumns> columnsByWorld,
+                          List<RollbackEffect> complex,
                           Map<UUID, Set<Long>> prewarmChunks,
+                          Map<UUID, int[]> boxes,
                           @org.jetbrains.annotations.Nullable
                           net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor cursorAfter,
                           int seenDelta) {
+        boolean isEmpty() {
+            if (!complex.isEmpty()) {
+                return false;
+            }
+            for (BlockColumns cols : columnsByWorld.values()) {
+                if (cols.count() > 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     // Unwinds the reader when the consumer tore the pipeline down.
@@ -691,61 +773,104 @@ public final class RollbackService {
         }
     }
 
-    // Folds streamed records into windows on the reader thread: effect
-    // direction by mode, prewarm chunk set, and the running keyset
-    // position. Single-threaded by construction (one reader).
+    // Folds streamed rows into windows on the reader thread (#67): simple
+    // block-replaces into primitive BlockColumns (per world, with an
+    // interned block-data palette), complex effects into an object list,
+    // plus the prewarm chunk set, per-world box, and keyset position.
+    // Single-threaded by construction (one reader).
     private static final class WindowAccumulator {
 
-        // Snapshot canonicalizer. Each decoded record carries its own
-        // BlockSnapshot copies, and effects outlive the record while
-        // their window queues for apply — under stock Aikar flags
-        // (MTT=1) those survivors promote to old gen, and two ~120 B
-        // snapshots per effect were most of the promoted bytes. Bulk
-        // rollbacks repeat a handful of materials, so interning turns
-        // the retained pair into two pointers. Bounded: high-entropy
-        // data (unique container payloads) resets the epoch instead of
-        // growing without limit.
+        // Snapshot canonicalizer for the COMPLEX path only: those effects
+        // outlive the row while their window queues for apply, and under
+        // stock Aikar flags (MTT=1) survivors promote to old gen. Simple
+        // blocks never reach here — they are primitives in BlockColumns,
+        // and their block-data is interned in the column palette instead.
         private static final int INTERN_CAP = 4096;
         private final Map<net.medievalrp.spyglass.api.event.BlockSnapshot,
                 net.medievalrp.spyglass.api.event.BlockSnapshot> snapshotCache = new HashMap<>();
 
         private final int windowSize;
-        private final RollbackMode mode;
+        private final int columnInitialCapacity;
         private final java.util.concurrent.atomic.AtomicLong foldNanos;
-        private List<RollbackEffect> effects;
+        private Map<UUID, BlockColumns> columnsByWorld;
+        private List<RollbackEffect> complex;
         private Map<UUID, Set<Long>> prewarm;
+        private Map<UUID, int[]> boxes;
         private java.time.Instant lastOccurred;
         private UUID lastId;
+        private int effectCount;
         private int seen;
         private int drainedSeen;
 
-        WindowAccumulator(int windowSize, RollbackMode mode,
+        WindowAccumulator(int windowSize,
                           java.util.concurrent.atomic.AtomicLong foldNanos) {
             this.windowSize = windowSize;
-            this.mode = mode;
+            // Single-world is the norm, so the first world's columns grow to
+            // ~windowSize; cap the initial allocation so a rare many-world
+            // window doesn't over-reserve per world.
+            this.columnInitialCapacity = Math.min(Math.max(windowSize, 16), 16_384);
             this.foldNanos = foldNanos;
-            this.effects = new ArrayList<>();
-            this.prewarm = new HashMap<>();
+            reset();
         }
 
-        void take(EventRecord record) {
+        private void reset() {
+            this.columnsByWorld = new HashMap<>();
+            this.complex = new ArrayList<>();
+            this.prewarm = new HashMap<>();
+            this.boxes = new HashMap<>();
+            this.effectCount = 0;
+        }
+
+        // Simple block-replace: folded straight into primitive columns,
+        // block-data interned to a palette id — no effect/snapshot object.
+        void block(UUID worldId, int x, int y, int z, String blockData,
+                   String expectedData, java.time.Instant occurred, UUID id) {
             long start = System.nanoTime();
             seen++;
-            // Always advance the cursor, even for non-rollbackable
-            // records — freezing on one would re-read it forever.
-            lastOccurred = record.occurred();
-            lastId = record.id();
-            if (record instanceof Rollbackable rollbackable) {
-                effects.add(intern(mode == RollbackMode.ROLLBACK
-                        ? rollbackable.rollbackEffect()
-                        : rollbackable.restoreEffect()));
-                BlockLocation loc = record.location();
-                if (loc != null) {
-                    long packed = ((long) (loc.x() >> 4) << 32) | ((loc.z() >> 4) & 0xFFFFFFFFL);
-                    prewarm.computeIfAbsent(loc.worldId(), k -> new HashSet<>()).add(packed);
-                }
+            effectCount++;
+            lastOccurred = occurred;
+            lastId = id;
+            BlockColumns cols = columnsByWorld.computeIfAbsent(
+                    worldId, k -> new BlockColumns(columnInitialCapacity));
+            cols.add(x, y, z, cols.intern(blockData), cols.intern(expectedData));
+            recordChunkAndBox(worldId, x, y, z);
+            foldNanos.addAndGet(System.nanoTime() - start);
+        }
+
+        // Container / entity / tile-entity block / custom: kept as an
+        // object and applied via the proven object path.
+        void complex(RollbackEffect effect, java.time.Instant occurred, UUID id) {
+            long start = System.nanoTime();
+            seen++;
+            effectCount++;
+            lastOccurred = occurred;
+            lastId = id;
+            complex.add(intern(effect));
+            BlockLocation loc = locationOf(effect);
+            if (loc != null) {
+                recordChunkAndBox(loc.worldId(), loc.x(), loc.y(), loc.z());
             }
             foldNanos.addAndGet(System.nanoTime() - start);
+        }
+
+        // A matched-but-not-rollbackable row: advance the cursor only.
+        // Freezing on one would re-read it forever.
+        void skip(java.time.Instant occurred, UUID id) {
+            seen++;
+            lastOccurred = occurred;
+            lastId = id;
+        }
+
+        private void recordChunkAndBox(UUID worldId, int x, int y, int z) {
+            long packed = ((long) (x >> 4) << 32) | ((z >> 4) & 0xFFFFFFFFL);
+            prewarm.computeIfAbsent(worldId, k -> new HashSet<>()).add(packed);
+            int[] box = boxes.computeIfAbsent(worldId, k -> new int[]{x, y, z, x, y, z});
+            if (x < box[0]) box[0] = x;
+            if (y < box[1]) box[1] = y;
+            if (z < box[2]) box[2] = z;
+            if (x > box[3]) box[3] = x;
+            if (y > box[4]) box[4] = y;
+            if (z > box[5]) box[5] = z;
         }
 
         private RollbackEffect intern(RollbackEffect effect) {
@@ -772,7 +897,7 @@ public final class RollbackService {
         }
 
         boolean full() {
-            return effects.size() >= windowSize;
+            return effectCount >= windowSize;
         }
 
         int seen() {
@@ -784,15 +909,21 @@ public final class RollbackService {
         }
 
         Window drain() {
-            Window window = new Window(effects, prewarm,
+            Window window = new Window(columnsByWorld, complex, prewarm, boxes,
                     lastOccurred == null ? null
                             : new net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor(
                                     lastOccurred, lastId),
                     seen - drainedSeen);
             drainedSeen = seen;
-            effects = new ArrayList<>();
-            prewarm = new HashMap<>();
+            reset();
             return window;
+        }
+    }
+
+    private static void mergeSkip(java.util.LinkedHashMap<String, Integer> skipCounts,
+                                  String reason, long count) {
+        if (count > 0) {
+            skipCounts.merge(reason, (int) count, Integer::sum);
         }
     }
 
