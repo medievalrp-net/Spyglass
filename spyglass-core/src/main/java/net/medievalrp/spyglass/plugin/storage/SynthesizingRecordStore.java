@@ -53,6 +53,24 @@ public final class SynthesizingRecordStore implements RecordStore {
     }
 
     @Override
+    public QueryPage.Cursor streamRollback(QueryRequest request, QueryPage.Cursor cursor,
+                                           int windowLimit, RecordSink sink) {
+        // Rollback reads the real recorded events, never the synthesized
+        // rolled-* receipts — you don't roll back a rollback's audit
+        // trail. Delegate straight through so the concrete store's
+        // wire-streaming reader is used (the interface default would route
+        // back through queryPage and materialize a full page list).
+        return delegate.streamRollback(request, cursor, windowLimit, sink);
+    }
+
+    @Override
+    public QueryPage.Cursor streamRollbackEffects(QueryRequest request, QueryPage.Cursor cursor,
+                                                  int windowLimit, boolean rollback,
+                                                  RollbackEffectSink sink) {
+        return delegate.streamRollbackEffects(request, cursor, windowLimit, rollback, sink);
+    }
+
+    @Override
     public void close() {
         delegate.close();
     }
