@@ -357,7 +357,7 @@ class ClickhouseVsMongoBench {
                         origin, source, loc, "test", "DIAMOND", "CHEST", 3, 1, diamond, null);
                 case "say" -> new ChatRecord(id, "say", occurred, expiresAt,
                         origin, source, loc, "test", PLAYER_NAMES[playerIdx],
-                        "msg-" + i, List.of());
+                        "msg-" + i, List.of(), java.util.Map.of());
                 case "death" -> new EntityDeathRecord(id, "death", occurred, expiresAt,
                         origin, source, loc, "test", "ZOMBIE", "ZOMBIE",
                         UUID.randomUUID(), "player", "ENTITY_ATTACK", null);
