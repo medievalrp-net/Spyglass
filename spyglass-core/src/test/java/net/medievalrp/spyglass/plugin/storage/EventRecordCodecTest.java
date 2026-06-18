@@ -316,7 +316,7 @@ class EventRecordCodecTest {
                 UUID.randomUUID(), "say", WHEN, WHEN.plusSeconds(3600),
                 Origin.player(), Source.player(ALICE, "Alice"),
                 new BlockLocation(WORLD, "world", 5, 64, 5),
-                "test", "Alice", "hello world", List.of());
+                "test", "Alice", "hello world", List.of(), java.util.Map.of("channel", "#OOC"));
         BlockBreakRecord brk = sampleBreak();
 
         assertThat(decode(encode(chat))).isInstanceOf(ChatRecord.class).isEqualTo(chat);

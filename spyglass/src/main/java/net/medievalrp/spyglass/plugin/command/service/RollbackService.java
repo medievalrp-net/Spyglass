@@ -584,7 +584,7 @@ public final class RollbackService {
                                 net.medievalrp.spyglass.api.util.EventIds.newId(), opOccurred,
                                 config.storage().retention().after(opOccurred),
                                 net.medievalrp.spyglass.api.event.Origin.rollback(sender.getName()),
-                                opSource, opLocation, config.server().name()),
+                                opSource, opLocation, config.server().name(), java.util.Map.of()),
                         mode.name(), reference));
             } catch (RuntimeException ex) {
                 logger.warning("Spyglass rollback-op record emit failed ("
