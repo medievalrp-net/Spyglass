@@ -254,6 +254,9 @@ public final class ResultRenderer {
         if (record instanceof TeleportRecord tp && tp.cause() != null && !tp.cause().isBlank()) {
             lines.add(kv("Via", tp.cause()));
         }
+        // Plugin-supplied extension fields (e.g. a chat channel) get their own
+        // hover line, so they're visible even with no DisplayRenderer registered.
+        record.extensions().forEach((key, value) -> lines.add(kv(capitalizeKey(key), value)));
         // Append extra hover lines from a registered DisplayRenderer, if any.
         if (api != null) {
             api.displayRenderer(record.event()).ifPresent(renderer -> {
@@ -385,6 +388,14 @@ public final class ResultRenderer {
             return channel + ": " + message;
         }
         return message;
+    }
+
+    /** Title-cases an extension-field key for its hover label ("channel" -> "Channel"). */
+    private static String capitalizeKey(String key) {
+        if (key == null || key.isEmpty()) {
+            return key;
+        }
+        return Character.toUpperCase(key.charAt(0)) + key.substring(1);
     }
 
     private static String originTag(Origin origin) {
