@@ -443,9 +443,12 @@ class ClickHouseRecordStoreIT {
 
         assertThat(blocks).hasSize(5);
         assertThat(skips[0]).isZero();
-        // rollback writes the before-state (stone), expects the after (air).
+        // rollback writes the before-state (stone). The expected side is
+        // never read under force-overwrite (#69) — the direction-specific
+        // SELECT omits after_* entirely on a rollback — so expectedData is
+        // null. (This is the read-churn cut: ~half the per-row string decode.)
         assertThat(blockData).containsOnly("minecraft:stone");
-        assertThat(expectedData).containsOnly("minecraft:air");
+        assertThat(expectedData).containsOnly((String) null);
         // The sign block fell back to a built BlockReplace effect.
         assertThat(complex).hasSize(1);
         assertThat(complex.get(0))
