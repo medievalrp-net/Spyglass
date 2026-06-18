@@ -27,7 +27,6 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
 import net.medievalrp.spyglass.plugin.util.ChunkResender;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
@@ -693,28 +692,14 @@ public final class RollbackEngine {
                 nonSimpleMask.set(j);
                 continue;
             }
-            // Expected-state check (#27): same semantics as the slow
-            // path's matches() — interned NMS states make identity equal
-            // to material+blockData equality. Skipping here is what keeps
-            // a p:<actor> rollback from clobbering another player's newer
-            // edit, and makes re-runs report skips instead of re-applying.
-            BlockSnapshot expected = effect.expectedCurrent();
-            if (expected != null) {
-                org.bukkit.block.data.BlockData expectedBd;
-                try {
-                    expectedBd = blockDataFor(expected.blockData());
-                } catch (RuntimeException thrown) {
-                    expectedBd = null;
-                }
-                if (expectedBd != null
-                        && work.ctx.currentStateMatches(loc.x(), loc.y(), loc.z(), expectedBd) == 0) {
-                    resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                            new RollbackReason.BlockChanged(loc, expected,
-                                    snapshotOfCurrent(work.ctx, loc)));
-                    writes[j] = null;
-                    continue;
-                }
-            }
+            // Force-overwrite (#69): restore the recorded block regardless
+            // of the live state — matching the original Spyglass and
+            // CoreProtect, and the documented contract in
+            // RollbackEngineChaosTest. A grief rollback must put the block
+            // back even if water/lava/fire/falling-blocks drifted into the
+            // gap after the edit; those changes are unlogged, so nothing
+            // should protect them. Cross-actor cases are handled by scoping
+            // the rollback, not by a per-cell live-state guard.
             work.ctx.writeBlock(loc.x(), loc.y(), loc.z(), bd);
             if (replacement.simple()) {
                 // No tile entity to apply; the palette write is the whole
@@ -729,19 +714,6 @@ public final class RollbackEngine {
         }
         work.writes = writes;
         work.nonSimpleMask = nonSimpleMask;
-    }
-
-    // Mismatch reporting only — allocates a Bukkit BlockData wrapper, so
-    // it stays off the per-block hot path.
-    private static BlockSnapshot snapshotOfCurrent(
-            ChunkDirectWriter.ChunkContext ctx, BlockLocation loc) {
-        org.bukkit.block.data.BlockData current = ctx.readBlockData(loc.x(), loc.y(), loc.z());
-        if (current == null) {
-            return null;
-        }
-        return new BlockSnapshot(current.getMaterial(), current.getAsString(),
-                java.util.List.of(), java.util.List.of(), java.util.List.of(),
-                java.util.List.of(), null);
     }
 
     // Main-thread half: apply tile-entity state for the non-simple blocks
@@ -765,18 +737,9 @@ public final class RollbackEngine {
                     BlockLocation loc = effect.location();
                     try {
                         if (work.ctx == null) {
-                            // prepareChunk failed for this chunk; run the
-                            // expected-state check (#27) via Bukkit, then
-                            // fall back to a single-block write here on main.
-                            Block current = world.getBlockAt(loc.x(), loc.y(), loc.z());
-                            BlockSnapshot expected = effect.expectedCurrent();
-                            if (expected != null
-                                    && !expected.blockData().equals(current.getBlockData().getAsString())) {
-                                resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                                        new RollbackReason.BlockChanged(loc, expected,
-                                                BlockSnapshots.capture(current.getState())));
-                                continue;
-                            }
+                            // prepareChunk failed for this chunk; force-write
+                            // the recorded block here on main (#69 — no
+                            // live-state guard, same as the fast path).
                             ChunkDirectWriter.writeBlock(
                                     world, loc.x(), loc.y(), loc.z(), writes[j]);
                         }
@@ -1038,22 +1001,9 @@ public final class RollbackEngine {
                 unparse++;
                 continue;
             }
-            String exp = cols.expData(idx);
-            if (exp != null) {
-                org.bukkit.block.data.BlockData expBd;
-                try {
-                    expBd = blockDataFor(exp);
-                } catch (RuntimeException thrown) {
-                    expBd = null;
-                }
-                // Expected-state check (#27): skip when the live block no
-                // longer matches what this op expected — same semantics as
-                // the object path's matches().
-                if (expBd != null && cc.ctx.currentStateMatches(x, y, z, expBd) == 0) {
-                    changed++;
-                    continue;
-                }
-            }
+            // Force-overwrite (#69): write the recorded block regardless of
+            // the live state (no conflict guard) — restores grief even where
+            // unlogged drift (water/lava/fire/falling) moved into the gap.
             cc.ctx.writeBlock(x, y, z, bd);
             applied++;
         }
@@ -1063,10 +1013,9 @@ public final class RollbackEngine {
     }
 
     // Main-thread fallback for a chunk whose prepareChunk failed: single
-    // block writes with the expected check via Bukkit.
+    // block writes, force-overwrite (#69 — no live-state guard).
     private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
         long applied = 0;
-        long changed = 0;
         long unparse = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
             int idx = order[k];
@@ -1083,19 +1032,10 @@ public final class RollbackEngine {
                 unparse++;
                 continue;
             }
-            String exp = cols.expData(idx);
-            if (exp != null) {
-                Block block = world.getBlockAt(x, y, z);
-                if (!exp.equals(block.getBlockData().getAsString())) {
-                    changed++;
-                    continue;
-                }
-            }
             ChunkDirectWriter.writeBlock(world, x, y, z, bd);
             applied++;
         }
         cc.applied = applied;
-        cc.blockChanged = changed;
         cc.unparseable = unparse;
     }
 
@@ -1491,14 +1431,13 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
 
+        // Force-overwrite (#69): restore the recorded block regardless of
+        // the live state — no conflict guard, matching the fast path and the
+        // original Spyglass / CoreProtect.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
-        BlockSnapshot actual = BlockSnapshots.capture(block.getState());
-        if (!matches(effect.expectedCurrent(), actual)) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.BlockChanged(effect.location(), effect.expectedCurrent(), actual));
-        }
-
         applySnapshot(block, effect.replacement());
-        RollbackEffect inverse = new RollbackEffect.BlockReplace(effect.location(), effect.replacement(), actual);
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(
+                effect.location(), effect.replacement(), effect.expectedCurrent());
         return new RollbackResult.Applied(effect, inverse);
     }
 
@@ -1541,10 +1480,6 @@ public final class RollbackEngine {
         BlockState state = block.getState();
         state.setBlockData(Bukkit.createBlockData(snapshot.blockData()));
         applyTilePayload(block, state, snapshot);
-    }
-
-    private boolean matches(BlockSnapshot expected, BlockSnapshot actual) {
-        return expected.material() == actual.material() && expected.blockData().equals(actual.blockData());
     }
 
     private boolean matches(StoredItem expected, int slot, ItemStack current) {

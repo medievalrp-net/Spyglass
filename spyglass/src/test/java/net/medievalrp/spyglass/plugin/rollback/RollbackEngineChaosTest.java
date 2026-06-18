@@ -25,20 +25,22 @@ import org.mockito.MockedStatic;
 /**
  * Chaos tests for {@link RollbackEngine}'s bulk apply path.
  *
- * <p>Spyglass rolls back by <b>force-overwrite</b>: the chunked apply
- * path restores every effect to its logged state without first checking
- * whether the live block still matches what was recorded. (Conflict
- * detection — skip-if-changed — was an Spyglass behaviour that the
- * NMS-direct-section rewrite intentionally dropped; transparency comes
- * from the rolled-place / rolled-break audit records instead.) These
- * tests pin that contract:
+ * <p>Spyglass rolls back by <b>force-overwrite</b>: the apply path
+ * restores every effect to its logged state without first checking
+ * whether the live block still matches what was recorded — matching the
+ * original Spyglass and CoreProtect. A grief rollback must put the
+ * block back even where unlogged drift (water/lava/fire/falling blocks)
+ * moved into the gap after the edit. (#69 removed the expected-state
+ * skip that had crept into the parallel and columnar paths, so all apply
+ * paths now honor this contract; transparency comes from the
+ * rolled-place / rolled-break audit records instead.) These tests pin it:
  *
  * <ul>
- *   <li>every effect is reported {@link RollbackResult.Applied}, even
- *       when the live block has diverged from the recorded snapshot,</li>
- *   <li>per-effect results stay positionally aligned with the input
- *       list — no cross-talk under batches of 50+ entries,</li>
- *   <li>the engine refuses to run off the main server thread.</li>
+ * <li>every effect is reported {@link RollbackResult.Applied}, even
+ * when the live block has diverged from the recorded snapshot,</li>
+ * <li>per-effect results stay positionally aligned with the input
+ * list — no cross-talk under batches of 50+ entries,</li>
+ * <li>the engine refuses to run off the main server thread.</li>
  * </ul>
  */
 class RollbackEngineChaosTest {

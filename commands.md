@@ -70,6 +70,12 @@ Root: `/spyglass`. Short alias: `/sg`.
 | `-ex` | `-extended` | Show extra detail columns |
 | `-nod:<keys>` | `-nodefault:` | Suppress defaults (e.g. `-nod:r,t`) |
 
+## Rollback behavior
+
+Rollback and restore **force-overwrite**: each matched block is set back to its recorded state regardless of what is there now (matching the original Spyglass and CoreProtect). This is what you want for grief recovery — if water, lava, fire, or falling blocks drifted into a griefed area after the edit, the rollback still restores the original blocks over them. It also means a rollback re-run is idempotent (re-applies to the same state) and a `/spyglass undo` cleanly reverses it.
+
+The trade-off: a rollback does not skip a cell just because someone changed it afterward, so a rollback scoped to one player can overwrite a *legitimate* later edit by another player in those exact cells. Scope the rollback (by player, region `r:`, and time `t:`) to the grief you mean to revert; review with `/spyglass lookup` first if unsure.
+
 ## Explosion grief
 
 Player-lit TNT records the igniter as the source — `p:<griefer>` searches and rollbacks cover the crater directly. Chained, dispensed, or redstone-primed TNT and mob explosions (creeper, wither) are entity-attributed: sweep those with `c:tnt`, `c:creeper`, etc.
