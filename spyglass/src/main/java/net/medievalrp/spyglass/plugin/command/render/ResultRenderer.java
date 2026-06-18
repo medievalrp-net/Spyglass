@@ -327,7 +327,7 @@ public final class ResultRenderer {
             // One row per rollback/restore/undo operation (#22); the
             // mode rides in target. Renders "<operator> ran ROLLBACK".
             case RollbackOpRecord op -> upperOrEmpty(op.mode());
-            case ChatRecord chat -> chat.target();
+            case ChatRecord chat -> chatText(chat);
             case CommandRecord command -> "/" + command.target();
             // Join's "target" in the data model is the player's own
             // name, which duplicates the source — show the IP instead
@@ -368,6 +368,23 @@ public final class ResultRenderer {
             case ItemPickupRecord pickup -> pickup.amount();
             default -> 0;
         };
+    }
+
+    /**
+     * Inline text for a chat record: the message is the content, so always
+     * show it. When {@code target} is a distinct value (a channel/scope a hook
+     * like WhisperNet parked there, not the message), prefix it — "#OOC: hi" —
+     * so the log stays readable even with no {@link DisplayRenderer} registered.
+     * Vanilla chat stores target == message (its aggregation key), so this just
+     * yields the message.
+     */
+    private static String chatText(ChatRecord chat) {
+        String message = chat.message() == null ? "" : chat.message();
+        String channel = chat.target();
+        if (channel != null && !channel.isEmpty() && !channel.equals(message)) {
+            return channel + ": " + message;
+        }
+        return message;
     }
 
     private static String originTag(Origin origin) {

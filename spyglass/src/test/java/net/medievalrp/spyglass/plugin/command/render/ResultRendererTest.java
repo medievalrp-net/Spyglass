@@ -13,6 +13,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
+import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
@@ -117,6 +118,44 @@ class ResultRendererTest {
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
 
         assertThat(plain).contains("Alice").doesNotContain("[OOC]");
+    }
+
+    private static ChatRecord chatRecord(String target, String message) {
+        Instant now = Instant.now();
+        return new ChatRecord(
+                UUID.randomUUID(), "say",
+                now, now.plusSeconds(60),
+                Origin.plugin("WhisperNet"),
+                Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 10, 64, 20),
+                "test",
+                target, message, List.of());
+    }
+
+    @Test
+    void chatShowsMessageWithChannelPrefixWhenTargetDiffers() {
+        // WhisperNet shape: channel parked in target, no DisplayRenderer registered.
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("say")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("say", "said"));
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(
+                renderer.renderSingle(chatRecord("#OOC", "hi"), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(plain).contains("said #OOC: hi");
+    }
+
+    @Test
+    void vanillaChatShowsJustTheMessage() {
+        // Vanilla shape: target == message (the aggregation key) -> no "hi: hi".
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("say")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("say", "said"));
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(
+                renderer.renderSingle(chatRecord("hi", "hi"), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(plain).contains("said hi").doesNotContain("hi: hi");
     }
 
     @Test
