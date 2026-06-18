@@ -526,8 +526,9 @@ public final class RollbackService {
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
                         skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
-                        // RollbackReason.Error is a real failure;
-                        // BlockChanged / InvalidLocation are benign.
+                        // Only RollbackReason.Error is a real failure; every
+                        // other skip reason (invalid location, not-supported,
+                        // missing data) is benign.
                         if (skipped.reason()
                                 instanceof net.medievalrp.spyglass.api.rollback.RollbackReason.Error) {
                             totalErrors++;
