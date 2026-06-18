@@ -15,6 +15,24 @@ val mockitoVersion = "5.20.0"
 val testcontainersVersion = "1.21.3"
 val jetbrainsAnnotationsVersion = "26.0.2"
 
+// True when a Docker daemon is reachable. Used to warn (not fail) when the
+// Testcontainers store ITs will assume-skip, so a no-Docker `check` isn't
+// mistaken for full verification.
+fun dockerIsAvailable(): Boolean = try {
+    val process = ProcessBuilder("docker", "info")
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+    if (process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+        process.exitValue() == 0
+    } else {
+        process.destroyForcibly()
+        false
+    }
+} catch (ex: Exception) {
+    false
+}
+
 allprojects {
     group = providers.gradleProperty("group").get()
     version = providers.gradleProperty("version").get()
@@ -29,6 +47,21 @@ subprojects {
     apply(plugin = "jacoco")
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+        // The Testcontainers store ITs assume-skip when Docker is absent, so
+        // a green `check` without Docker is NOT full verification — a silence
+        // that once masked real bugs (issue #15). Make it loud: if this
+        // module has *IT tests and Docker isn't reachable, warn.
+        doFirst {
+            val hasIntegrationTests =
+                !project.fileTree("src/test/java") { include("**/*IT.java") }.files.isEmpty()
+            if (hasIntegrationTests && !dockerIsAvailable()) {
+                logger.warn(
+                    "WARNING: Docker not reachable — the Testcontainers store ITs in " +
+                        "'${project.name}' will be SKIPPED. `check` passing is NOT full " +
+                        "verification; start Docker to run them."
+                )
+            }
+        }
     }
     tasks.withType<JacocoReport>().configureEach {
         reports {
@@ -42,25 +75,28 @@ subprojects {
                 element = "BUNDLE"
                 limit {
                     counter = "LINE"
-                    // Regression-prevention floor, sized just below the
-                    // current measured coverage so normal code growth
-                    // doesn't trip it but a deletion of a tested area
-                    // does. Trajectory: 0.05 (Phase 0) → 0.10 (Phase 2)
-                    // → 0.15 (Phase 3) → current values after the
-                    // listener / WAL-recovery / rollback-chaos suites
-                    // landed (api 16.6% LINE, plugin 29.4% LINE).
-                    // Final targets per the v1.0.0 plan remain 0.90 api
-                    // / 0.80 plugin (docs/report/gap/plan/plan.md §6.0).
+                    // No-Docker regression floor, sized just below the
+                    // coverage `check` produces WITHOUT Docker: the store
+                    // ITs (Mongo/ClickHouse via Testcontainers) assume-skip
+                    // when Docker is absent, so the floor must hold for the
+                    // leaner no-Docker run. A run WITH Docker covers much
+                    // more (e.g. spyglass-core ~77% LINE vs the no-Docker
+                    // baseline) and clears the floor with room to spare.
+                    // Final v1.0.0 targets remain 0.90 api / 0.80 plugin
+                    // (docs/report/gap/plan/plan.md §6.0).
                     minimum = when (project.name) {
-                        "spyglass-api" -> 0.15.toBigDecimal()
-                        // Storage-test coverage drove the spyglass module
-                        // floor to 0.28 historically; those tests moved
-                        // into spyglass-core during the v1.1 split, and
-                        // the modules now share the previous figure
-                        // proportionally. Re-tune once the velocity
-                        // module's tests land and the storage module's
-                        // floor stabilises.
+                        // No ITs here, so the floor tracks real measured
+                        // coverage (~26% LINE).
+                        "spyglass-api" -> 0.24.toBigDecimal()
+                        // Most of spyglass-core's coverage comes from the
+                        // Docker-gated store ITs; this is the no-Docker
+                        // baseline, kept conservative so a green no-Docker
+                        // `check` doesn't trip on the ITs being skipped.
+                        // Raise once no-Docker coverage is measured on a
+                        // Docker-less runner.
                         "spyglass-core" -> 0.20.toBigDecimal()
+                        // Two undo-stack ITs are Docker-gated; same
+                        // no-Docker-baseline reasoning as spyglass-core.
                         "spyglass" -> 0.20.toBigDecimal()
                         // Proxy module is read-only and thin (just a
                         // command + renderer + parser); no floor until

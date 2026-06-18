@@ -225,6 +225,8 @@ The rollback engine requires no tuning. `limits.rollback-page-size` (default 500
 ./gradlew deployToRpServer          # build + copy to ../RP_Server/plugins/
 ```
 
+The store integration tests (Mongo/ClickHouse) run under Testcontainers and need a reachable Docker daemon. Without Docker they assume-skip and `gradlew check` prints a `WARNING: Docker not reachable` line — a green build in that state is **not** full verification. The per-module jacoco line-coverage floors are sized for the leaner no-Docker run, so they hold with or without Docker; a run with Docker clears them with room to spare.
+
 ## Modules
 
 - `spyglass-api/` - public API. Third-party plugins depend on this only.
