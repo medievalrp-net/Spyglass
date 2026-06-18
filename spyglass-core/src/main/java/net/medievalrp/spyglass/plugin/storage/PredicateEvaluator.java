@@ -143,6 +143,8 @@ final class PredicateEvaluator {
             case "afterItem" -> storedItemField(afterItemOf(record), rest);
             case "originalBlock" -> snapshotField(originalBlockOf(record), rest);
             case "newBlock" -> snapshotField(newBlockOf(record), rest);
+            // Plugin-supplied extension fields (extensions.channel, etc.).
+            case "extensions" -> record.extensions().get(rest);
             default -> null;
         };
     }

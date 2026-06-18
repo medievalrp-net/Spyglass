@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
@@ -156,6 +157,40 @@ class ResultRendererTest {
                 renderer.renderSingle(chatRecord("hi", "hi"), EnumSet.noneOf(Flag.class), true));
 
         assertThat(plain).contains("said hi").doesNotContain("hi: hi");
+    }
+
+    @Test
+    void extensionFieldsAppearInTheHover() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("say")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("say", "said"));
+
+        Instant now = Instant.now();
+        ChatRecord chat = new ChatRecord(
+                UUID.randomUUID(), "say", now, now.plusSeconds(60),
+                Origin.plugin("WhisperNet"), Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 10, 64, 20), "test",
+                "#OOC", "hi", List.of(), java.util.Map.of("channel", "#OOC"));
+
+        Component hover = extractHover(renderer.renderSingle(chat, EnumSet.noneOf(Flag.class), true));
+        assertThat(hover).as("result line should carry a hover").isNotNull();
+        String hoverPlain = PlainTextComponentSerializer.plainText().serialize(hover);
+        // capitalizeKey turns the extension key into its label.
+        assertThat(hoverPlain).contains("Channel").contains("#OOC");
+    }
+
+    private static Component extractHover(Component component) {
+        HoverEvent<?> hover = component.hoverEvent();
+        if (hover != null && hover.value() instanceof Component value) {
+            return value;
+        }
+        for (Component child : component.children()) {
+            Component found = extractHover(child);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     @Test
