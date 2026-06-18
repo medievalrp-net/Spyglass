@@ -145,6 +145,12 @@ final class PredicateToSql {
     }
 
     private String column(String fieldPath) {
+        // Extension fields live in the extensions Map(String,String) column;
+        // a path like extensions.channel becomes extensions['channel']. The
+        // key is escaped as a string literal so a hostile param can't break out.
+        if (fieldPath.startsWith("extensions.")) {
+            return "extensions[" + stringLiteral(fieldPath.substring("extensions.".length())) + "]";
+        }
         String column = ClickHouseFieldMapper.columnFor(fieldPath);
         if (column == null) {
             // Two reasons a path can land here:
