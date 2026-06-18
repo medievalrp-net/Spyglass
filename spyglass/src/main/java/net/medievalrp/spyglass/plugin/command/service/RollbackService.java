@@ -89,7 +89,9 @@ public final class RollbackService {
     }
 
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
-    // already-applied cells skip with "block changed" on the re-run.
+    // force-overwrite (#69) makes already-applied cells re-apply to the same
+    // recorded state on the re-run, so an overlap from a coarse checkpoint
+    // converges rather than erroring.
     //
     // Replays the marker's RESOLVED request verbatim (#49) — never
     // re-parse saved.query() here: r:/t: defaults would re-anchor to
