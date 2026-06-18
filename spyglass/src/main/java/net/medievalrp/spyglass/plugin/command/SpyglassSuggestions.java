@@ -35,7 +35,15 @@ public final class SpyglassSuggestions {
         return (ctx, input) -> {
             String remaining = input.remainingInput();
             String lastToken = lastToken(remaining);
+            // The params argument is a greedy string, so Cloud hands us the whole
+            // remaining span and then filters our output down to suggestions that
+            // start with that span. A bare-token suggestion (`player:`) fails that
+            // filter the moment an earlier param is present, which silently killed
+            // completion on every multi-param query. Prepend the already-typed
+            // prefix so each suggestion spans the entire argument and survives.
+            String prefix = remaining.substring(0, remaining.length() - lastToken.length());
             return suggestFor(ctx.sender(), lastToken).stream()
+                    .map(suggestion -> prefix + suggestion)
                     .map(Suggestion::suggestion)
                     .toList();
         };
