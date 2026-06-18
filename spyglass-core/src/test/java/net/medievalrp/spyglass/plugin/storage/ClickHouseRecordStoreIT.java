@@ -133,6 +133,10 @@ class ClickHouseRecordStoreIT {
                 .map(net.medievalrp.spyglass.api.event.ChatRecord.class::cast)
                 .findFirst().orElseThrow();
         assertThat(chatBack.extensions()).containsEntry("channel", "#OOC");
+        QueryRequest byChannel = new QueryRequest(
+                List.of(new QueryPredicate.Eq("extensions.channel", "#OOC")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byChannel).records()).hasSize(1);
 
         QueryRequest breakOnly = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),
