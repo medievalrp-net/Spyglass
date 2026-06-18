@@ -1083,7 +1083,7 @@ public final class RollbackEngine {
                 RecordingSupport.fastRandomUUID(),
                 occurred,
                 support.expiresAt(occurred),
-                origin, source, location, support.serverName());
+                origin, source, location, support.serverName(), java.util.Map.of());
         boolean toAir = after == null || after.material() == Material.AIR;
         // Lowercase-hyphenated form matches shulker-open etc. and
         // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.

@@ -129,7 +129,7 @@ class ResultRendererTest {
                 Source.player(PLAYER_ID, "Alice"),
                 new BlockLocation(WORLD_ID, "world", 10, 64, 20),
                 "test",
-                target, message, List.of());
+                target, message, List.of(), java.util.Map.of());
     }
 
     @Test

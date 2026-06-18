@@ -115,6 +115,14 @@ final class ClickHouseSchema {
                     + " or start fresh. Refusing to start against the v1 layout.");
         }
 
+        // Extension fields (added after v2): a Map column for plugin-supplied
+        // key/value metadata. ADD COLUMN IF NOT EXISTS is a cheap metadata
+        // ALTER — existing rows read an empty map — so a v2 table becomes
+        // forward-compatible without a rebuild, and a fresh table already has
+        // it from the CREATE above.
+        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                + " ADD COLUMN IF NOT EXISTS extensions Map(String, String) CODEC(ZSTD(1))");
+
         // One-shot migration: pre-chunked undo_history shape lacked
         // operation_id / chunk_index / chunk_count. ORDER BY changed,
         // so ALTER can't reshape the key — drop and recreate. Worst
@@ -300,6 +308,10 @@ final class ClickHouseSchema {
                 + "    entity_old_name Nullable(String),\n"
                 + "    entity_new_name Nullable(String),\n"
                 + "    op_reference Nullable(String) CODEC(ZSTD(1)),\n"
+                // --- Extension fields: string key/value metadata an
+                // integrating plugin attaches via RecordContext#withExtension
+                // (e.g. a chat channel). Searchable as extensions['<key>'].
+                + "    extensions Map(String, String) CODEC(ZSTD(1)),\n"
                 // --- Skip indexes ---
                 + "    INDEX idx_loc_xz (location_x, location_z) TYPE minmax GRANULARITY 4,\n"
                 + "    INDEX idx_world location_world_id TYPE bloom_filter GRANULARITY 4,\n"
