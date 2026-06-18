@@ -122,6 +122,37 @@ public final class RollbackEngine {
         return prior == null ? parsed : prior;
     }
 
+    // THE block force-overwrite primitive. Every block-apply path writes
+    // through here: restore the recorded block regardless of the live state,
+    // with no conflict guard — matching the original Omniscience
+    // BlockEntry.rollback() and CoreProtect, and the contract pinned by
+    // RollbackEngineChaosTest. A grief rollback must put the block back even
+    // where unlogged drift (water/lava/fire/falling blocks) moved into the
+    // gap after the edit; cross-actor cases are handled by scoping the
+    // rollback, not by a per-cell live-state guard. Centralizing the write is
+    // deliberate: the expected-state guard that broke grief recovery had crept
+    // into only the parallel/columnar paths. With one write site that contract
+    // can no longer diverge per-path — any future guard belongs here, on every
+    // path, or nowhere.
+    private static void forceWriteCell(ChunkDirectWriter.ChunkContext ctx, World world,
+                                       int x, int y, int z, org.bukkit.block.data.BlockData bd) {
+        if (ctx != null) {
+            ctx.writeBlock(x, y, z, bd);
+        } else {
+            ChunkDirectWriter.writeBlock(world, x, y, z, bd);
+        }
+    }
+
+    // The Applied result + its inverse for a restored block, built identically
+    // by every object-path apply (sync, parallel worker, main post-pass, slow
+    // path). The inverse swaps replacement<->expectedCurrent so /undo reverses
+    // the write.
+    private static RollbackResult.Applied appliedWithInverse(RollbackEffect.BlockReplace effect) {
+        RollbackEffect inverse = new RollbackEffect.BlockReplace(
+                effect.location(), effect.replacement(), effect.expectedCurrent());
+        return new RollbackResult.Applied(effect, inverse);
+    }
+
     public RollbackEngine() {
         this(null, null);
     }
@@ -471,18 +502,12 @@ public final class RollbackEngine {
                     try {
                         org.bukkit.block.data.BlockData bd =
                                 blockDataFor(replacement.blockData());
-                        if (chunkCtx != null) {
-                            chunkCtx.writeBlock(loc.x(), loc.y(), loc.z(), bd);
-                        } else {
-                            ChunkDirectWriter.writeBlock(world, loc.x(), loc.y(), loc.z(), bd);
-                        }
+                        forceWriteCell(chunkCtx, world, loc.x(), loc.y(), loc.z(), bd);
                         if (!replacement.simple()) {
                             Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                             applyTileEntityState(block, replacement);
                         }
-                        RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                                loc, replacement, effect.expectedCurrent());
-                        resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
+                        resultArray[targetIndex] = appliedWithInverse(effect);
                     } catch (RuntimeException thrown) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
                                 new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
@@ -692,21 +717,11 @@ public final class RollbackEngine {
                 nonSimpleMask.set(j);
                 continue;
             }
-            // Force-overwrite (#69): restore the recorded block regardless
-            // of the live state — matching the original Omniscience and
-            // CoreProtect, and the documented contract in
-            // RollbackEngineChaosTest. A grief rollback must put the block
-            // back even if water/lava/fire/falling-blocks drifted into the
-            // gap after the edit; those changes are unlogged, so nothing
-            // should protect them. Cross-actor cases are handled by scoping
-            // the rollback, not by a per-cell live-state guard.
-            work.ctx.writeBlock(loc.x(), loc.y(), loc.z(), bd);
+            forceWriteCell(work.ctx, work.world, loc.x(), loc.y(), loc.z(), bd);
             if (replacement.simple()) {
                 // No tile entity to apply; the palette write is the whole
                 // apply. Build Applied here on the worker.
-                RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                        loc, replacement, effect.expectedCurrent());
-                resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
+                resultArray[targetIndex] = appliedWithInverse(effect);
             } else {
                 // Needs BlockState.update on the main thread.
                 nonSimpleMask.set(j);
@@ -738,16 +753,12 @@ public final class RollbackEngine {
                     try {
                         if (work.ctx == null) {
                             // prepareChunk failed for this chunk; force-write
-                            // the recorded block here on main (#69 — no
-                            // live-state guard, same as the fast path).
-                            ChunkDirectWriter.writeBlock(
-                                    world, loc.x(), loc.y(), loc.z(), writes[j]);
+                            // the recorded block here on main.
+                            forceWriteCell(null, world, loc.x(), loc.y(), loc.z(), writes[j]);
                         }
                         Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                         applyTileEntityState(block, replacement);
-                        RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                                loc, replacement, effect.expectedCurrent());
-                        resultArray[targetIndex] = new RollbackResult.Applied(effect, inverse);
+                        resultArray[targetIndex] = appliedWithInverse(effect);
                     } catch (RuntimeException ex) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
                                 new RollbackReason.Error("Unhandled error: " + ex.getMessage()));
@@ -1001,10 +1012,7 @@ public final class RollbackEngine {
                 unparse++;
                 continue;
             }
-            // Force-overwrite (#69): write the recorded block regardless of
-            // the live state (no conflict guard) — restores grief even where
-            // unlogged drift (water/lava/fire/falling) moved into the gap.
-            cc.ctx.writeBlock(x, y, z, bd);
+            forceWriteCell(cc.ctx, null, x, y, z, bd);
             applied++;
         }
         cc.applied = applied;
@@ -1032,7 +1040,7 @@ public final class RollbackEngine {
                 unparse++;
                 continue;
             }
-            ChunkDirectWriter.writeBlock(world, x, y, z, bd);
+            forceWriteCell(null, world, x, y, z, bd);
             applied++;
         }
         cc.applied = applied;
@@ -1431,14 +1439,11 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
 
-        // Force-overwrite (#69): restore the recorded block regardless of
-        // the live state — no conflict guard, matching the fast path and the
-        // original Omniscience / CoreProtect.
+        // Force-overwrite via applySnapshot (the Bukkit slow path) — same
+        // contract as forceWriteCell.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
         applySnapshot(block, effect.replacement());
-        RollbackEffect inverse = new RollbackEffect.BlockReplace(
-                effect.location(), effect.replacement(), effect.expectedCurrent());
-        return new RollbackResult.Applied(effect, inverse);
+        return appliedWithInverse(effect);
     }
 
     private RollbackResult applyContainerSlotWrite(RollbackEffect.ContainerSlotWrite effect) {
