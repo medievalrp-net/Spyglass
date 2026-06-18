@@ -99,7 +99,7 @@ class MongoRecordStoreIT {
                 new BlockPlaceRecord(UUID.randomUUID(), "place", now, now.plusSeconds(3600),
                         origin, source, location, "test", "STONE", air, stone),
                 new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
-                        origin, source, location, "test", "Alice", "hello", List.of()),
+                        origin, source, location, "test", "Alice", "hello", List.of(), java.util.Map.of("channel", "#OOC")),
                 new ContainerDepositRecord(UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
                         origin, source, location, "test", "DIAMOND", "CHEST", 3, 1, null, item),
                 new EntityDeathRecord(UUID.randomUUID(), "death", now, now.plusSeconds(3600),
@@ -113,6 +113,11 @@ class MongoRecordStoreIT {
                 Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
         QueryResult result = store.query(allEvents);
         assertThat(result.records()).hasSize(5);
+        net.medievalrp.spyglass.api.event.ChatRecord chatBack = result.records().stream()
+                .filter(net.medievalrp.spyglass.api.event.ChatRecord.class::isInstance)
+                .map(net.medievalrp.spyglass.api.event.ChatRecord.class::cast)
+                .findFirst().orElseThrow();
+        assertThat(chatBack.extensions()).containsEntry("channel", "#OOC");
 
         QueryRequest breakOnly = new QueryRequest(
                 List.of(new QueryPredicate.Eq("event", "break")),

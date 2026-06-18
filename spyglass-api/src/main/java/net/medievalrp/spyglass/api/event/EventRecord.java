@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.api.event;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 
@@ -54,5 +55,16 @@ public sealed interface EventRecord permits
 
     default String sourceName() {
         return source().displayName();
+    }
+
+    /**
+     * String key/value metadata attached by an integrating plugin (e.g. a
+     * chat channel) via {@link RecordContext#withExtension}. Empty unless the
+     * concrete record type opts in by exposing an {@code extensions}
+     * component. Stored, searchable ({@code extensions.<key>}), and rendered
+     * as first-class data rather than overloading a core field.
+     */
+    default Map<String, String> extensions() {
+        return Map.of();
     }
 }
