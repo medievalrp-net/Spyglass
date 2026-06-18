@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.kyori.adventure.text.Component;
@@ -533,6 +534,8 @@ public final class RollbackEngine {
                 try {
                     ChunkResender.resend(world, cx, cz);
                 } catch (RuntimeException ignored) {
+                    // Best-effort: a failed resend only delays the client's view
+                    // of the restored chunk until its next natural update.
                 }
             }
 
@@ -631,7 +634,12 @@ public final class RollbackEngine {
             if (ticketHolder != null) {
                 try {
                     ticketAdded = world.addPluginChunkTicket(cx, cz, ticketHolder);
-                } catch (Throwable ignored) {
+                } catch (Throwable t) {
+                    // Ticket add failed: the chunk isn't pinned, so it can
+                    // unload mid-write and silently drop cells. Rare; log at
+                    // FINE so it's diagnosable, then proceed unpinned.
+                    LOGGER.log(Level.FINE, "Rollback chunk-ticket add failed for "
+                            + cx + "," + cz, t);
                 }
             }
             ChunkDirectWriter.ChunkContext ctx =
@@ -785,12 +793,16 @@ public final class RollbackEngine {
             try {
                 ChunkResender.resend(world, work.cx, work.cz);
             } catch (RuntimeException ignored) {
+                // Best-effort: a failed resend only delays the client's view
+                // of the restored chunk until its next natural update.
             }
         } finally {
             if (work.ticketAdded && chunkTicketHolder != null) {
                 try {
                     world.removePluginChunkTicket(work.cx, work.cz, chunkTicketHolder);
                 } catch (Throwable ignored) {
+                    // Best-effort: a leaked ticket is reclaimed on plugin
+                    // disable; not worth surfacing.
                 }
             }
         }
@@ -942,7 +954,12 @@ public final class RollbackEngine {
             if (ticketHolder != null) {
                 try {
                     ticketAdded = world.addPluginChunkTicket(cx, cz, ticketHolder);
-                } catch (Throwable ignored) {
+                } catch (Throwable t) {
+                    // Ticket add failed: the chunk isn't pinned, so it can
+                    // unload mid-write and silently drop cells. Rare; log at
+                    // FINE so it's diagnosable, then proceed unpinned.
+                    LOGGER.log(Level.FINE, "Rollback chunk-ticket add failed for "
+                            + cx + "," + cz, t);
                 }
             }
             ChunkDirectWriter.ChunkContext ctx = ChunkDirectWriter.prepareChunk(world, cx, cz);
@@ -966,11 +983,15 @@ public final class RollbackEngine {
                 try {
                     ChunkResender.resend(world, cc.cx, cc.cz);
                 } catch (RuntimeException ignored) {
+                    // Best-effort: a failed resend only delays the client's view
+                    // of the restored chunk until its next natural update.
                 }
                 if (cc.ticketAdded && ticketHolder != null) {
                     try {
                         world.removePluginChunkTicket(cc.cx, cc.cz, ticketHolder);
                     } catch (Throwable ignored) {
+                        // Best-effort: a leaked ticket is reclaimed on plugin
+                        // disable; not worth surfacing.
                     }
                 }
                 counts.applied += cc.applied;
