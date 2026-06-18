@@ -47,6 +47,7 @@ import net.medievalrp.spyglass.api.event.QuitRecord;
 import net.medievalrp.spyglass.api.event.RollbackOpRecord;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
+import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
@@ -183,6 +184,22 @@ public final class ClickHouseRecordStore implements RecordStore {
             "entity_type", "entity_id", "entity_nbt",
             "entity_killer_type", "entity_damage_cause");
 
+    // The strictly-needed columns to build a RollbackEffect (#67). Drops
+    // everything streamRollbackEffects never reads vs ROLLBACK_COLUMNS:
+    // expires_at, origin_*, all source_*, server, target, plus the
+    // container_type/amount and entity killer/damage columns that the
+    // effect constructors ignore. Cutting the SELECT this far trims both
+    // the wire response and the per-row decode — there is no Origin,
+    // Source, or record wrapper to allocate, only the effect's own fields.
+    private static final List<String> LEAN_ROLLBACK_COLUMNS = List.of(
+            "id", "event", "occurred",
+            "location_world_id", "location_world_name",
+            "location_x", "location_y", "location_z",
+            "before_material", "before_blockdata", "before_extras",
+            "after_material", "after_blockdata", "after_extras",
+            "slot", "before_item", "after_item",
+            "entity_type", "entity_id", "entity_nbt");
+
     private final PredicateToSql predicateToSql = new PredicateToSql();
     private final Client client;
     private final TableSchema tableSchema;
@@ -192,6 +209,7 @@ public final class ClickHouseRecordStore implements RecordStore {
     private final String summarySelect;
     private final String fullSelect;
     private final String rollbackSelect;
+    private final String leanRollbackSelect;
 
     public ClickHouseRecordStore(String host, int port, String database, String table,
                                  String user, String password, boolean ssl) {
@@ -201,6 +219,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS));
         this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, HEAVY_COLUMNS));
         this.rollbackSelect = String.join(", ", ROLLBACK_COLUMNS);
+        this.leanRollbackSelect = String.join(", ", LEAN_ROLLBACK_COLUMNS);
 
         this.client = new Client.Builder()
                 .addEndpoint((ssl ? "https" : "http") + "://" + host + ":" + port)
@@ -531,8 +550,106 @@ public final class ClickHouseRecordStore implements RecordStore {
         //      damage/projectile/dismount/name). Cuts the network
         //      response ~3x on block-heavy rollbacks and the
         //      decodeRow cost in lockstep.
+        String sql = buildRollbackSql(rollbackSelect, request, cursor, windowLimit);
+
+        // Streaming reader — pulls rows from CH as they arrive instead
+        // of materializing every GenericRecord up front. The OOM at
+        // 1M-row pageSize was the queryAll() materialization step
+        // allocating ~1 KB+ per intermediate GenericRecord (the JDBC
+        // shape, not our slim EventRecord). With Records, each row is
+        // decoded into an EventRecord and the GenericRecord becomes
+        // immediately collectible — peak heap is bounded by the slim
+        // post-decode List<EventRecord> instead of the heavy
+        // intermediate set. Memory at 1M rows drops from ~3 GB to
+        // ~100-200 MB.
+        Instant lastOccurred = null;
+        UUID lastId = null;
+        int rowCount = 0;
+        try (Records rows = client.queryRecords(sql).get()) {
+            for (GenericRecord row : rows) {
+                rowCount++;
+                EventRecord record = decodeRow(row, true);
+                if (record != null) {
+                    sink.accept(record);
+                }
+                // Always advance the cursor — even if decodeRow returned
+                // null (unknown event). Skipping over an undecodable row
+                // is fine; freezing on it would loop forever.
+                lastOccurred = row.getInstant("occurred");
+                lastId = net.medievalrp.spyglass.api.util.EventIds.uuidOf(row.getLong("id"));
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("ClickHouse paginated query interrupted", ie);
+        } catch (java.util.concurrent.ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            throw new RuntimeException("ClickHouse paginated query failed: " + cause.getMessage(), cause);
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("ClickHouse paginated query failed: " + ex.getMessage(), ex);
+        } catch (Exception ex) {
+            // Records.close() declares throws Exception. In practice
+            // the close path swallows recoverable errors and only
+            // throws on an unrecoverable client-side IO problem.
+            throw new RuntimeException("ClickHouse paginated query close failed: " + ex.getMessage(), ex);
+        }
+        return (rowCount == windowLimit && lastOccurred != null)
+                ? new QueryPage.Cursor(lastOccurred, lastId)
+                : null;
+    }
+
+    @Override
+    public QueryPage.Cursor streamRollbackEffects(QueryRequest request, QueryPage.Cursor cursor,
+                                                  int windowLimit, boolean rollback,
+                                                  RollbackEffectSink sink) {
+        // Allocation-lean rollback read (#67): same keyset-streamed scan as
+        // streamRollback, but the trimmed LEAN_ROLLBACK_COLUMNS SELECT and
+        // decodeEffect build only the RollbackEffect the engine applies —
+        // no EventRecord, Origin, Source, server/target, or expires_at is
+        // ever materialized. On a 2M-block rollback that removes the bulk
+        // of the per-row object graph (the firehose that, surviving one
+        // young GC under MaxTenuringThreshold=1, promoted to old gen and
+        // forced the Mixed-GC freeze).
+        String sql = buildRollbackSql(leanRollbackSelect, request, cursor, windowLimit);
+        Instant lastOccurred = null;
+        UUID lastId = null;
+        int rowCount = 0;
+        try (Records rows = client.queryRecords(sql).get()) {
+            for (GenericRecord row : rows) {
+                rowCount++;
+                // occurred/id are the cursor coordinates; read per row so a
+                // window that drains mid-page checkpoints at the right
+                // keyset position. Both are transient unless retained as
+                // the window's last.
+                Instant occurred = row.getInstant("occurred");
+                UUID id = net.medievalrp.spyglass.api.util.EventIds.uuidOf(row.getLong("id"));
+                emitEffect(row, rollback, occurred, id, sink);
+                lastOccurred = occurred;
+                lastId = id;
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("ClickHouse paginated query interrupted", ie);
+        } catch (java.util.concurrent.ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            throw new RuntimeException("ClickHouse paginated query failed: " + cause.getMessage(), cause);
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("ClickHouse paginated query failed: " + ex.getMessage(), ex);
+        } catch (Exception ex) {
+            throw new RuntimeException("ClickHouse paginated query close failed: " + ex.getMessage(), ex);
+        }
+        return (rowCount == windowLimit && lastOccurred != null)
+                ? new QueryPage.Cursor(lastOccurred, lastId)
+                : null;
+    }
+
+    // Shared rollback SQL: rollbackable-event filter, keyset cursor in the
+    // configured sort direction, and the spill-to-disk SETTINGS that keep a
+    // large LIMIT under CH's default 1 GiB per-query budget. The only
+    // difference between the record and effect readers is the column list.
+    private String buildRollbackSql(String select, QueryRequest request,
+                                    QueryPage.Cursor cursor, int windowLimit) {
         StringBuilder sql = new StringBuilder("SELECT ")
-                .append(rollbackSelect)
+                .append(select)
                 .append(" FROM ").append(qualifiedTable);
 
         List<QueryPredicate> predicates = new ArrayList<>(request.predicates());
@@ -574,50 +691,91 @@ public final class ClickHouseRecordStore implements RecordStore {
                 .append(", max_memory_usage_for_user = 0")
                 .append(", max_bytes_before_external_sort = 1073741824")
                 .append(", max_bytes_before_external_group_by = 1073741824");
+        return sql.toString();
+    }
 
-        // Streaming reader — pulls rows from CH as they arrive instead
-        // of materializing every GenericRecord up front. The OOM at
-        // 1M-row pageSize was the queryAll() materialization step
-        // allocating ~1 KB+ per intermediate GenericRecord (the JDBC
-        // shape, not our slim EventRecord). With Records, each row is
-        // decoded into an EventRecord and the GenericRecord becomes
-        // immediately collectible — peak heap is bounded by the slim
-        // post-decode List<EventRecord> instead of the heavy
-        // intermediate set. Memory at 1M rows drops from ~3 GB to
-        // ~100-200 MB.
-        Instant lastOccurred = null;
-        UUID lastId = null;
-        int rowCount = 0;
-        try (Records rows = client.queryRecords(sql.toString()).get()) {
-            for (GenericRecord row : rows) {
-                rowCount++;
-                EventRecord record = decodeRow(row, true);
-                if (record != null) {
-                    sink.accept(record);
-                }
-                // Always advance the cursor — even if decodeRow returned
-                // null (unknown event). Skipping over an undecodable row
-                // is fine; freezing on it would loop forever.
-                lastOccurred = row.getInstant("occurred");
-                lastId = net.medievalrp.spyglass.api.util.EventIds.uuidOf(row.getLong("id"));
-            }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("ClickHouse paginated query interrupted", ie);
-        } catch (java.util.concurrent.ExecutionException ex) {
-            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
-            throw new RuntimeException("ClickHouse paginated query failed: " + cause.getMessage(), cause);
-        } catch (RuntimeException ex) {
-            throw new RuntimeException("ClickHouse paginated query failed: " + ex.getMessage(), ex);
-        } catch (Exception ex) {
-            // Records.close() declares throws Exception. In practice
-            // the close path swallows recoverable errors and only
-            // throws on an unrecoverable client-side IO problem.
-            throw new RuntimeException("ClickHouse paginated query close failed: " + ex.getMessage(), ex);
+    // Emit one row to the sink in the requested direction (rollback reverts;
+    // restore re-applies / undoes an undo). A simple block-replace goes out
+    // as primitives via sink.block() — no effect or snapshot object built;
+    // everything else builds the effect and uses sink.complex(). Mirrors the
+    // per-record-type Rollbackable.rollbackEffect()/restoreEffect() logic
+    // exactly — keep the two in lockstep.
+    private void emitEffect(GenericRecord row, boolean rollback,
+                            Instant occurred, UUID id, RollbackEffectSink sink) {
+        String event = row.getString("event");
+        Class<? extends EventRecord> clazz = EventCatalog.recordClassOf(event);
+        if (clazz == null) {
+            sink.skip(occurred, id);
+            return;
         }
-        return (rowCount == windowLimit && lastOccurred != null)
-                ? new QueryPage.Cursor(lastOccurred, lastId)
-                : null;
+        if (clazz == BlockBreakRecord.class || clazz == BlockPlaceRecord.class) {
+            // Resolve which stored state we write (replacement) vs. expect
+            // currently present (expectedCurrent). rollback writes the
+            // before-state expecting the after-state; restore is the inverse.
+            String replMaterial;
+            String replData;
+            String replExtras;
+            String expData;
+            if (rollback) {
+                replMaterial = row.getString("before_material");
+                replData = row.getString("before_blockdata");
+                replExtras = row.getString("before_extras");
+                expData = row.getString("after_blockdata");
+            } else {
+                replMaterial = row.getString("after_material");
+                replData = row.getString("after_blockdata");
+                replExtras = row.getString("after_extras");
+                expData = row.getString("before_blockdata");
+            }
+            boolean simple = replData != null && (replExtras == null || replExtras.isEmpty());
+            if (simple) {
+                sink.block(row.getUUID("location_world_id"),
+                        row.getInteger("location_x"),
+                        row.getInteger("location_y"),
+                        row.getInteger("location_z"),
+                        replData, expData, occurred, id);
+                return;
+            }
+            // Tile-entity payload (or malformed block-data): object path.
+            BlockLocation location = readLocation(row);
+            BlockSnapshot replacement = BsonBlobs.decodeBlockSnapshotFromColumns(
+                    replMaterial, replData, replExtras);
+            BlockSnapshot expected = rollback
+                    ? BsonBlobs.decodeBlockSnapshotFromColumns(
+                            row.getString("after_material"), row.getString("after_blockdata"),
+                            row.getString("after_extras"))
+                    : BsonBlobs.decodeBlockSnapshotFromColumns(
+                            row.getString("before_material"), row.getString("before_blockdata"),
+                            row.getString("before_extras"));
+            sink.complex(new RollbackEffect.BlockReplace(location, expected, replacement), occurred, id);
+            return;
+        }
+        if (clazz == ContainerDepositRecord.class || clazz == ContainerWithdrawRecord.class) {
+            BlockLocation location = readLocation(row);
+            int slot = row.getInteger("slot");
+            StoredItem before = BsonBlobs.decodeStoredItem(row.getString("before_item"));
+            StoredItem after = BsonBlobs.decodeStoredItem(row.getString("after_item"));
+            sink.complex(rollback
+                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before)
+                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after), occurred, id);
+            return;
+        }
+        if (clazz == EntityDeathRecord.class) {
+            BlockLocation location = readLocation(row);
+            String entityType = row.getString("entity_type");
+            if (rollback) {
+                sink.complex(new RollbackEffect.EntitySpawn(location, entityType,
+                        row.getString("entity_nbt")), occurred, id);
+            } else {
+                UUID entityId = row.getUUID("entity_id");
+                sink.complex(new RollbackEffect.EntityRemove(location, entityType,
+                        entityId == null ? null : entityId.toString()), occurred, id);
+            }
+            return;
+        }
+        // Non-rollbackable row (the event filter should exclude these);
+        // advance the cursor past it.
+        sink.skip(occurred, id);
     }
 
     private static String chTimestamp(Instant when) {
