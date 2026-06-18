@@ -2,13 +2,23 @@ package net.medievalrp.spyglass.plugin.rollback;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
+import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
@@ -38,33 +48,37 @@ import org.bukkit.block.Banner;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
+import org.bukkit.block.DecoratedPot;
 import org.bukkit.block.Jukebox;
 import org.bukkit.block.Sign;
 import org.bukkit.block.banner.Pattern;
 import org.bukkit.block.banner.PatternType;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.block.sign.Side;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
 public final class RollbackEngine {
 
-    private static final java.util.logging.Logger LOGGER =
-            java.util.logging.Logger.getLogger(RollbackEngine.class.getName());
+    private static final Logger LOGGER =
+            Logger.getLogger(RollbackEngine.class.getName());
 
     private final Recorder recorder;
     private final RecordingSupport support;
-    private java.util.function.Function<String, java.util.Optional<RollbackEffectHandler>> handlerLookup =
-            type -> java.util.Optional.empty();
+    private Function<String, Optional<RollbackEffectHandler>> handlerLookup =
+            type -> Optional.empty();
     private RollbackPhysicsBlocker physicsBlocker;
 
     // Per-tick budget for the apply loop, in ms. Sourced from
-    // limits.rollback-tick-budget-ms. 45 ms ate 90% of every tick
-    // and tanked TPS on big rollbacks; 15 ms keeps the server
+    // limits.rollback-tick-budget-ms. A larger budget eats most of the
+    // tick and tanks TPS on big rollbacks; the default keeps the server
     // responsive at the cost of wall time.
     private volatile long tickBudgetMs = 15L;
 
@@ -73,7 +87,7 @@ public final class RollbackEngine {
     // only handles tile-entity state and the chunk-update packet.
     // PalettedContainer is per-section locked so concurrent reads
     // from the main thread stay consistent. Null = sync fallback.
-    private volatile java.util.concurrent.Executor worldWriteExecutor;
+    private volatile Executor worldWriteExecutor;
 
     // How many chunks' palette writes the apply path dispatches
     // concurrently per batch — matched to the worldWriteExecutor pool
@@ -95,30 +109,30 @@ public final class RollbackEngine {
     // tile-entity/finish/resend; resolveNanos = main-thread getChunk +
     // prepareChunk; batches = barrier count; the hop latency (idle ticks
     // between batches) is total - write - post - resolve.
-    private final java.util.concurrent.atomic.AtomicLong applyResolveNanos =
-            new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.concurrent.atomic.AtomicLong applyWriteNanos =
-            new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.concurrent.atomic.AtomicLong applyPostNanos =
-            new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.concurrent.atomic.AtomicInteger applyBatchCount =
-            new java.util.concurrent.atomic.AtomicInteger();
-    private final java.util.concurrent.atomic.AtomicInteger applyChunkApplies =
-            new java.util.concurrent.atomic.AtomicInteger();
+    private final AtomicLong applyResolveNanos =
+            new AtomicLong();
+    private final AtomicLong applyWriteNanos =
+            new AtomicLong();
+    private final AtomicLong applyPostNanos =
+            new AtomicLong();
+    private final AtomicInteger applyBatchCount =
+            new AtomicInteger();
+    private final AtomicInteger applyChunkApplies =
+            new AtomicInteger();
 
     // Parsed BlockData is shared across rollbacks. createBlockData is
-    // ~5-10us per call and BlockData is immutable, so caching one
+    // comparatively expensive and BlockData is immutable, so caching one
     // instance per unique spec string is a big win on the hot loop.
-    private static final java.util.concurrent.ConcurrentHashMap<String, org.bukkit.block.data.BlockData> BLOCK_DATA_CACHE =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, BlockData> BLOCK_DATA_CACHE =
+            new ConcurrentHashMap<>();
 
-    private static org.bukkit.block.data.BlockData blockDataFor(String spec) {
-        org.bukkit.block.data.BlockData cached = BLOCK_DATA_CACHE.get(spec);
+    private static BlockData blockDataFor(String spec) {
+        BlockData cached = BLOCK_DATA_CACHE.get(spec);
         if (cached != null) {
             return cached;
         }
-        org.bukkit.block.data.BlockData parsed = Bukkit.createBlockData(spec);
-        org.bukkit.block.data.BlockData prior = BLOCK_DATA_CACHE.putIfAbsent(spec, parsed);
+        BlockData parsed = Bukkit.createBlockData(spec);
+        BlockData prior = BLOCK_DATA_CACHE.putIfAbsent(spec, parsed);
         return prior == null ? parsed : prior;
     }
 
@@ -135,7 +149,7 @@ public final class RollbackEngine {
     // can no longer diverge per-path — any future guard belongs here, on every
     // path, or nowhere.
     private static void forceWriteCell(ChunkDirectWriter.ChunkContext ctx, World world,
-                                       int x, int y, int z, org.bukkit.block.data.BlockData bd) {
+                                       int x, int y, int z, BlockData bd) {
         if (ctx != null) {
             ctx.writeBlock(x, y, z, bd);
         } else {
@@ -165,9 +179,9 @@ public final class RollbackEngine {
         this.support = support;
     }
 
-    public void setCustomEffectLookup(java.util.function.Function<String, java.util.Optional<RollbackEffectHandler>> lookup) {
+    public void setCustomEffectLookup(Function<String, Optional<RollbackEffectHandler>> lookup) {
         this.handlerLookup = lookup == null
-                ? type -> java.util.Optional.empty()
+                ? type -> Optional.empty()
                 : lookup;
     }
 
@@ -179,7 +193,7 @@ public final class RollbackEngine {
         this.tickBudgetMs = Math.max(1L, ms);
     }
 
-    public void setWorldWriteExecutor(java.util.concurrent.Executor exec) {
+    public void setWorldWriteExecutor(Executor exec) {
         this.worldWriteExecutor = exec;
     }
 
@@ -200,9 +214,9 @@ public final class RollbackEngine {
     // worker thread writes the chunk. Without it the chunk system
     // can unload between our main-thread snapshot and the worker's
     // writes, silently no-opping them.
-    private volatile org.bukkit.plugin.Plugin chunkTicketHolder;
+    private volatile Plugin chunkTicketHolder;
 
-    public void setChunkTicketHolder(org.bukkit.plugin.Plugin plugin) {
+    public void setChunkTicketHolder(Plugin plugin) {
         this.chunkTicketHolder = plugin;
     }
 
@@ -216,13 +230,13 @@ public final class RollbackEngine {
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize) {
         return applyAllChunked(effects, sender, scheduler, batchSize,
-                new java.util.concurrent.atomic.AtomicBoolean(false));
+                new AtomicBoolean(false));
     }
 
     public CompletableFuture<List<RollbackResult>> applyAllChunked(
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize,
-            java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+            AtomicBoolean cancelFlag) {
         if (!Bukkit.isPrimaryThread()) {
             throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
@@ -298,7 +312,7 @@ public final class RollbackEngine {
         };
 
         if (worldWriteExecutor != null) {
-            java.util.concurrent.CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
         } else {
             stageOne.run();
         }
@@ -362,7 +376,7 @@ public final class RollbackEngine {
                     long relY = (long) (l.y() - minY);
                     composite[i] = (relCx << cxPos) | (relCz << czPos) | (relY << yPos) | (long) i;
                 }
-                java.util.Arrays.sort(composite);
+                Arrays.sort(composite);
                 int[] order = new int[n];
                 for (int i = 0; i < n; i++) {
                     order[i] = (int) (composite[i] & idxMask);
@@ -384,7 +398,7 @@ public final class RollbackEngine {
         int n = indices.size();
         Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) order[i] = i;
-        java.util.Arrays.sort(order, (a, b) -> {
+        Arrays.sort(order, (a, b) -> {
             BlockLocation la = effects.get(a).location();
             BlockLocation lb = effects.get(b).location();
             int c = la.worldId().compareTo(lb.worldId());
@@ -430,7 +444,7 @@ public final class RollbackEngine {
                                    ServiceSupport scheduler,
                                    int batchSize,
                                    CompletableFuture<List<RollbackResult>> done,
-                                   java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+                                   AtomicBoolean cancelFlag) {
         int total = blockReplaceIndices.size();
         // Cancellation check happens between chunks, never mid-chunk.
         // Anything not yet touched gets marked Skipped so the result
@@ -500,7 +514,7 @@ public final class RollbackEngine {
                     BlockSnapshot replacement = effect.replacement();
                     BlockLocation loc = effect.location();
                     try {
-                        org.bukkit.block.data.BlockData bd =
+                        BlockData bd =
                                 blockDataFor(replacement.blockData());
                         forceWriteCell(chunkCtx, world, loc.x(), loc.y(), loc.z(), bd);
                         if (!replacement.simple()) {
@@ -570,9 +584,9 @@ public final class RollbackEngine {
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done,
-                                         java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+                                         AtomicBoolean cancelFlag) {
         int total = blockReplaceIndices.size();
-        final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
+        final Plugin ticketHolder = chunkTicketHolder;
         int parallelism = Math.max(1, worldWriteParallelism);
 
         // Resolve up to `parallelism` chunks. getChunk + prepareChunk +
@@ -646,12 +660,12 @@ public final class RollbackEngine {
         CompletableFuture<Void>[] futures = new CompletableFuture[batch.size()];
         for (int b = 0; b < batch.size(); b++) {
             ChunkWork work = batch.get(b);
-            futures[b] = java.util.concurrent.CompletableFuture.runAsync(
+            futures[b] = CompletableFuture.runAsync(
                     () -> writeChunkPalettes(work, resultArray, blockReplaceIndices, blockReplaceEffects),
                     worldWriteExecutor);
         }
 
-        java.util.concurrent.CompletableFuture.allOf(futures)
+        CompletableFuture.allOf(futures)
                 .whenComplete((v, throwable) -> {
                     applyWriteNanos.addAndGet(System.nanoTime() - tDispatch);
                     applyBatchCount.incrementAndGet();
@@ -689,13 +703,13 @@ public final class RollbackEngine {
                                     List<RollbackEffect.BlockReplace> blockReplaceEffects) {
         int from = work.from;
         int chunkSize = work.chunkEnd - from;
-        org.bukkit.block.data.BlockData[] writes =
-                new org.bukkit.block.data.BlockData[chunkSize];
-        java.util.BitSet nonSimpleMask = new java.util.BitSet(chunkSize);
+        BlockData[] writes =
+                new BlockData[chunkSize];
+        BitSet nonSimpleMask = new BitSet(chunkSize);
         for (int j = 0; j < chunkSize; j++) {
             int targetIndex = blockReplaceIndices.get(from + j);
             RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
-            org.bukkit.block.data.BlockData bd;
+            BlockData bd;
             try {
                 bd = blockDataFor(effect.replacement().blockData());
             } catch (RuntimeException thrown) {
@@ -740,8 +754,8 @@ public final class RollbackEngine {
                                     List<RollbackEffect.BlockReplace> blockReplaceEffects) {
         World world = work.world;
         int from = work.from;
-        java.util.BitSet nonSimpleMask = work.nonSimpleMask;
-        org.bukkit.block.data.BlockData[] writes = work.writes;
+        BitSet nonSimpleMask = work.nonSimpleMask;
+        BlockData[] writes = work.writes;
         try {
             if (nonSimpleMask != null) {
                 for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
@@ -795,8 +809,8 @@ public final class RollbackEngine {
         final int chunkEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
-        volatile org.bukkit.block.data.BlockData[] writes;
-        volatile java.util.BitSet nonSimpleMask;
+        volatile BlockData[] writes;
+        volatile BitSet nonSimpleMask;
 
         ChunkWork(World world, int cx, int cz, int from, int chunkEnd,
                   ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
@@ -810,7 +824,7 @@ public final class RollbackEngine {
         }
     }
 
-    // ----- Columnar apply (#67) -----------------------------------------
+    // ----- Columnar apply -----------------------------------------
     // Allocation-lean apply for simple block-replaces: reads coordinates and
     // block-data from primitive BlockColumns + a shared palette instead of a
     // List<RollbackEffect.BlockReplace>, and reports counts instead of a
@@ -854,7 +868,7 @@ public final class RollbackEngine {
     public CompletableFuture<ApplyCounts> applyColumnsChunked(
             UUID worldId, BlockColumns cols, CommandSender sender,
             ServiceSupport scheduler, int batchSize,
-            java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+            AtomicBoolean cancelFlag) {
         if (!Bukkit.isPrimaryThread()) {
             throw new IllegalStateException("RollbackEngine.applyColumnsChunked must run on the main thread.");
         }
@@ -884,7 +898,7 @@ public final class RollbackEngine {
                     world, cols, order, 0, counts, sender, scheduler, batchSize, done, cancelFlag));
         };
         if (worldWriteExecutor != null) {
-            java.util.concurrent.CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
         } else {
             stageOne.run();
         }
@@ -894,7 +908,7 @@ public final class RollbackEngine {
     private void applyColumnBatch(World world, BlockColumns cols, int[] order, int from,
                                   ApplyCounts counts, CommandSender sender, ServiceSupport scheduler,
                                   int batchSize, CompletableFuture<ApplyCounts> done,
-                                  java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+                                  AtomicBoolean cancelFlag) {
         int total = cols.count();
         if (cancelFlag.get()) {
             counts.cancelled += total - from;
@@ -905,7 +919,7 @@ public final class RollbackEngine {
             done.complete(counts);
             return;
         }
-        final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
+        final Plugin ticketHolder = chunkTicketHolder;
         int parallelism = Math.max(1, worldWriteParallelism);
         int maxBatchChunks = Math.max(parallelism, worldWriteBatchChunks);
         // Resolve up to maxBatchChunks chunks on the main thread: contiguous
@@ -974,10 +988,10 @@ public final class RollbackEngine {
             CompletableFuture<Void>[] futures = new CompletableFuture[batch.size()];
             for (int b = 0; b < batch.size(); b++) {
                 ColChunk cc = batch.get(b);
-                futures[b] = java.util.concurrent.CompletableFuture.runAsync(
+                futures[b] = CompletableFuture.runAsync(
                         () -> writeColumnChunk(cols, order, cc), worldWriteExecutor);
             }
-            java.util.concurrent.CompletableFuture.allOf(futures)
+            CompletableFuture.allOf(futures)
                     .whenComplete((v, t) -> afterWrites.run());
         } else {
             for (ColChunk cc : batch) {
@@ -1002,7 +1016,7 @@ public final class RollbackEngine {
             int x = cols.x(idx);
             int y = cols.y(idx);
             int z = cols.z(idx);
-            org.bukkit.block.data.BlockData bd;
+            BlockData bd;
             try {
                 bd = blockDataFor(cols.replData(idx));
             } catch (RuntimeException thrown) {
@@ -1021,7 +1035,7 @@ public final class RollbackEngine {
     }
 
     // Main-thread fallback for a chunk whose prepareChunk failed: single
-    // block writes, force-overwrite (#69 — no live-state guard).
+    // block writes, force-overwrite (no live-state guard).
     private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
         long applied = 0;
         long unparse = 0;
@@ -1030,7 +1044,7 @@ public final class RollbackEngine {
             int x = cols.x(idx);
             int y = cols.y(idx);
             int z = cols.z(idx);
-            org.bukkit.block.data.BlockData bd;
+            BlockData bd;
             try {
                 bd = blockDataFor(cols.replData(idx));
             } catch (RuntimeException thrown) {
@@ -1212,9 +1226,9 @@ public final class RollbackEngine {
             // resolve the disc's sound registry. Use the live state
             // instead so we have a real Level reference.
             try {
-                org.bukkit.block.BlockState live = block.getState(false);
+                BlockState live = block.getState(false);
                 if (live instanceof Jukebox liveJukebox) {
-                    org.bukkit.inventory.ItemStack disc =
+                    ItemStack disc =
                             ItemSerialization.decode(snapshot.jukeboxRecord());
                     if (disc != null) {
                         liveJukebox.setRecord(disc);
@@ -1225,7 +1239,7 @@ public final class RollbackEngine {
             }
         }
 
-        if (state instanceof org.bukkit.block.DecoratedPot pot
+        if (state instanceof DecoratedPot pot
                 && !snapshot.potSherds().isEmpty()) {
             applyPotSherds(pot, snapshot.potSherds());
         }
@@ -1235,8 +1249,8 @@ public final class RollbackEngine {
 
     // Order matches DecoratedPot.Side enum declaration; the snapshot
     // list is built the same way in BlockSnapshots.capture.
-    private void applyPotSherds(org.bukkit.block.DecoratedPot pot, List<String> names) {
-        org.bukkit.block.DecoratedPot.Side[] sides = org.bukkit.block.DecoratedPot.Side.values();
+    private void applyPotSherds(DecoratedPot pot, List<String> names) {
+        DecoratedPot.Side[] sides = DecoratedPot.Side.values();
         for (int i = 0; i < sides.length && i < names.size(); i++) {
             try {
                 Material material = Material.valueOf(names.get(i));
@@ -1319,7 +1333,7 @@ public final class RollbackEngine {
                 RecordingSupport.fastRandomUUID(),
                 occurred,
                 support.expiresAt(occurred),
-                origin, source, location, support.serverName(), java.util.Map.of());
+                origin, source, location, support.serverName(), Map.of());
         boolean toAir = after == null || after.material() == Material.AIR;
         // Lowercase-hyphenated form matches shulker-open etc. and
         // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
@@ -1341,7 +1355,7 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyCustom(RollbackEffect.Custom effect) {
-        java.util.Optional<RollbackEffectHandler> handler = handlerLookup.apply(effect.type());
+        Optional<RollbackEffectHandler> handler = handlerLookup.apply(effect.type());
         if (handler.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
                     "No handler registered for custom effect type '" + effect.type() + "'."));
@@ -1367,7 +1381,7 @@ public final class RollbackEngine {
                 effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
         // Full-NBT resurrection when a snapshot exists. In practice it
         // rarely does: Paper's serializeEntity rejects dying entities,
-        // so death records ship with null NBT (#29) — hence the
+        // so death records ship with null NBT — hence the
         // by-type fallback below rather than a skip.
         if (effect.serializedEntity() != null && !effect.serializedEntity().isBlank()) {
             try {
@@ -1397,8 +1411,8 @@ public final class RollbackEngine {
         }
         try {
             org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.minecraft(
-                    effect.entityType().toLowerCase(java.util.Locale.ROOT));
-            org.bukkit.entity.EntityType type =
+                    effect.entityType().toLowerCase(Locale.ROOT));
+            EntityType type =
                     org.bukkit.Registry.ENTITY_TYPE.get(key);
             if (type == null || !type.isSpawnable()) {
                 return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
