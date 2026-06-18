@@ -113,7 +113,8 @@ public final class ClickHouseRecordStore implements RecordStore {
             "entity_type", "entity_id",
             "entity_killer_type", "entity_damage_cause",
             "entity_damage", "entity_projectile", "entity_projectile_type",
-            "entity_dismount", "entity_old_name", "entity_new_name");
+            "entity_dismount", "entity_old_name", "entity_new_name",
+            "extensions");
 
     private static final List<String> HEAVY_COLUMNS = List.of(
             "before_material", "before_blockdata", "before_extras",
@@ -327,6 +328,10 @@ public final class ClickHouseRecordStore implements RecordStore {
         writer.setInteger("location_z", location.z());
         writer.setString("server", nullToEmpty(record.server()));
         writer.setValue("target", record.target());
+        // Extension fields ride on every row (empty map for records that don't
+        // expose them — see EventRecord#extensions). RowBinary needs every
+        // column set per row, so this is unconditional.
+        writer.setValue("extensions", record.extensions());
     }
 
     private void writeBlockColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
@@ -751,7 +756,8 @@ public final class ClickHouseRecordStore implements RecordStore {
             return new ChatRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target,
                     row.getString("message"),
-                    readUuidList(row, "recipients"));
+                    readUuidList(row, "recipients"),
+                    readStringMap(row, "extensions"));
         }
         if (clazz == CommandRecord.class) {
             return new CommandRecord(id, event, occurred, expiresAt,
@@ -882,6 +888,25 @@ public final class ClickHouseRecordStore implements RecordStore {
                 row.getInteger(prefix + "x"),
                 row.getInteger(prefix + "y"),
                 row.getInteger(prefix + "z"));
+    }
+
+    /**
+     * Reads a ClickHouse {@code Map(String,String)} column. The client decodes
+     * a Map column to a {@link Map}; a null/absent/empty column yields an empty
+     * map (records written before the column existed read as empty).
+     */
+    private Map<String, String> readStringMap(GenericRecord row, String column) {
+        Object raw = row.getObject(column);
+        if (!(raw instanceof Map<?, ?> map) || map.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> out = new HashMap<>(map.size());
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() != null) {
+                out.put(entry.getKey().toString(), entry.getValue().toString());
+            }
+        }
+        return Map.copyOf(out);
     }
 
     private List<UUID> readUuidList(GenericRecord row, String column) {
