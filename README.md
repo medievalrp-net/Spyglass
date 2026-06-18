@@ -145,7 +145,7 @@ Reverts everything that player did in the last 6 hours within 100 blocks. Behavi
 
 1. The request is queued. Only one rollback runs at a time; others wait.
 2. Records stream from the store directly into bounded apply windows — heap stays flat regardless of operation size, and the server holds ~20 TPS throughout.
-3. Each block is verified before it is written: if a *different* player has since changed that block, the cell is skipped and reported (`block changed`) instead of overwriting their work.
+3. Each matched block is **force-overwritten** to its recorded state regardless of what's there now (matching the original Spyglass and CoreProtect), so drift that crept into the area afterward — water, lava, fire, falling blocks — is cleared too. A rollback is not blocked by a later edit in those cells, so scope it by player, region, and time to the grief you mean to revert.
 4. When it finishes, you get a summary — blocks reverted, skips with reasons, chunks touched, time taken — and the operation lands on your personal undo stack.
 
 There is no size limit on rollback or undo. A 10 M-block operation streams the same way a 100-block one does.
@@ -161,10 +161,10 @@ Undo replays the operation's own record set in the opposite direction — nothin
 ### Managing the queue
 
 ```
-/sg rbqueue              # list in-flight, pending, recent, and resumable jobs
-/sg rbqueue stop         # cancel the running job (current batch finishes, then it stops)
-/sg rbqueue cancel <id>  # cancel a pending or in-flight job by short id
-/sg rbqueue resume <id>  # re-run a job that was interrupted by a crash or restart
+/sg rbqueue # list in-flight, pending, recent, and resumable jobs
+/sg rbqueue stop # cancel the running job (current batch finishes, then it stops)
+/sg rbqueue cancel <id> # cancel a pending or in-flight job by short id
+/sg rbqueue resume <id> # re-run a job that was interrupted by a crash or restart
 ```
 
 If the JVM crashes mid-rollback, on next startup `/sg rbqueue` shows the interrupted job as resumable. The original query re-runs from a saved cursor; already-applied blocks skip as already-correct, so the resumed run converges on the same result as an uninterrupted one.
@@ -213,16 +213,16 @@ The rollback engine requires no tuning. `limits.rollback-page-size` (default 500
 /sg search ip:1.2.3.4 a:command t:1d -g
 
 # Restore everything inside my WorldEdit selection that was broken last hour.
-//wand   (select region with WorldEdit)
+//wand (select region with WorldEdit)
 /sg restore a:break t:1h -we
 ```
 
 ## Build
 
 ```
-./gradlew :spyglass:shadowJar       # plugin jar -> spyglass/build/libs/Spyglass-1.0.0.jar
-./gradlew build                     # everything: jars, tests, coverage
-./gradlew deployToRpServer          # build + copy to ../RP_Server/plugins/
+./gradlew :spyglass:shadowJar # plugin jar -> spyglass/build/libs/Spyglass-1.0.0.jar
+./gradlew build # everything: jars, tests, coverage
+./gradlew deployToRpServer # build + copy to ../RP_Server/plugins/
 ```
 
 The store integration tests (Mongo/ClickHouse) run under Testcontainers and need a reachable Docker daemon. Without Docker they assume-skip and `gradlew check` prints a `WARNING: Docker not reachable` line — a green build in that state is **not** full verification. The per-module jacoco line-coverage floors are sized for the leaner no-Docker run, so they hold with or without Docker; a run with Docker clears them with room to spare.
@@ -256,11 +256,11 @@ Rollback adds a second pipeline on top of that:
 
 1. `RollbackService.execute()` parses the same query, builds a `RollbackJob`, persists a `<jobId>.resume` marker (key=value text file at `<plugindata>/resume/`), and submits to `RollbackJobQueue` (in-memory FIFO, one job in flight at a time).
 2. `streamPagesAndApply()` runs the streaming pipeline: a dedicated reader thread pulls records off the store wire and folds them directly into bounded apply windows (~131 K effects; repeated block snapshots are interned so a window's retained footprint stays small under generational GC). A single-slot queue hands windows to the consumer, which pre-warms chunks, applies, and checkpoints the resume cursor per window. Read and apply overlap fully; at most a few windows are ever resident, so heap does not scale with operation size.
-3. `RollbackEngine` groups each window's effects by chunk and fans the bulk palette writes across a worker pool (the locked `LevelChunkSection.setBlockState` makes concurrent writes to distinct chunks safe). Before every write, the worker compares the block's current state against the state the record expects — an interned-state identity check costing one read per block. Mismatches (another player's later edit, an already-applied resume prefix) skip with a `block changed` reason instead of overwriting. Tile-entity state, the chunk packet, and lighting are applied on the main thread within a per-tick budget.
+3. `RollbackEngine` groups each window's effects by chunk and fans the bulk palette writes across a worker pool (the locked `LevelChunkSection.setBlockState` makes concurrent writes to distinct chunks safe). Each cell is **force-overwritten** to its recorded state with no live-state guard — matching the original Spyglass and CoreProtect — so a grief rollback restores the original blocks even where unlogged drift (water, lava, fire, or falling blocks) moved into the gap after the edit. Scope a rollback (by player, region, and time) to the grief you mean to revert. Tile-entity state, the chunk packet, and lighting are applied on the main thread within a per-tick budget.
 4. `RollbackPhysicsBlocker` suppresses gravity/cascade ticks inside the rollback bounding box. A plugin chunk ticket is held per chunk for the duration of its write.
 5. On completion the operation writes two small artifacts: an undo ledger row (the resolved query plus a time ceiling — `/sg undo` replays that record set in the opposite direction, so nothing is captured per block) and one `rollback-op` event record. Searches synthesize the per-block `rolled-place` / `rolled-break` entries from the op record on demand, with exact filter parity to the persisted rows they replace — a 2 M-block rollback adds one row to the store instead of two million, and re-running it adds one more.
 
-Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL batches into the recorder before listeners come online, and `RollbackResumeStore.listPending()` surfaces interrupted rollback markers. The operator runs `/sg rbqueue resume <id>` to re-execute the original query from the saved cursor. The already-completed prefix skips as already-correct (the expected-state check sees each block already holds its target state), so the resumed run converges on the same result as an uninterrupted one.
+Crash resume: on `onEnable`, `WalDurability.recover()` replays any pending WAL batches into the recorder before listeners come online, and `RollbackResumeStore.listPending()` surfaces interrupted rollback markers. The operator runs `/sg rbqueue resume <id>` to re-execute the original query from the saved cursor. The already-completed prefix simply re-applies its recorded state — force-overwrite is idempotent, so re-writing a block to the value it already holds changes nothing — and the resumed run converges on the same result as an uninterrupted one.
 
 ## Operations / production notes
 
