@@ -188,17 +188,25 @@ public final class ClickHouseRecordStore implements RecordStore {
     // everything streamRollbackEffects never reads vs ROLLBACK_COLUMNS:
     // expires_at, origin_*, all source_*, server, target, plus the
     // container_type/amount and entity killer/damage columns that the
-    // effect constructors ignore. Cutting the SELECT this far trims both
-    // the wire response and the per-row decode — there is no Origin,
-    // Source, or record wrapper to allocate, only the effect's own fields.
-    private static final List<String> LEAN_ROLLBACK_COLUMNS = List.of(
+    // effect constructors ignore.
+    //
+    // Direction-specific (read-churn cut): force-overwrite (#69) never reads
+    // the expected (other) side of a block edit, so a rollback fetches only
+    // the before_* block columns and a restore only the after_* ones. That
+    // halves the per-row LowCardinality string materialization (the dominant
+    // eden filler) for a million-row read — without it the client decodes
+    // both before_blockdata AND after_blockdata per row for nothing. Common
+    // (cursor / dispatch / location / container / entity) columns are shared.
+    private static final List<String> LEAN_COMMON_COLUMNS = List.of(
             "id", "event", "occurred",
             "location_world_id", "location_world_name",
             "location_x", "location_y", "location_z",
-            "before_material", "before_blockdata", "before_extras",
-            "after_material", "after_blockdata", "after_extras",
             "slot", "before_item", "after_item",
             "entity_type", "entity_id", "entity_nbt");
+    private static final List<String> LEAN_ROLLBACK_BLOCK = List.of(
+            "before_material", "before_blockdata", "before_extras");
+    private static final List<String> LEAN_RESTORE_BLOCK = List.of(
+            "after_material", "after_blockdata", "after_extras");
 
     private final PredicateToSql predicateToSql = new PredicateToSql();
     private final Client client;
@@ -209,7 +217,8 @@ public final class ClickHouseRecordStore implements RecordStore {
     private final String summarySelect;
     private final String fullSelect;
     private final String rollbackSelect;
-    private final String leanRollbackSelect;
+    private final String rollbackReadSelect;
+    private final String restoreReadSelect;
 
     public ClickHouseRecordStore(String host, int port, String database, String table,
                                  String user, String password, boolean ssl) {
@@ -219,7 +228,8 @@ public final class ClickHouseRecordStore implements RecordStore {
         this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS));
         this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, HEAVY_COLUMNS));
         this.rollbackSelect = String.join(", ", ROLLBACK_COLUMNS);
-        this.leanRollbackSelect = String.join(", ", LEAN_ROLLBACK_COLUMNS);
+        this.rollbackReadSelect = String.join(", ", concat(LEAN_COMMON_COLUMNS, LEAN_ROLLBACK_BLOCK));
+        this.restoreReadSelect = String.join(", ", concat(LEAN_COMMON_COLUMNS, LEAN_RESTORE_BLOCK));
 
         this.client = new Client.Builder()
                 .addEndpoint((ssl ? "https" : "http") + "://" + host + ":" + port)
@@ -602,14 +612,15 @@ public final class ClickHouseRecordStore implements RecordStore {
                                                   int windowLimit, boolean rollback,
                                                   RollbackEffectSink sink) {
         // Allocation-lean rollback read (#67): same keyset-streamed scan as
-        // streamRollback, but the trimmed LEAN_ROLLBACK_COLUMNS SELECT and
-        // decodeEffect build only the RollbackEffect the engine applies —
-        // no EventRecord, Origin, Source, server/target, or expires_at is
-        // ever materialized. On a 2M-block rollback that removes the bulk
-        // of the per-row object graph (the firehose that, surviving one
-        // young GC under MaxTenuringThreshold=1, promoted to old gen and
-        // forced the Mixed-GC freeze).
-        String sql = buildRollbackSql(leanRollbackSelect, request, cursor, windowLimit);
+        // streamRollback, but the trimmed SELECT + emitEffect build only the
+        // RollbackEffect the engine applies — no EventRecord, Origin, Source,
+        // server/target, or expires_at is ever materialized. The SELECT is
+        // direction-specific: force-overwrite ignores the expected side, so a
+        // rollback reads only before_* block columns, a restore only after_*
+        // — halving the per-row LowCardinality string churn that, left
+        // unchecked, fills eden and triggers a young GC mid-rollback.
+        String sql = buildRollbackSql(rollback ? rollbackReadSelect : restoreReadSelect,
+                request, cursor, windowLimit);
         Instant lastOccurred = null;
         UUID lastId = null;
         int rowCount = 0;
@@ -712,42 +723,37 @@ public final class ClickHouseRecordStore implements RecordStore {
             // Resolve which stored state we write (replacement) vs. expect
             // currently present (expectedCurrent). rollback writes the
             // before-state expecting the after-state; restore is the inverse.
+            // Replacement side only — the SELECT omits the expected side and
+            // force-overwrite (#69) never reads it. rollback writes the
+            // before-state; restore writes the after-state.
             String replMaterial;
             String replData;
             String replExtras;
-            String expData;
             if (rollback) {
                 replMaterial = row.getString("before_material");
                 replData = row.getString("before_blockdata");
                 replExtras = row.getString("before_extras");
-                expData = row.getString("after_blockdata");
             } else {
                 replMaterial = row.getString("after_material");
                 replData = row.getString("after_blockdata");
                 replExtras = row.getString("after_extras");
-                expData = row.getString("before_blockdata");
             }
             boolean simple = replData != null && (replExtras == null || replExtras.isEmpty());
             if (simple) {
+                // expectedData is unused under force-overwrite; pass null.
                 sink.block(row.getUUID("location_world_id"),
                         row.getInteger("location_x"),
                         row.getInteger("location_y"),
                         row.getInteger("location_z"),
-                        replData, expData, occurred, id);
+                        replData, null, occurred, id);
                 return;
             }
             // Tile-entity payload (or malformed block-data): object path.
+            // expectedCurrent is null — force-overwrite ignores it.
             BlockLocation location = readLocation(row);
             BlockSnapshot replacement = BsonBlobs.decodeBlockSnapshotFromColumns(
                     replMaterial, replData, replExtras);
-            BlockSnapshot expected = rollback
-                    ? BsonBlobs.decodeBlockSnapshotFromColumns(
-                            row.getString("after_material"), row.getString("after_blockdata"),
-                            row.getString("after_extras"))
-                    : BsonBlobs.decodeBlockSnapshotFromColumns(
-                            row.getString("before_material"), row.getString("before_blockdata"),
-                            row.getString("before_extras"));
-            sink.complex(new RollbackEffect.BlockReplace(location, expected, replacement), occurred, id);
+            sink.complex(new RollbackEffect.BlockReplace(location, null, replacement), occurred, id);
             return;
         }
         if (clazz == ContainerDepositRecord.class || clazz == ContainerWithdrawRecord.class) {
