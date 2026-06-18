@@ -81,6 +81,45 @@ class ResultRendererTest {
     }
 
     @Test
+    void leadingTagsRenderBeforeTheActorName() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        DisplayRenderer custom = new DisplayRenderer() {
+            @Override
+            public List<Component> leadingTags(net.medievalrp.spyglass.api.event.EventRecord record) {
+                return List.of(Component.text("[OOC]"));
+            }
+        };
+        when(api.displayRenderer("sculk")).thenReturn(Optional.of(custom));
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+
+        assertThat(plain).contains("[OOC]");
+        assertThat(plain.indexOf("[OOC]"))
+                .as("leading tag must render before the actor name")
+                .isLessThan(plain.indexOf("Alice"));
+    }
+
+    @Test
+    void throwingLeadingTagsFallsBackToNoTags() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        DisplayRenderer custom = new DisplayRenderer() {
+            @Override
+            public List<Component> leadingTags(net.medievalrp.spyglass.api.event.EventRecord record) {
+                throw new IllegalStateException("boom");
+            }
+        };
+        when(api.displayRenderer("sculk")).thenReturn(Optional.of(custom));
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(useRecord(), EnumSet.noneOf(Flag.class), true);
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+
+        assertThat(plain).contains("Alice").doesNotContain("[OOC]");
+    }
+
+    @Test
     void extendedFlagAppendsLocationLine() {
         SpyglassApi api = mock(SpyglassApi.class);
         when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
