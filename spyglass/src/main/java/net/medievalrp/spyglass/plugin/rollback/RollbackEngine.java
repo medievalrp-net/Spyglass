@@ -836,6 +836,294 @@ public final class RollbackEngine {
         }
     }
 
+    // ----- Columnar apply (#67) -----------------------------------------
+    // Allocation-lean apply for simple block-replaces: reads coordinates and
+    // block-data from primitive BlockColumns + a shared palette instead of a
+    // List<RollbackEffect.BlockReplace>, and reports counts instead of a
+    // RollbackResult object per cell. Same off-main chunk cadence as
+    // applyChunkBatchParallel (TPS stays at ~20), but a 2M window's live set
+    // is now reference-free primitives that don't promote to old gen under
+    // MaxTenuringThreshold=1 — removing the apply-side allocation that, with
+    // lean decode, was the last driver of the Mixed-GC rollback freeze.
+    // Containers/signs/banners/entities/custom effects stay on the object
+    // path (runContainerAndLeftover / applyAllChunked) — they are rare and
+    // need per-cell state handling the columnar fast path deliberately omits.
+
+    /** Counts produced by {@link #applyColumnsChunked} — no per-cell objects. */
+    @ApiStatus.Internal
+    public static final class ApplyCounts {
+        public long applied;
+        public long blockChanged;
+        public long unparseable;
+        public long invalidLocation;
+        public long cancelled;
+
+        /** Total skipped across every benign and error reason. */
+        public long skipped() {
+            return blockChanged + unparseable + invalidLocation + cancelled;
+        }
+
+        /** Skips that are real failures (parity with RollbackReason.Error). */
+        public long errors() {
+            return unparseable + cancelled;
+        }
+
+        public void add(ApplyCounts other) {
+            applied += other.applied;
+            blockChanged += other.blockChanged;
+            unparseable += other.unparseable;
+            invalidLocation += other.invalidLocation;
+            cancelled += other.cancelled;
+        }
+    }
+
+    public CompletableFuture<ApplyCounts> applyColumnsChunked(
+            UUID worldId, BlockColumns cols, CommandSender sender,
+            ServiceSupport scheduler, int batchSize,
+            java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+        if (!Bukkit.isPrimaryThread()) {
+            throw new IllegalStateException("RollbackEngine.applyColumnsChunked must run on the main thread.");
+        }
+        CompletableFuture<ApplyCounts> done = new CompletableFuture<>();
+        ApplyCounts counts = new ApplyCounts();
+        int total = cols.count();
+        if (total == 0) {
+            done.complete(counts);
+            return done;
+        }
+        World world = Bukkit.getWorld(worldId);
+        if (world == null) {
+            counts.invalidLocation += total;
+            done.complete(counts);
+            return done;
+        }
+        if (physicsBlocker != null) {
+            long handle = physicsBlocker.enter(worldId,
+                    cols.minX(), cols.minY(), cols.minZ(),
+                    cols.maxX(), cols.maxY(), cols.maxZ());
+            done.whenComplete((r, t) -> physicsBlocker.exit(handle));
+        }
+        // Sort off-main (chunk-grouped, bottom-up Y), then apply on main.
+        Runnable stageOne = () -> {
+            int[] order = cols.chunkSortedOrder();
+            scheduler.onMainThread(() -> applyColumnBatch(
+                    world, cols, order, 0, counts, sender, scheduler, batchSize, done, cancelFlag));
+        };
+        if (worldWriteExecutor != null) {
+            java.util.concurrent.CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+        } else {
+            stageOne.run();
+        }
+        return done;
+    }
+
+    private void applyColumnBatch(World world, BlockColumns cols, int[] order, int from,
+                                  ApplyCounts counts, CommandSender sender, ServiceSupport scheduler,
+                                  int batchSize, CompletableFuture<ApplyCounts> done,
+                                  java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+        int total = cols.count();
+        if (cancelFlag.get()) {
+            counts.cancelled += total - from;
+            done.complete(counts);
+            return;
+        }
+        if (from >= total) {
+            done.complete(counts);
+            return;
+        }
+        final org.bukkit.plugin.Plugin ticketHolder = chunkTicketHolder;
+        int parallelism = Math.max(1, worldWriteParallelism);
+        int maxBatchChunks = Math.max(parallelism, worldWriteBatchChunks);
+        // Resolve up to maxBatchChunks chunks on the main thread: contiguous
+        // runs of the sorted order share a chunk, so one walk groups them.
+        List<ColChunk> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
+        int cursor = from;
+        while (cursor < total && batch.size() < maxBatchChunks) {
+            int startIdx = order[cursor];
+            int cx = cols.x(startIdx) >> 4;
+            int cz = cols.z(startIdx) >> 4;
+            int rangeEnd = cursor + 1;
+            while (rangeEnd < total) {
+                int idx = order[rangeEnd];
+                if ((cols.x(idx) >> 4) != cx || (cols.z(idx) >> 4) != cz) {
+                    break;
+                }
+                rangeEnd++;
+            }
+            boolean ticketAdded = false;
+            if (ticketHolder != null) {
+                try {
+                    ticketAdded = world.addPluginChunkTicket(cx, cz, ticketHolder);
+                } catch (Throwable ignored) {
+                }
+            }
+            ChunkDirectWriter.ChunkContext ctx = ChunkDirectWriter.prepareChunk(world, cx, cz);
+            batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
+            cursor = rangeEnd;
+        }
+        final int batchEnd = cursor;
+
+        // Main-thread post: finish/resend each chunk, release tickets, sum
+        // the per-chunk counts, then advance. The heavy palette writes
+        // already happened off-main (or inline when no executor is wired).
+        Runnable afterWrites = () -> scheduler.onMainThread(() -> {
+            for (ColChunk cc : batch) {
+                if (cc.ctx == null) {
+                    // prepareChunk failed: write this chunk's cells on the
+                    // main thread via the single-block fallback.
+                    writeColumnChunkMain(world, cols, order, cc);
+                } else {
+                    ChunkDirectWriter.finishChunk(cc.ctx);
+                }
+                try {
+                    ChunkResender.resend(world, cc.cx, cc.cz);
+                } catch (RuntimeException ignored) {
+                }
+                if (cc.ticketAdded && ticketHolder != null) {
+                    try {
+                        world.removePluginChunkTicket(cc.cx, cc.cz, ticketHolder);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                counts.applied += cc.applied;
+                counts.blockChanged += cc.blockChanged;
+                counts.unparseable += cc.unparseable;
+            }
+            if (sender instanceof Player p) {
+                p.sendActionBar(Component.text("Rolling back " + batchEnd + " / " + total));
+            }
+            applyColumnBatch(world, cols, order, batchEnd, counts, sender, scheduler, batchSize, done, cancelFlag);
+        });
+
+        if (worldWriteExecutor != null) {
+            @SuppressWarnings("unchecked")
+            CompletableFuture<Void>[] futures = new CompletableFuture[batch.size()];
+            for (int b = 0; b < batch.size(); b++) {
+                ColChunk cc = batch.get(b);
+                futures[b] = java.util.concurrent.CompletableFuture.runAsync(
+                        () -> writeColumnChunk(cols, order, cc), worldWriteExecutor);
+            }
+            java.util.concurrent.CompletableFuture.allOf(futures)
+                    .whenComplete((v, t) -> afterWrites.run());
+        } else {
+            for (ColChunk cc : batch) {
+                writeColumnChunk(cols, order, cc);
+            }
+            afterWrites.run();
+        }
+    }
+
+    // Worker-thread half: parse + write one chunk's cells from the columns.
+    // No chunk-system access (prepareChunk already ran on main) — only the
+    // locked LevelChunkSection write. Counts land on the work unit.
+    private void writeColumnChunk(BlockColumns cols, int[] order, ColChunk cc) {
+        if (cc.ctx == null) {
+            return; // handled on the main thread in writeColumnChunkMain
+        }
+        long applied = 0;
+        long changed = 0;
+        long unparse = 0;
+        for (int k = cc.from; k < cc.rangeEnd; k++) {
+            int idx = order[k];
+            int x = cols.x(idx);
+            int y = cols.y(idx);
+            int z = cols.z(idx);
+            org.bukkit.block.data.BlockData bd;
+            try {
+                bd = blockDataFor(cols.replData(idx));
+            } catch (RuntimeException thrown) {
+                bd = null;
+            }
+            if (bd == null) {
+                unparse++;
+                continue;
+            }
+            String exp = cols.expData(idx);
+            if (exp != null) {
+                org.bukkit.block.data.BlockData expBd;
+                try {
+                    expBd = blockDataFor(exp);
+                } catch (RuntimeException thrown) {
+                    expBd = null;
+                }
+                // Expected-state check (#27): skip when the live block no
+                // longer matches what this op expected — same semantics as
+                // the object path's matches().
+                if (expBd != null && cc.ctx.currentStateMatches(x, y, z, expBd) == 0) {
+                    changed++;
+                    continue;
+                }
+            }
+            cc.ctx.writeBlock(x, y, z, bd);
+            applied++;
+        }
+        cc.applied = applied;
+        cc.blockChanged = changed;
+        cc.unparseable = unparse;
+    }
+
+    // Main-thread fallback for a chunk whose prepareChunk failed: single
+    // block writes with the expected check via Bukkit.
+    private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
+        long applied = 0;
+        long changed = 0;
+        long unparse = 0;
+        for (int k = cc.from; k < cc.rangeEnd; k++) {
+            int idx = order[k];
+            int x = cols.x(idx);
+            int y = cols.y(idx);
+            int z = cols.z(idx);
+            org.bukkit.block.data.BlockData bd;
+            try {
+                bd = blockDataFor(cols.replData(idx));
+            } catch (RuntimeException thrown) {
+                bd = null;
+            }
+            if (bd == null) {
+                unparse++;
+                continue;
+            }
+            String exp = cols.expData(idx);
+            if (exp != null) {
+                Block block = world.getBlockAt(x, y, z);
+                if (!exp.equals(block.getBlockData().getAsString())) {
+                    changed++;
+                    continue;
+                }
+            }
+            ChunkDirectWriter.writeBlock(world, x, y, z, bd);
+            applied++;
+        }
+        cc.applied = applied;
+        cc.blockChanged = changed;
+        cc.unparseable = unparse;
+    }
+
+    // One chunk's columnar work unit: the [from, rangeEnd) slice of the
+    // sorted order that lands in (cx, cz). counts are filled by the worker
+    // (ctx != null) or the main fallback (ctx == null) before being summed.
+    private static final class ColChunk {
+        final int cx;
+        final int cz;
+        final int from;
+        final int rangeEnd;
+        final ChunkDirectWriter.ChunkContext ctx;
+        final boolean ticketAdded;
+        volatile long applied;
+        volatile long blockChanged;
+        volatile long unparseable;
+
+        ColChunk(int cx, int cz, int from, int rangeEnd,
+                 ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
+            this.cx = cx;
+            this.cz = cz;
+            this.from = from;
+            this.rangeEnd = rangeEnd;
+            this.ctx = ctx;
+            this.ticketAdded = ticketAdded;
+        }
+    }
+
 
     // Containers (one batched apply per chest) then leftover entity
     // ops and custom handlers. Called once the block phase drains.
