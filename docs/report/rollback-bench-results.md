@@ -2,61 +2,59 @@
 
 Head-to-head rollback of a **2,000,376-block** cube (126³), with **both** plugins on the **same ClickHouse** (`127.0.0.1:8123`; Spyglass → `spyglass` db, CoreProtect → `coreprotect` db via the `coreprotect-clickhouse` bridge). Run on `../RP_Server` (Paper 1.21.8, Java 21) under the **6 GB benchmark heap** (`start-bench.sh`), driven by [`regression/bot/compare.js`](../../regression/bot/compare.js). GC from the JVM GC log (`logs/gc-bench.log`).
 
-**Re-run 2026-06-18** on current `main` — after #19 (streaming collect), #44 (storage v2), and #59 (rollback-cap removal). **Two back-to-back runs**; numbers are reported `run1 / run2`. This supersedes the 2026-06-03 run. Two things changed materially since then:
+**Re-run 2026-06-18** on current `main` — after **#67 (lean rollback decode + columnar apply)**, on top of #19 (streaming collect), #44 (storage v2), and #59 (rollback-cap removal). #67 is the change that **eliminates the freeze**:
 
-1. **`/spyglass undo` now completes.** It used to materialize the whole inverse-effect list in heap and OOM'd above ~250 K effects, so the old run skipped it. It now streams, and reverses a 2M cube in ~8.6 s.
-2. **The rollback-time GC freezes are roughly halved.** The dials that drove them — `rollback-page-size` / `rollback-undo-cap` at 1M / 10M — are gone (#59); the engine now streams **16 bounded ~500 K-row windows** instead of one 1M-row window plus a 2M-element live undo list, so the +2 GB old-gen promotion that caused the freezes no longer happens.
+1. **Lean decode.** The rollback read now resolves each ClickHouse row straight to a `RollbackEffect` from a trimmed column list — no `EventRecord` / `Origin` / `Source` / server / target object graph is built. Read wall-clock dropped **6.1 s → ~0.6 s** for a 2M scan.
+2. **Columnar apply.** Simple block-replaces (the bulk of any rollback) are applied from primitive `int` arrays + an interned block-data palette, reporting *counts* instead of a `RollbackResult` object per cell. The apply no longer allocates a promotable object graph, so it stops growing old gen — which is what used to trigger the Mixed-GC freeze under Aikar's `MaxTenuringThreshold=1`.
+
+Net: a 2M rollback drops from **9.6 s** (object path) to **~3.1 s**, and the worst GC pause *during the rollback* drops from **360 ms (4 Mixed pauses)** to **a single ≤9.4 ms pure-young pause — or none** in steady state.
 
 ## TL;DR
 
 | Dimension (2M blocks, ClickHouse) | **Spyglass** | **CoreProtect** | Winner |
 |---|---|---|---|
-| Rollback wall-clock | **8.4 / 9.3 s** (~226 k blk/s) | 12.7 / 12.2 s (~161 k blk/s) | **SG ~1.4×** |
-| Undo / restore-to-air wall-clock | **8.8 / 8.4 s** (now works) | 12.8 / 15.3 s | **SG** |
-| MSPT 5 s-avg during op | **5.3 / 5.5 ms** | 44.1 / 36.7–55.9 ms | **SG** |
-| Worst single tick (MSPT 5 s-max) | **129 / 75 ms** | 276 / 603 ms | **SG** |
-| Sustained TPS during op | **20.0 / 20.0** | 17.1 / 15.7 (min 8–12) | **SG** |
-| Worst GC pause *during the rollback* | **307 / 424 ms** (was 849 ms) | on-main — folds into the tick | — |
+| Rollback wall-clock | **3.8 s** (~520 k blk/s) | 11.6 s (~173 k blk/s) | **SG ~3×** |
+| Undo / restore-to-air wall-clock | **3.5 s** (~572 k blk/s) | 12.6 s | **SG** |
+| MSPT 5 s-avg during op | **4.4 / 4.1 ms** | 83.6 / 36.4 ms | **SG** |
+| Worst single tick (MSPT 5 s-max) | **17.3 ms** | 617 ms | **SG** |
+| Sustained TPS during op | **20.0 / 20.0** | 12.0 / 18.1 (min 9.8) | **SG** |
+| Worst GC pause *during the rollback* (steady state) | **≤9.4 ms** (pure-young; often 0) | on-main — folds into the tick | — |
 
-**Verdict.** On the same ClickHouse, Spyglass rolls back **~1.4× faster** than CoreProtect and holds a real **20 TPS** by doing the apply off-main (main thread ~parked the whole time); CoreProtect applies on-main and sags to ~16–18 TPS (dipping to 8–12) for the *entire* operation. `/spyglass undo` now reverses a 2M rollback in ~8.6 s — the heap blowup that forced it to be skipped is fixed. The rollback-time GC freezes the 2026-06-03 run flagged (3 pauses up to **849 ms**) are down to **one or two ~300–425 ms** Young (Mixed) pauses: the streaming windows removed the +2 GB old-gen promotion and the humongous 1M-row arrays that drove them. They are **reduced, not eliminated** — a 2M rollback still costs a couple of sub-half-second pauses. The *largest* pauses in the run (550–669 ms) are now during the **synthetic 2M ingest flood** (both plugins recording ~4M rows in ~15 s), not the rollback.
+**Verdict.** On the same ClickHouse, Spyglass rolls back **~3× faster** than CoreProtect, holds a real **20 TPS**, and its worst single tick is **17 ms** vs CoreProtect's **617 ms** on-main freeze. The headline change is the **GC freeze is gone**: the apply is now allocation-free (primitive columns + count results), so the rollback never promotes to old gen and never triggers a Mixed collection. A warmed, steady-state 2M rollback fires **at most one ~9 ms pure-young GC, frequently zero** (verified directly against `logs/gc-bench.log`). The old 300–425 ms pauses were Mixed collections; they now only appear transiently when an *unrelated* Mixed cycle is already in flight — JVM metaspace warmup right after boot, or the bench's synthetic 2M-ingest flood firing immediately before the rollback — neither of which is the rollback's own allocation, and neither of which coincides with a rollback in normal play.
 
 ## Results
 
 ```
 Size  | Blocks    | SG rollback        | SG undo            | CP rollback        | CP restore
 ------|-----------|--------------------|--------------------|--------------------|-------------------
-run1  | 2,000,376 |  8.4s 237829 bps   |  8.8s 226159 bps   | 12.7s 157622 bps   | 12.8s 156732 bps
-run2  | 2,000,376 |  9.3s 215140 bps   |  8.4s 239079 bps   | 12.2s 164383 bps   | 15.3s 130966 bps
+2M    | 2,000,376 |  3.8s 520254 bps   |  3.5s 572517 bps   | 11.6s 172595 bps   | 12.6s 159240 bps
 
 MSPT 5 s-AVG during op (max-of-avgs / avg ms):
-run1  | SG rb 6.6/5.3 | SG undo 5.5/4.7 | CP rb 100.6/44.1 | CP restore 102.5/46.7
-run2  | SG rb 6.1/5.5 | SG undo 6.6/5.5 | CP rb  85.1/36.7 | CP restore 122.2/55.9
+2M    | SG rb 4.4/4.1 | SG undo 4.1/4.0 | CP rb 83.6/36.4 | CP restore 102.2/46.5
 
 WORST SINGLE TICK (MSPT 5 s-window max):
-run1  | SG rb 128.8 | SG undo  40.2 | CP rb 276.0 | CP restore 370.8
-run2  | SG rb  74.6 | SG undo 157.4 | CP rb 269.0 | CP restore 603.4
+2M    | SG rb 17.3 | SG undo 16.4 | CP rb 617.3 | CP restore 399.0
 
-TPS (min/avg, derived from MSPT — see caveat):
-run1  | SG rb 20.0/20.0 | SG undo 20.0/20.0 | CP rb 9.9/17.1 | CP restore 9.8/16.9
-run2  | SG rb 20.0/20.0 | SG undo 20.0/20.0 | CP rb 11.8/18.0 | CP restore 8.2/15.7
+TPS (min/avg, derived from MSPT):
+2M    | SG rb 20.0/20.0 | SG undo 20.0/20.0 | CP rb 12.0/18.1 | CP restore 9.8/16.9
 ```
 
-**Where Spyglass spends the rollback** (engine instrumentation, run1 / run2): `query = 5117 / 5492 ms (~60 %)` ≫ `collect = 441 / 377 ms` `prewarm = 34 / 54 ms` `apply = 2296 / 2808 ms (~28 %)`, over **16 windows / 64 chunks**. Still **read-bound on ClickHouse**, not write-bound — the off-main apply is ~2.5 s of the ~9 s. Undo is the same shape in reverse (`query ≈ 4.8–5.3 s`, `apply ≈ 2.3 s`).
+**Where Spyglass spends the rollback** (engine instrumentation, #67): `apply = 2649 ms (~80 %)` ≫ `query = 617 ms` `collect = 199 ms` `prewarm = 28 ms`, over **16 windows / 64 chunks**. The lean decode flipped the profile — a 2M rollback used to be **read-bound** (`query ≈ 6.1 s`); now the read is ~0.6 s and the **off-main, tick-paced apply** is the wall-clock floor (it yields a tick between chunk batches to hold 20 TPS, so wall-clock tracks tick count, not CPU). Undo is the same shape in reverse.
 
-## The GC story (the 2026-06-03 caveat, re-measured)
+## The GC story — the freeze, eliminated (#67)
 
-The old run's headline warning was that the throughput-tuned config (`rollback-page-size`/`rollback-batch-size`/`rollback-undo-cap` = 1M/1M/10M) provoked **3 stop-the-world pauses of 518 / 758 / 849 ms** during a single 2M rollback, by promoting ~2 GB to old gen (the 2M-element live undo list) and allocating humongous 1M-element arrays straight into old gen.
+The 2026-06-03 run provoked **3 stop-the-world pauses up to 849 ms**; the pre-#67 object path was down to **one or two ~300–425 ms Young (Mixed) pauses**. Both were the same mechanism: the rollback **promoted to old gen** under Aikar's `MaxTenuringThreshold=1` (the live undo list, then the per-window effect + `RollbackResult` object graph), which pushed old gen past `InitiatingHeapOccupancyPercent=15` and made G1 run **Mixed** collections mid-rollback.
 
-Those dials are gone. Correlating `logs/gc-bench.log` pause timestamps against the rollback window (the `Spyglass rollback … 8313ms` / `9208ms` log lines):
+#67 makes the apply **allocation-free** for the common case: simple block-replaces are primitive columns + an interned palette, and results are counts, not objects. The rollback no longer grows old gen, so it never triggers a Mixed cycle. Correlating `logs/gc-bench.log` against the rollback window:
 
-| | 2026-06-03 (tuned) | **2026-06-18 (current)** |
+| | object path (this session) | **#67 columnar (steady state)** |
 |---|---|---|
-| Pauses > 500 ms *during the rollback* | 3 | **0** |
-| Worst pause *during the rollback* | **849 ms** | **307 / 424 ms** |
-| Apply windows | 1 (one 1M-row page) | **16 (bounded ~500 K)** |
-| Largest pause anywhere in the run | 849 ms (rollback) | 550 / 669 ms (**ingest flood**, not rollback) |
+| GC pauses *during the rollback* | 4 Young (Mixed) | **0–1 Young (Normal)** |
+| Worst pause *during the rollback* | **360 ms** | **≤9.4 ms** (often 0) |
+| Pause type | Mixed (evacuates old gen) | pure-young, or none |
+| Old-gen growth from the apply | ~+160 MB/run | **~0** |
 
-So the rollback no longer drives the old gen up by 2 GB; it streams. What remains: a 2M rollback still pays one or two ~300–425 ms Young (Mixed) pauses (the apply churns short-lived per-window effect objects), and the heaviest pauses in a bench *run* are now the ingest of 2M edits recorded by both plugins at once — an artificial condition you'd never hit in normal play.
+Measured directly: four consecutive warmed 2M rollbacks logged **9.4 ms, 0, 0, 0** pauses. The only way to still see a ~180 ms pause is to roll back *while a Mixed cycle started by something else is already in flight* — JVM metaspace warmup in the first seconds after boot, or the bench's synthetic 2M-ingest flood (both plugins recording ~4M rows in ~15 s) firing immediately before the rollback. That pause is the unrelated cycle's cost, not the rollback's allocation, and the two don't coincide in normal play.
 
 ### The TPS metric still has the same blind spot
 

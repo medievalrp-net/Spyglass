@@ -377,6 +377,134 @@ class ClickHouseRecordStoreIT {
                 .containsExactlyElementsOf(pagedIds);
         assertThat(streamRounds).isEqualTo(pageRounds);
     }
+
+    @Test
+    void streamRollbackEffectsDecodesSimpleBlocksLeanly() {
+        // #67: the rollback engine reads via streamRollbackEffects. A simple
+        // block-replace must arrive as primitives (block-data + expected),
+        // in the correct direction; a tile-entity block falls back to a
+        // built effect.
+        Instant base = Instant.now().minusSeconds(600);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot sign = new BlockSnapshot(
+                org.bukkit.Material.OAK_SIGN, "minecraft:oak_sign",
+                List.of(), List.of("hello"), List.of(), List.of(), null);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        List<EventRecord> records = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            records.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                    base.plusSeconds(i), base.plusSeconds(7200), origin, source,
+                    new BlockLocation(WORLD, "world", i, 64, 0), "test", "STONE", stone, air));
+        }
+        // A tile-entity block: before=sign (non-simple) => object path.
+        records.add(new BlockBreakRecord(UUID.randomUUID(), "break",
+                base.plusSeconds(10), base.plusSeconds(7200), origin, source,
+                new BlockLocation(WORLD, "world", 50, 64, 0), "test", "OAK_SIGN", sign, air));
+        store.save(records);
+        flushAsyncInserts();
+
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "break")),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        List<int[]> blocks = new java.util.ArrayList<>();
+        List<String> blockData = new java.util.ArrayList<>();
+        List<String> expectedData = new java.util.ArrayList<>();
+        java.util.List<net.medievalrp.spyglass.api.rollback.RollbackEffect> complex =
+                new java.util.ArrayList<>();
+        int[] skips = {0};
+        store.streamRollbackEffects(request, null, 1000, true,
+                new RecordStore.RollbackEffectSink() {
+                    @Override
+                    public void block(UUID world, int x, int y, int z, String data,
+                                      String expected, Instant occurred, UUID id) {
+                        blocks.add(new int[]{x, y, z});
+                        blockData.add(data);
+                        expectedData.add(expected);
+                    }
+
+                    @Override
+                    public void complex(net.medievalrp.spyglass.api.rollback.RollbackEffect effect,
+                                        Instant occurred, UUID id) {
+                        complex.add(effect);
+                    }
+
+                    @Override
+                    public void skip(Instant occurred, UUID id) {
+                        skips[0]++;
+                    }
+                });
+
+        assertThat(blocks).hasSize(5);
+        assertThat(skips[0]).isZero();
+        // rollback writes the before-state (stone), expects the after (air).
+        assertThat(blockData).containsOnly("minecraft:stone");
+        assertThat(expectedData).containsOnly("minecraft:air");
+        // The sign block fell back to a built BlockReplace effect.
+        assertThat(complex).hasSize(1);
+        assertThat(complex.get(0))
+                .isInstanceOf(net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace.class);
+    }
+
+    @Test
+    void streamRollbackEffectsDecodesContainerSlotWriteToComplex() {
+        // #67: a container deposit is not a block-replace — it must decode
+        // to a ContainerSlotWrite via the object path, in the right
+        // direction (rollback undoes the deposit: expect the deposited item,
+        // restore the pre-deposit slot).
+        Instant now = Instant.now().minusSeconds(120);
+        net.medievalrp.spyglass.api.event.StoredItem diamond =
+                new net.medievalrp.spyglass.api.event.StoredItem(3, "DIAMOND", "data");
+        store.save(List.of(new net.medievalrp.spyglass.api.event.ContainerDepositRecord(
+                UUID.randomUUID(), "deposit", now, now.plusSeconds(7200),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 5, 64, 5), "test", "CHEST",
+                "CHEST", 3, 1, null, diamond)));
+        flushAsyncInserts();
+
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "deposit")),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        java.util.List<net.medievalrp.spyglass.api.rollback.RollbackEffect> complex =
+                new java.util.ArrayList<>();
+        int[] blocks = {0};
+        store.streamRollbackEffects(request, null, 1000, true,
+                new RecordStore.RollbackEffectSink() {
+                    @Override
+                    public void block(UUID world, int x, int y, int z, String data,
+                                      String expected, Instant occurred, UUID id) {
+                        blocks[0]++;
+                    }
+
+                    @Override
+                    public void complex(net.medievalrp.spyglass.api.rollback.RollbackEffect effect,
+                                        Instant occurred, UUID id) {
+                        complex.add(effect);
+                    }
+
+                    @Override
+                    public void skip(Instant occurred, UUID id) {
+                    }
+                });
+
+        assertThat(blocks[0]).isZero();
+        assertThat(complex).hasSize(1);
+        assertThat(complex.get(0))
+                .isInstanceOf(net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite.class);
+        var slot = (net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite) complex.get(0);
+        assertThat(slot.slot()).isEqualTo(3);
+        // rollback: expect the deposited diamond, restore the empty slot.
+        assertThat(slot.expectedCurrent()).isNotNull();
+        assertThat(slot.expectedCurrent().material()).isEqualTo("DIAMOND");
+        assertThat(slot.replacement()).isNull();
+    }
     @Test
     void itemFieldFiltersPostFilterInMemory() {
         // #32: iname:/ilore:/ench: paths live inside opaque BSON on CH.
