@@ -117,9 +117,6 @@ class RollbackServiceTest {
         private static SpyglassConfig sampleConfig(boolean rolledAuditSynthesized) {
             SpyglassConfig cfg = mock(SpyglassConfig.class);
             SpyglassConfig.Limits limits = mock(SpyglassConfig.Limits.class);
-            when(limits.rollbackResult()).thenReturn(10_000);
-            when(limits.rollbackPageSize()).thenReturn(5_000);
-            when(limits.rollbackUndoCap()).thenReturn(50_000);
             when(limits.rollbackBatchSize()).thenReturn(200);
             when(limits.rollbackFlushTimeout())
                     .thenReturn(new net.medievalrp.spyglass.api.util.Duration(30L));
@@ -234,6 +231,25 @@ class RollbackServiceTest {
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("bad param"));
         verify(fixture.api, never()).query(any(QueryRequest.class));
+    }
+
+    // #59: a rollback must request an UNCAPPED parse so the store returns
+    // every matching record. The removed limits.rollback-result cap was
+    // applied here as the overrideLimit; with sort=NEWEST_FIRST it left a
+    // large grief only partially restored (the newest N) while the op
+    // marked the whole query rolled back, so the remainder was unreachable.
+    @Test
+    void rollbackRequestsAnUncappedParse() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+                .thenReturn(sampleRequest());
+
+        fixture.subject.execute(fixture.sender, "p:Griefer t:1h", RollbackMode.ROLLBACK);
+
+        verify(fixture.parser).parse(
+                ArgumentMatchers.eq(fixture.sender),
+                ArgumentMatchers.eq("p:Griefer t:1h"),
+                ArgumentMatchers.eq(Integer.MAX_VALUE));
     }
 
     @Test

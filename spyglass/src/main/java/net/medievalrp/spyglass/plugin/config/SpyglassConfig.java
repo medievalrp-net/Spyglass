@@ -97,12 +97,9 @@ public record SpyglassConfig(
                 new Limits(
                         root.node("limits", "max-radius").getInt(250),
                         root.node("limits", "search-result").getInt(1_000),
-                        root.node("limits", "rollback-result").getInt(10_000),
                         root.node("limits", "chat-dump").getInt(50),
                         root.node("limits", "rollback-batch-size").getInt(4_000),
                         Duration.parse(root.node("limits", "rollback-flush-timeout").getString("30s")),
-                        root.node("limits", "rollback-page-size").getInt(20_000),
-                        root.node("limits", "rollback-undo-cap").getInt(5_000_000),
                         // Tick-budget cap for the per-tick world-write phase.
                         // 50 ms = one full tick. Default 15 ms (~30% of a
                         // tick) keeps server TPS at or near 20 even during
@@ -244,9 +241,8 @@ public record SpyglassConfig(
     public record Defaults(boolean enabled, int radius, Duration time) {
     }
 
-    public record Limits(int maxRadius, int searchResult, int rollbackResult, int chatDump,
+    public record Limits(int maxRadius, int searchResult, int chatDump,
                          int rollbackBatchSize, Duration rollbackFlushTimeout,
-                         int rollbackPageSize, int rollbackUndoCap,
                          long rollbackTickBudgetMs) {
     }
 

@@ -42,6 +42,11 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class RollbackService {
 
+    // Fixed streaming read window (see usage in runJob). Formerly the
+    // limits.rollback-page-size knob; since #19 it has no heap/GC effect
+    // and is a query-efficiency default operators never need to tune.
+    private static final int STREAM_PAGE_SIZE = 500_000;
+
     private final SpyglassApi api;
     private final QueryStringParser parser;
     private final SpyglassConfig config;
@@ -82,16 +87,6 @@ public final class RollbackService {
 
     public void wireQueue() {
         jobQueue.setRunner(this::runJob);
-    }
-
-    // The rollback record cap (limits.rollback-result). <= 0 means
-    // "no cap" — run until the page cursor is exhausted — so a large
-    // grief rollback isn't silently truncated at N records. (Same
-    // 0-means-unbounded convention as defaults.radius=0 => global.)
-    // Mapped to MAX_VALUE so the streaming loop's hardLimit never trips.
-    private int rollbackResultLimit() {
-        int configured = config.limits().rollbackResult();
-        return configured <= 0 ? Integer.MAX_VALUE : configured;
     }
 
     // Re-submit an interrupted rollback as a fresh job. Idempotent:
@@ -200,7 +195,12 @@ public final class RollbackService {
     public void execute(CommandSender sender, String raw, RollbackMode mode) {
         QueryRequest request;
         try {
-            request = forceNoGroup(parser.parse(sender, raw, rollbackResultLimit()), mode);
+            // No record cap: a rollback reverts everything its query matches,
+            // bounded by limits.max-radius and the time window. The streaming
+            // engine keeps heap flat regardless of size (#19), so a cap would
+            // only ever silently half-restore a grief and mark the rest rolled
+            // back. MAX_VALUE => the store query and apply loop never truncate.
+            request = forceNoGroup(parser.parse(sender, raw, Integer.MAX_VALUE), mode);
         } catch (ParamParseException ex) {
             sender.sendMessage(Feedback.error(ex.getMessage()));
             return;
@@ -288,7 +288,11 @@ public final class RollbackService {
         // plan markStart wrote (#49). Null for replays — see runJob.
         String resumeRequest = replayOp ? null : encodeResumeRequest(request, job.mode);
         long startNanos = System.nanoTime();
-        int pageSize = Math.max(100, config.limits().rollbackPageSize());
+        // Streaming read window (#19): how many records each keyset query
+        // pulls off the wire before folding into a bounded apply window.
+        // Pure query-efficiency with no heap/GC cost, so it is a fixed
+        // internal default rather than an operator-facing knob.
+        int pageSize = STREAM_PAGE_SIZE;
         int batchSize = config.limits().rollbackBatchSize();
         int hardLimit = request.limit();
         int totalApplied = initialApplied;
