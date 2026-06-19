@@ -17,22 +17,27 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 
 ## Features
 
-Spyglass and CoreProtect cover the same logging and rollback ground. They part ways on performance under load, search depth, and recovery.
+Spyglass and CoreProtect both log the world and roll it back. Where they part ways: performance under load, search depth, recovery, and what survives a crash.
 
 | | Spyglass | CoreProtect |
 |---|---|---|
 | Block, container, and entity logging | ✓ | ✓ |
 | Chat, command, session, and IP logging | ✓ | ✓ |
 | Explosions, fire, liquids, and growth | ✓ | ✓ |
-| WorldEdit capture | ✓ | ✓ |
-| Inspector wand and lookup | ✓ | ✓ |
-| Rollback and restore by player, time, or region | ✓ | ✓ |
+| Combat hits, shots, and kills | ✓ | kills only |
 | Movement and teleports | ✓ | not logged |
+| WorldEdit capture | ✓ | ✓ |
+| Password redaction in command logs | ✓ | logs verbatim |
+| Inspector wand and lookup | ✓ | ✓ |
 | Item search by name, lore, or enchantment | ✓ | material only |
-| Plugin-extensible search | ✓ | logging API only |
 | Cross-server search | ✓ Velocity proxy | per server |
+| Extension API (events, query keys, display, rollback hooks) | ✓ | logging and lookup |
+| Rollback and restore by player, time, or region | ✓ | ✓ |
+| Recover items a rollback destroyed | ✓ `/sg inventory` | not available |
 | Undo any operation, any size | ✓ `/sg undo` | rerun the inverse |
-| Crash-resume a rollback | ✓ | restart by hand |
+| Crash-resume an interrupted rollback | ✓ | restart by hand |
+| No events lost on a crash | ✓ optional WAL | in-memory queue |
+| Preview a rollback before applying | lookup first | ✓ `#preview` |
 | Rollback execution | off the main thread | on the main thread |
 | TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
 | Worst single tick | **~60 ms** | up to ~900 ms |
