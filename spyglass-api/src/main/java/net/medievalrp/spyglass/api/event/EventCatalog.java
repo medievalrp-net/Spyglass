@@ -55,6 +55,10 @@ public final class EventCatalog {
         m.put("named", EntityNameRecord.class);
         m.put("entity-deposit", ContainerDepositRecord.class);
         m.put("entity-withdraw", ContainerWithdrawRecord.class);
+        // Emitted when an operator takes an item out of a rollback-salvage
+        // snapshot via /sg inventory (#76). Reuses the withdraw record shape,
+        // so both storage backends already persist it.
+        m.put("salvage-withdraw", ContainerWithdrawRecord.class);
         m.put("bookshelf-insert", ContainerDepositRecord.class);
         m.put("bookshelf-remove", ContainerWithdrawRecord.class);
         m.put("pot-insert", ContainerDepositRecord.class);
