@@ -31,7 +31,7 @@ final class FaweHook {
         FaweBatchLogger logger = new FaweBatchLogger(
                 recorder, support, source, world.getUID(), world.getName());
         try {
-            holder.addProcessor(logger);
+            holder.addPostProcessor(logger);
             return true;
         } catch (RuntimeException ex) {
             return false;

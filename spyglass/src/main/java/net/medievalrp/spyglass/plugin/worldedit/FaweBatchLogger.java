@@ -17,9 +17,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import net.medievalrp.spyglass.api.event.BlockBreakRecord;
-import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -42,6 +43,7 @@ final class FaweBatchLogger implements IBatchProcessor {
     private final Source source;
     private final UUID worldId;
     private final String worldName;
+    private final FaweEditDedupe loggedCells = new FaweEditDedupe();
 
     FaweBatchLogger(Recorder recorder, RecordingSupport support,
                     Source source,
@@ -55,17 +57,28 @@ final class FaweBatchLogger implements IBatchProcessor {
 
     @Override
     public IChunkSet processSet(IChunk chunk, IChunkGet get, IChunkSet set) {
+        return set;
+    }
+
+    @Override
+    public Future<?> postProcessSet(IChunk chunk, IChunkGet get, IChunkSet set) {
+        logSet(chunk, get, set);
+        return CompletableFuture.completedFuture(null);
+    }
+
+    private void logSet(IChunk chunk, IChunkGet get, IChunkSet set) {
         if (set.isEmpty()) {
-            return set;
+            return;
         }
         int chunkX = chunk.getX();
         int chunkZ = chunk.getZ();
         int minSection = set.getMinSectionPosition();
         int maxSection = set.getMaxSectionPosition();
         Instant occurred = support.now();
-        Instant expires = support.expiresAt(occurred);
         Origin origin = Origin.fawe();
         Source source = this.source;
+        String serverName = support.serverName();
+        List<EventRecord> out = new ArrayList<>();
 
         for (int sy = minSection; sy <= maxSection; sy++) {
             if (!set.hasSection(sy)) {
@@ -91,27 +104,21 @@ final class FaweBatchLogger implements IBatchProcessor {
                         if (weBefore != null && weBefore.equalsFuzzy(weAfter)) {
                             continue;
                         }
+                        if (!loggedCells.mark(wx, wy, wz)) {
+                            continue;
+                        }
                         BlockSnapshot before = snapshot(weBefore, safeTile(get, lx, wy, lz));
                         BlockSnapshot after = snapshot(weAfter, null);
                         BlockLocation location = new BlockLocation(worldId, worldName, wx, wy, wz);
-
-                        if (!before.isAir()) {
-                            recorder.record(new BlockBreakRecord(
-                                    support.newId(), "break", occurred, expires,
-                                    origin, source, location, support.serverName(),
-                                    before.material().name(), before, after));
-                        }
-                        if (!after.isAir()) {
-                            recorder.record(new BlockPlaceRecord(
-                                    support.newId(), "place", occurred, expires,
-                                    origin, source, location, support.serverName(),
-                                    after.material().name(), before, after));
-                        }
+                        WorldEditRecords.appendCell(out, support, origin, source, serverName,
+                                location, occurred, before, after);
                     }
                 }
             }
         }
-        return set;
+        if (!out.isEmpty()) {
+            recorder.recordAll(out);
+        }
     }
 
     @Override
@@ -121,7 +128,7 @@ final class FaweBatchLogger implements IBatchProcessor {
 
     @Override
     public ProcessorScope getScope() {
-        return ProcessorScope.READING_SET_BLOCKS;
+        return ProcessorScope.READING_BLOCKS;
     }
 
     private BlockSnapshot snapshot(BlockState weState, CompoundTag tile) {
