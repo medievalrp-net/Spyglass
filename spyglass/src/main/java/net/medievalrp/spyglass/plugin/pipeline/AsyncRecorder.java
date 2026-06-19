@@ -69,6 +69,20 @@ public final class AsyncRecorder implements Recorder {
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong lastWarnedDepth = new AtomicLong();
     private volatile Consumer<EventRecord> committedHook = r -> {};
+    private volatile FlushBarrier flushBarrier = timeout -> true;
+
+    /**
+     * Pre-flush gate. {@link #flush} awaits this before snapshotting the
+     * queue high-water mark, so a deferred-serialization stage that feeds
+     * {@link #record} off-thread (see {@code DeferredSerializer}, #98) can
+     * be drained first — otherwise a rollback right after a burst would
+     * snapshot the queue before the in-flight records reach it.
+     */
+    @FunctionalInterface
+    public interface FlushBarrier {
+        /** @return {@code true} if the stage drained within {@code timeout}. */
+        boolean awaitQuiescent(Duration timeout);
+    }
 
     /**
      * @param warnThreshold queue depth at which we start warning the operator.
@@ -116,6 +130,17 @@ public final class AsyncRecorder implements Recorder {
      */
     public void onCommitted(Consumer<EventRecord> hook) {
         this.committedHook = hook == null ? r -> {} : hook;
+    }
+
+    /**
+     * Install a barrier that {@link #flush} drains before waiting on the
+     * queue. Used to make flush await an off-thread serialization stage
+     * (rollbackable records mid-serialization) so read-your-writes holds
+     * for a rollback issued right after a burst (#98). Default is a no-op,
+     * so setups without a deferred stage (and unit tests) are unaffected.
+     */
+    public void setFlushBarrier(FlushBarrier barrier) {
+        this.flushBarrier = barrier == null ? (timeout -> true) : barrier;
     }
 
     @Override
@@ -185,6 +210,16 @@ public final class AsyncRecorder implements Recorder {
         // cycle either way.
         long deadlineNanos = System.nanoTime()
                 + TimeUnit.SECONDS.toNanos(Math.max(0L, timeout.seconds()));
+        // Drain the deferred-serialization stage first (#98): records still
+        // mid-serialization must be handed to the queue before we snapshot
+        // the high-water mark, or a rollback right after a burst would miss
+        // them and partially restore. The barrier is given the full timeout
+        // budget; the queue wait below is still bounded by the same overall
+        // deadline, so a barrier that consumes the budget surfaces as a
+        // flush timeout rather than an unbounded wait.
+        if (!flushBarrier.awaitQuiescent(timeout)) {
+            return false;
+        }
         long highWaterMark = drained.get() + queue.size();
         while (drained.get() < highWaterMark) {
             if (System.nanoTime() >= deadlineNanos) {

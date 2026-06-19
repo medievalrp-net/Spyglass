@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -83,6 +84,45 @@ class AsyncRecorderTest {
                     .isEqualTo(50);
         } finally {
             store.open();
+        }
+    }
+
+    @Test
+    void flushReturnsFalseWhenBarrierTimesOut() {
+        // #98: if the deferred-serialization stage can't drain in time, flush
+        // must NOT claim success — a rollback relying on it would otherwise
+        // read before the in-flight records landed (partial restore).
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            recorder.setFlushBarrier(timeout -> false);
+            assertThat(recorder.flush(Duration.parse("1s"))).isFalse();
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
+    void flushAwaitsBarrierThenDrainsQueue() {
+        // #98: flush drains the serialization barrier first, then the queue.
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            AtomicBoolean barrierCalled = new AtomicBoolean(false);
+            recorder.setFlushBarrier(timeout -> {
+                barrierCalled.set(true);
+                return true;
+            });
+            for (int index = 0; index < 10; index++) {
+                recorder.record(sampleRecord());
+            }
+            assertThat(recorder.flush(Duration.parse("3s"))).isTrue();
+            assertThat(barrierCalled)
+                    .as("flush must drain the serialization barrier before the queue")
+                    .isTrue();
+            assertThat(store.totalSaved()).isEqualTo(10);
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
         }
     }
 

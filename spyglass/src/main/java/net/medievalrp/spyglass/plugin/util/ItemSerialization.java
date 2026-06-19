@@ -70,26 +70,33 @@ public final class ItemSerialization {
         String name = null;
         List<String> lore = List.of();
         List<String> enchants = List.of();
-        ItemMeta meta = itemStack.getItemMeta();
-        if (meta != null) {
-            if (meta.hasDisplayName()) {
-                Component displayName = meta.displayName();
-                if (displayName != null) {
-                    name = RecordingSupport.safeText(PLAIN.serialize(displayName));
-                }
-            }
-            if (meta.hasLore()) {
-                List<Component> metaLore = meta.lore();
-                if (metaLore != null && !metaLore.isEmpty()) {
-                    List<String> out = new ArrayList<>(metaLore.size());
-                    for (Component line : metaLore) {
-                        out.add(RecordingSupport.safeText(PLAIN.serialize(line)));
+        // hasItemMeta() short-circuits the common no-NBT item (cobblestone,
+        // plain tools): getItemMeta() allocates a fresh ItemMeta snapshot
+        // even when there's nothing to extract, so skip it entirely there
+        // (#98 micro-opt). Output is identical — a meta-less stack has no
+        // name/lore/enchants.
+        if (itemStack.hasItemMeta()) {
+            ItemMeta meta = itemStack.getItemMeta();
+            if (meta != null) {
+                if (meta.hasDisplayName()) {
+                    Component displayName = meta.displayName();
+                    if (displayName != null) {
+                        name = RecordingSupport.safeText(PLAIN.serialize(displayName));
                     }
-                    lore = out;
                 }
-            }
-            if (meta.hasEnchants()) {
-                enchants = enchantStrings(meta.getEnchants());
+                if (meta.hasLore()) {
+                    List<Component> metaLore = meta.lore();
+                    if (metaLore != null && !metaLore.isEmpty()) {
+                        List<String> out = new ArrayList<>(metaLore.size());
+                        for (Component line : metaLore) {
+                            out.add(RecordingSupport.safeText(PLAIN.serialize(line)));
+                        }
+                        lore = out;
+                    }
+                }
+                if (meta.hasEnchants()) {
+                    enchants = enchantStrings(meta.getEnchants());
+                }
             }
         }
         String data = includeData ? encode(itemStack) : null;

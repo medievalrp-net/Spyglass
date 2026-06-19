@@ -92,6 +92,7 @@ import net.medievalrp.spyglass.plugin.listener.player.JoinListener;
 import net.medievalrp.spyglass.plugin.listener.player.QuitListener;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportListener;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
+import net.medievalrp.spyglass.plugin.pipeline.DeferredSerializer;
 import net.medievalrp.spyglass.plugin.pipeline.RecordCommittedPublisher;
 import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
@@ -138,13 +139,15 @@ public final class SpyglassPlugin extends JavaPlugin {
     private SalvageStore salvageStore;
     private Executor queryExecutor;
     /**
-     * Off-main serialization stage for the highest-frequency listeners.
-     * Item serialization (NBT to bytes to base64) is the bulk of the
-     * per-pickup main-thread cost; the pickup listener snapshots on the
-     * main thread and hands the heavy work here. Drained before the
-     * recorder on shutdown so nothing in flight is lost (see onDisable).
+     * Off-main serialization stage for the item-heavy listeners. Item
+     * serialization (NBT to bytes to base64) is the bulk of their
+     * main-thread cost; pickups (#97/#103) and container transactions
+     * (#98) snapshot on the main thread and hand the heavy work here.
+     * For the rollbackable container records it also gates the recorder's
+     * flush (read-your-writes). Drained before the recorder on shutdown so
+     * nothing in flight is lost (see onDisable).
      */
-    private java.util.concurrent.ExecutorService serializationExecutor;
+    private DeferredSerializer deferredSerializer;
     private SpyglassConfig config;
     private WorldEditSubscriber worldEditSubscriber;
     private WorldEditLifecycleListener worldEditLifecycle;
@@ -207,21 +210,12 @@ public final class SpyglassPlugin extends JavaPlugin {
         }
 
         queryExecutor = Executors.newVirtualThreadPerTaskExecutor();
-        java.util.concurrent.ExecutorService serializer =
-                Executors.newVirtualThreadPerTaskExecutor();
-        serializationExecutor = serializer;
-        // Listeners submit through a guarded view: a poison item that
-        // makes serialization throw must not escape to the worker's
-        // default handler (stderr) — structured logging only. On failure
-        // the record is skipped and the cause is logged.
-        Executor guardedSerializer = task -> serializer.execute(() -> {
-            try {
-                task.run();
-            } catch (RuntimeException ex) {
-                getLogger().warning("Spyglass deferred record serialization failed;"
-                        + " record skipped: " + ex);
-            }
-        });
+        // One off-thread serialization stage for the item-heavy listeners
+        // (pickups #97/#103, container transactions #98). It guards poison
+        // items (logs + skips, never stderr), runs the heavy work on
+        // virtual threads, and tracks in-flight tasks so the recorder's
+        // flush can drain it before a rollback reads.
+        deferredSerializer = new DeferredSerializer(getLogger());
 
         boolean walEnabled = config.storage().durability()
                 == SpyglassConfig.Durability.WAL_BATCHED;
@@ -244,6 +238,12 @@ public final class SpyglassPlugin extends JavaPlugin {
         recorder.onCommitted(new RecordCommittedPublisher(
                 () -> RecordCommittedEvent.getHandlerList().getRegisteredListeners().length,
                 record -> Bukkit.getPluginManager().callEvent(new RecordCommittedEvent(record))));
+        // #98: rollbackable container records serialize off-thread through
+        // deferredSerializer before reaching the queue. A rollback flushes
+        // the recorder for read-your-writes, so make flush() drain that
+        // stage first — otherwise a rollback right after a deposit burst
+        // would snapshot the queue before the in-flight records land.
+        recorder.setFlushBarrier(deferredSerializer::awaitQuiescence);
 
         // Replay any WAL files left from a prior crash before the
         // listeners come online, so recovered records land in the DB
@@ -278,7 +278,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockPlaceListener(recorder, support),
                 new BlockMultiPlaceListener(recorder, support),
                 new FallingBlockLandListener(recorder, support),
-                new ContainerTransactionListener(recorder, support),
+                new ContainerTransactionListener(recorder, support, deferredSerializer),
                 new ContainerDragListener(recorder, support),
                 new ContainerInteractListener(recorder, support),
                 new BlockUseListener(recorder, support),
@@ -295,7 +295,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new StructureGrowListener(recorder, support),
                 new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
-                new ItemPickupListener(recorder, support, guardedSerializer),
+                new ItemPickupListener(recorder, support, deferredSerializer),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support),
@@ -571,17 +571,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         // serializing and reach the recorder's queue before it drains.
         // Ordering matters: reversed, the recorder would close while
         // pickups were still mid-serialization and lose them.
-        if (serializationExecutor != null) {
-            serializationExecutor.shutdown();
-            try {
-                if (!serializationExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                    serializationExecutor.shutdownNow();
-                }
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                serializationExecutor.shutdownNow();
-            }
-            serializationExecutor = null;
+        if (deferredSerializer != null) {
+            deferredSerializer.shutdown(Duration.parse("2s"));
+            deferredSerializer = null;
         }
         if (recorder != null) {
             try {
