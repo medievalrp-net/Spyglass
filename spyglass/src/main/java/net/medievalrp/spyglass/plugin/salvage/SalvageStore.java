@@ -19,8 +19,15 @@ public interface SalvageStore {
     /** Persist a captured inventory. Called off the main thread. */
     void save(SalvageSnapshot snapshot);
 
-    /** Most-recent snapshots first, capped. Backs the {@code /sg inventory} GUI. */
+    /** Most-recent snapshots first, capped. Used by the console/RCON listing. */
     List<SalvageSnapshot> list(int limit);
+
+    /** Distinct rollbacks that still have unrecovered salvage, newest first.
+     *  Backs the top level of the {@code /sg inventory} GUI. */
+    List<SalvageStore.RollbackGroup> listRollbacks(int limit);
+
+    /** Every salvage snapshot from one rollback, newest first. */
+    List<SalvageSnapshot> listByRollback(UUID rollbackId, int limit);
 
     Optional<SalvageSnapshot> get(UUID id);
 
@@ -32,5 +39,13 @@ public interface SalvageStore {
 
     /** Best-effort release of any backend resources. */
     default void close() {
+    }
+
+    /** One rollback's salvage summary, for the index GUI (no item payloads). */
+    record RollbackGroup(
+            @org.bson.codecs.pojo.annotations.BsonProperty("_id") UUID rollbackId,
+            int containerCount,
+            String operatorName,
+            java.time.Instant latest) {
     }
 }
