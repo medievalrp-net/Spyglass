@@ -62,7 +62,7 @@ public record SpyglassConfig(
 
         java.util.List<String> commandRedact = parseCommandRedact(root);
 
-        String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
+        String backendName = root.node("database", "backend").getString("sqlite").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
             case "clickhouse" -> Backend.CLICKHOUSE;
             case "sqlite" -> Backend.SQLITE;
