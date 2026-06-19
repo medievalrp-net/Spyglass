@@ -137,6 +137,14 @@ public final class SpyglassPlugin extends JavaPlugin {
     private ToolStateStore toolStateStore;
     private SalvageStore salvageStore;
     private Executor queryExecutor;
+    /**
+     * Off-main serialization stage for the highest-frequency listeners.
+     * Item serialization (NBT to bytes to base64) is the bulk of the
+     * per-pickup main-thread cost; the pickup listener snapshots on the
+     * main thread and hands the heavy work here. Drained before the
+     * recorder on shutdown so nothing in flight is lost (see onDisable).
+     */
+    private java.util.concurrent.ExecutorService serializationExecutor;
     private SpyglassConfig config;
     private WorldEditSubscriber worldEditSubscriber;
     private WorldEditLifecycleListener worldEditLifecycle;
@@ -199,6 +207,21 @@ public final class SpyglassPlugin extends JavaPlugin {
         }
 
         queryExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        java.util.concurrent.ExecutorService serializer =
+                Executors.newVirtualThreadPerTaskExecutor();
+        serializationExecutor = serializer;
+        // Listeners submit through a guarded view: a poison item that
+        // makes serialization throw must not escape to the worker's
+        // default handler (stderr) — structured logging only. On failure
+        // the record is skipped and the cause is logged.
+        Executor guardedSerializer = task -> serializer.execute(() -> {
+            try {
+                task.run();
+            } catch (RuntimeException ex) {
+                getLogger().warning("Spyglass deferred record serialization failed;"
+                        + " record skipped: " + ex);
+            }
+        });
 
         boolean walEnabled = config.storage().durability()
                 == SpyglassConfig.Durability.WAL_BATCHED;
@@ -272,7 +295,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new StructureGrowListener(recorder, support),
                 new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
-                new ItemPickupListener(recorder, support),
+                new ItemPickupListener(recorder, support, guardedSerializer),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support),
@@ -542,6 +565,23 @@ public final class SpyglassPlugin extends JavaPlugin {
                 active.unregister();
             } catch (Throwable ignored) {
             }
+        }
+        // Drain the off-thread serialization stage BEFORE the recorder,
+        // so any in-flight snapshots (deferred item pickups) finish
+        // serializing and reach the recorder's queue before it drains.
+        // Ordering matters: reversed, the recorder would close while
+        // pickups were still mid-serialization and lose them.
+        if (serializationExecutor != null) {
+            serializationExecutor.shutdown();
+            try {
+                if (!serializationExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    serializationExecutor.shutdownNow();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                serializationExecutor.shutdownNow();
+            }
+            serializationExecutor = null;
         }
         if (recorder != null) {
             try {
