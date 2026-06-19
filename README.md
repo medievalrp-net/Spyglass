@@ -15,6 +15,32 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 | TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | 15 / 19 | 13 / 19 |
 | Worst single tick | ~60 ms | ~100 ms | ~350 ms | ~700 ms |
 
+## Features
+
+How Spyglass compares to CoreProtect. CoreProtect is the mature option with the wider Minecraft-version range; Spyglass adds richer search, cross-server lookup, a rollback that runs off the main thread, and ClickHouse storage.
+
+| | Spyglass | CoreProtect |
+|---|---|---|
+| Block, container, entity, sign, and item logging | ✓ | ✓ |
+| Chat, command, session, and join-IP logging | ✓ | ✓ |
+| Explosion, fire, liquid, piston, and growth logging | ✓ | ✓ |
+| Player movement and teleport logging | ✓ | ✗ |
+| WorldEdit edit logging | ✓ | ✓ |
+| Inspector wand | ✓ | ✓ |
+| Lookup and search | ✓ | ✓ |
+| Rollback and restore by player, time, radius, region | ✓ | ✓ |
+| Search by item name, lore, or enchantment | ✓ | ✗ |
+| Plugin-extensible search (custom items and fields) | ✓ | ✗ |
+| Cross-server search through a proxy | ✓ | ✗ |
+| Undo your last operation | ✓ `/sg undo` | via `/co restore` |
+| Resume a rollback after a crash | ✓ | ✗ |
+| Rollback runs off the main thread (holds 20 TPS) | ✓ | ✗ |
+| Rollback footprint in the store | one synthesized row | re-logs every block |
+| Storage backends | MongoDB, ClickHouse | SQLite, MySQL |
+| Old-data pruning | automatic, by retention | manual `/co purge` |
+| Minecraft versions | 1.21.x | 1.7+ |
+| Maturity | Preview | production-proven |
+
 ## Requirements
 
 - Paper 1.21.8 or newer 1.21.x
