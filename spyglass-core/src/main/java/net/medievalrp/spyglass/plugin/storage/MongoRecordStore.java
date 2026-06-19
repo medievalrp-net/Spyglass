@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.storage;
 
 import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCommandException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
@@ -109,16 +110,25 @@ public final class MongoRecordStore implements RecordStore {
      * collection is recreated or resynced; fresh installs get zstd for free.
      * We only create the collection (first write would otherwise auto-create
      * it with the server default), so existing data is never touched.
+     *
+     * <p>Create-and-ignore-exists rather than check-then-create: it needs
+     * only the createCollection privilege the index setup already requires
+     * (not listCollections), and it is race-safe if another node — say the
+     * read-only Velocity companion — creates the collection concurrently.
      */
     private static void ensureZstdCollection(MongoDatabase database, String collectionName) {
-        for (String existing : database.listCollectionNames()) {
-            if (existing.equals(collectionName)) {
-                return;
+        try {
+            database.createCollection(collectionName, new CreateCollectionOptions()
+                    .storageEngineOptions(new BsonDocument("wiredTiger",
+                            new BsonDocument("configString", new BsonString("block_compressor=zstd")))));
+        } catch (MongoCommandException e) {
+            // NamespaceExists (48): the collection is already there and keeps
+            // whatever compressor it was made with. Anything else (bad perms,
+            // rejected option) is a real fault and must surface.
+            if (e.getErrorCode() != 48) {
+                throw e;
             }
         }
-        database.createCollection(collectionName, new CreateCollectionOptions()
-                .storageEngineOptions(new BsonDocument("wiredTiger",
-                        new BsonDocument("configString", new BsonString("block_compressor=zstd")))));
     }
 
     public MongoDatabase database() {

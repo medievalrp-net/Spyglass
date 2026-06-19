@@ -195,6 +195,20 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void constructingAgainstAnExistingCollectionDoesNotFail() {
+        // The collection already exists (created in @BeforeAll), so the
+        // second construction's createCollection raises NamespaceExists; that
+        // path must be swallowed, not propagated, and the existing zstd
+        // collection left intact.
+        MongoRecordStore second = new MongoRecordStore(
+                container.getReplicaSetUrl(), "IT", "EventRecords", new IndexManager());
+        second.close();
+        org.bson.Document spec = rawClient.getDatabase("IT").listCollections()
+                .filter(com.mongodb.client.model.Filters.eq("name", "EventRecords")).first();
+        assertThat(spec).isNotNull();
+    }
+
+    @Test
     void dropEmptyCollectionAndRecreate() {
         rawClient.getDatabase("IT").getCollection("EventRecords").deleteMany(new org.bson.Document());
         QueryRequest empty = new QueryRequest(
