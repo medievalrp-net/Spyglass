@@ -350,9 +350,20 @@ async function runOneSize(s, idx) {
         const cp = r.disk[`cp-${CP_BACKEND}`];
         const fmtDisk = (d) => d && !d.skipped
             ? `${fmtBytes(d.total_bytes)} (${fmtBytes(d.storage_bytes)} data + ${fmtBytes(d.index_bytes)} index)`
+              + (d.objects ? ` over ${d.objects.toLocaleString()} rows` : '')
             : `n/a (${d && d.skipped ? d.skipped.slice(0, 40) : 'not measured'})`;
         log(`  disk SG·${SG_BACKEND}: ${fmtDisk(sg)}`);
         log(`  disk CP·${CP_BACKEND}: ${fmtDisk(cp)}`);
+        // A backend whose row count dwarfs this run's events was not wiped
+        // before the run, so its footprint reflects accumulated data, not the
+        // 2M dataset — the disk figure is meaningless until the store is reset.
+        for (const d of [sg, cp]) {
+            if (d && d.objects && d.objects > expected * 1.5) {
+                log(`  !! DISK WARNING: ${d.backend} holds ${d.objects.toLocaleString()} rows `
+                    + `(>> ${expected.toLocaleString()} this run) — DB not pristine, footprint is NOT per-dataset. `
+                    + `Drop/truncate the store before trusting the disk number.`);
+            }
+        }
     }
 
     // ── Spyglass rollback ─────────────────────────────────────────
