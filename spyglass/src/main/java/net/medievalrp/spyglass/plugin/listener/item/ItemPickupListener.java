@@ -47,13 +47,13 @@ public final class ItemPickupListener implements RecordingListener {
             return;
         }
         // Pickups are the highest-frequency event Spyglass logs (every
-        // player plus every mob with canPickupItems). Item serialization
-        // (NBT -> bytes -> base64, plus Adventure component extraction)
-        // is the bulk of the per-pickup cost, so we keep only a cheap
-        // snapshot on the main thread and hand the heavy work to the
-        // serializer. The clone is independent of the live stack (which
-        // the picked-up entity is about to consume), so serializing the
-        // clone off the main thread is safe.
+        // player plus every mob with canPickupItems). We build only the
+        // searchable projection (material + name/lore/enchants) and skip
+        // the base64 NBT blob: ItemPickupRecord is never rolled back or
+        // salvaged, so nothing decodes it (#103). The remaining projection
+        // work (getItemMeta + Adventure extraction) still runs off the main
+        // thread (#97) on this independent clone, which is safe because the
+        // picked-up entity is about to consume the live stack.
         ItemStack snapshot = stack.clone();
         String target = stack.getType().name();
         int amount = stack.getAmount();
@@ -76,7 +76,7 @@ public final class ItemPickupListener implements RecordingListener {
         // read-your-writes contract.
         RecordContext ctx = support.context(origin, source, location);
         serializer.execute(() -> {
-            StoredItem stored = ItemSerialization.storedItem(0, snapshot);
+            StoredItem stored = ItemSerialization.storedItemProjection(0, snapshot);
             if (stored == null) {
                 return;
             }

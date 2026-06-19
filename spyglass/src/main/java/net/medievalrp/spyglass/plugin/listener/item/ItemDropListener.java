@@ -22,6 +22,13 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.ApiStatus;
 
+/**
+ * Records item drops (player throws, dispenser/dropper output, entity
+ * drops). {@code ItemDropRecord} is forensic-only — never rolled back or
+ * salvaged — so every path here serializes the searchable projection and
+ * skips the base64 NBT blob via {@link ItemSerialization#storedItemProjection}
+ * (#103); the blob would be dead weight no query or rollback ever reads.
+ */
 @ApiStatus.Internal
 public final class ItemDropListener implements RecordingListener {
 
@@ -41,7 +48,7 @@ public final class ItemDropListener implements RecordingListener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerDropItem(PlayerDropItemEvent event) {
         ItemStack stack = event.getItemDrop().getItemStack();
-        StoredItem stored = ItemSerialization.storedItem(0, stack);
+        StoredItem stored = ItemSerialization.storedItemProjection(0, stack);
         if (stored == null) {
             return;
         }
@@ -59,7 +66,7 @@ public final class ItemDropListener implements RecordingListener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockDispense(BlockDispenseEvent event) {
         ItemStack stack = event.getItem();
-        StoredItem stored = ItemSerialization.storedItem(0, stack);
+        StoredItem stored = ItemSerialization.storedItemProjection(0, stack);
         if (stored == null) {
             return;
         }
@@ -85,7 +92,7 @@ public final class ItemDropListener implements RecordingListener {
             return;
         }
         ItemStack stack = event.getItemDrop().getItemStack();
-        StoredItem stored = ItemSerialization.storedItem(0, stack);
+        StoredItem stored = ItemSerialization.storedItemProjection(0, stack);
         if (stored == null) {
             return;
         }
