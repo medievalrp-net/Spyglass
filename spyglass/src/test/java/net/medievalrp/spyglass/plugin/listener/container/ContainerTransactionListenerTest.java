@@ -40,8 +40,11 @@ class ContainerTransactionListenerTest {
 
     private final CapturingRecorder recorder = new CapturingRecorder();
     private final RecordingSupport support = new RecordingSupport(Duration.parse("4w"), "test");
+    // Same-thread serializer so the deferred build (#98) runs inline and the
+    // (before, after) assertions below see the records immediately. A
+    // separate test exercises the actual deferral handoff.
     private final ContainerTransactionListener listener =
-            new ContainerTransactionListener(recorder, support);
+            new ContainerTransactionListener(recorder, support, Runnable::run);
 
     // Strong refs so Location's weak World reference can't be collected
     // mid-test (see ChatListenerTest.mockPlayer).
@@ -152,6 +155,30 @@ class ContainerTransactionListenerTest {
         assertThat(record.slot())
                 .as("slot 30 re-bases to local slot 3 in the right half")
                 .isEqualTo(3);
+    }
+
+    @Test
+    void serializationIsDeferredToTheExecutor() {
+        // #98: the heavy storedItem() build is handed to the serializer, not
+        // run on the listener (main) thread. With a queuing executor, no
+        // record exists until the deferred task runs.
+        List<Runnable> deferred = new java.util.ArrayList<>();
+        ContainerTransactionListener deferredListener =
+                new ContainerTransactionListener(recorder, support, deferred::add);
+        InventoryClickEvent event = clickEvent(InventoryAction.PLACE_ALL, 0, null, ironStack(64));
+
+        deferredListener.onInventoryClick(event);
+
+        assertThat(recorder.records).as("record must not be built on the listener thread").isEmpty();
+        assertThat(deferred).hasSize(1);
+
+        deferred.forEach(Runnable::run);
+
+        assertThat(recorder.records).hasSize(1);
+        ContainerDepositRecord record = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(record.amount()).isEqualTo(64);
+        assertThat(record.afterItem()).isNotNull();
+        assertThat(record.afterItem().material()).isEqualTo("IRON_INGOT");
     }
 
     // ── fixtures ─────────────────────────────────────────────────

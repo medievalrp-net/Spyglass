@@ -2,9 +2,12 @@ package net.medievalrp.spyglass.plugin.listener.container;
 
 import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.Executor;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
-import net.medievalrp.spyglass.api.event.StoredItem;
+import net.medievalrp.spyglass.api.event.Origin;
+import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
@@ -33,15 +36,29 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Records chest/barrel/minecart deposits and withdrawals. These records
+ * are <em>rollbackable</em> ({@code ContainerSlotWrite}), so the item
+ * serialization is deferred off the main thread through a
+ * {@link net.medievalrp.spyglass.plugin.pipeline.DeferredSerializer}
+ * whose quiescence the recorder's {@code flush()} awaits before a rollback
+ * (#98). Each handler captures a cheap snapshot on the main thread —
+ * cloning the pre-click stacks and minting the time-ordered id at event
+ * time — and hands the {@code serializeAsBytes()} + record build to the
+ * serializer, which calls {@code recorder.record()} from there.
+ */
 @ApiStatus.Internal
 public final class ContainerTransactionListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    private final Executor serializer;
 
-    public ContainerTransactionListener(Recorder recorder, RecordingSupport support) {
+    public ContainerTransactionListener(Recorder recorder, RecordingSupport support,
+                                        Executor serializer) {
         this.recorder = recorder;
         this.support = support;
+        this.serializer = serializer;
     }
 
     @Override
@@ -114,7 +131,9 @@ public final class ContainerTransactionListener implements RecordingListener {
 
         BlockLocation location = containerTarget.location();
         String containerType = containerTarget.type();
-        StoredItem before = ItemSerialization.storedItem(slot, slotItem);
+        // Clone the pre-click slot state on the main thread; the heavy
+        // serialization of it runs off-thread (#98).
+        ItemStack beforeSnapshot = cloneOrNull(slotItem);
 
         // (before, after) must be the SLOT's exact state pair — the
         // rollback effect writes `before` back only when the live slot
@@ -134,13 +153,9 @@ public final class ContainerTransactionListener implements RecordingListener {
                     afterStack.setAmount(Math.min(slotItem.getMaxStackSize(),
                             slotItem.getAmount() + amount));
                 }
-                StoredItem after = ItemSerialization.storedItem(slot, afterStack);
                 String target = cursor == null ? "UNKNOWN" : cursor.getType().name();
-                recorder.record(new ContainerDepositRecord(
-                        support.newId(), "deposit", occurred,
-                        support.expiresAt(occurred),
-                        support.playerOrigin(), support.playerSource(player),
-                        location, support.serverName(), target, containerType, slot, amount, before, after));
+                deferDeposit(player, location, containerType, slot, amount, target,
+                        occurred, slot, beforeSnapshot, afterStack);
             }
             case WITHDRAW -> {
                 ItemStack afterStack = null;
@@ -149,13 +164,9 @@ public final class ContainerTransactionListener implements RecordingListener {
                     afterStack = slotItem.clone();
                     afterStack.setAmount(slotItem.getAmount() - amount);
                 }
-                StoredItem after = ItemSerialization.storedItem(slot, afterStack);
                 String target = slotItem == null ? "UNKNOWN" : slotItem.getType().name();
-                recorder.record(new ContainerWithdrawRecord(
-                        support.newId(), "withdraw", occurred,
-                        support.expiresAt(occurred),
-                        support.playerOrigin(), support.playerSource(player),
-                        location, support.serverName(), target, containerType, slot, amount, before, after));
+                deferWithdraw(player, location, containerType, slot, amount, target,
+                        occurred, slot, beforeSnapshot, afterStack);
             }
         }
     }
@@ -189,29 +200,23 @@ public final class ContainerTransactionListener implements RecordingListener {
         BlockLocation location = containerTarget.location();
         String containerType = containerTarget.type();
 
+        ItemStack movedSnapshot = moved.clone(); // pre-click; serialized off-thread
+        String target = moved.getType().name();
         if (clickedIsTop) {
             // Shift-click from container to player inventory -> withdraw.
             int recordSlot = resolved.slot();
-            StoredItem before = ItemSerialization.storedItem(recordSlot, moved);
-            recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), "withdraw", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), moved.getType().name(), containerType, recordSlot, amount, before, null));
+            deferWithdraw(player, location, containerType, recordSlot, amount, target,
+                    occurred, recordSlot, movedSnapshot, null);
             return;
         }
         if (!clicked.equals(bottom)) {
             return;
         }
         // Shift-click from player inventory to container -> deposit. Slot is
-        // -1 (no specific container slot); `before` carries the source
+        // -1 (no specific container slot); the after-item carries the source
         // player-inventory slot, matching the single-chest behavior.
-        StoredItem before = ItemSerialization.storedItem(event.getSlot(), moved);
-        recorder.record(new ContainerDepositRecord(
-                support.newId(), "deposit", occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(), support.playerSource(player),
-                location, support.serverName(), moved.getType().name(), containerType, -1, amount, null, before));
+        deferDeposit(player, location, containerType, -1, amount, target,
+                occurred, event.getSlot(), null, movedSnapshot);
     }
 
     private void handleHotbarSwap(InventoryClickEvent event, ContainerTarget containerTarget, Player player,
@@ -230,24 +235,17 @@ public final class ContainerTransactionListener implements RecordingListener {
         String containerType = containerTarget.type();
         // A hotbar swap replaces the container slot's contents with the
         // hotbar stack (or empties it): one (before=slotItem,
-        // after=hotbarItem) state pair shared by both records (#28).
-        StoredItem beforePair = slotHadItem ? ItemSerialization.storedItem(slot, slotItem) : null;
-        StoredItem afterPair = hotbarHadItem ? ItemSerialization.storedItem(slot, hotbarItem) : null;
+        // after=hotbarItem) state pair shared by both records (#28). Clone
+        // both pre-click stacks on the main thread; serialize off it.
+        ItemStack beforeSnapshot = slotHadItem ? slotItem.clone() : null;
+        ItemStack afterSnapshot = hotbarHadItem ? hotbarItem.clone() : null;
         if (slotHadItem) {
-            recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), "withdraw", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), slotItem.getType().name(), containerType, slot,
-                    slotItem.getAmount(), beforePair, afterPair));
+            deferWithdraw(player, location, containerType, slot, slotItem.getAmount(),
+                    slotItem.getType().name(), occurred, slot, beforeSnapshot, afterSnapshot);
         }
         if (hotbarHadItem) {
-            recorder.record(new ContainerDepositRecord(
-                    support.newId(), "deposit", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), hotbarItem.getType().name(), containerType, slot,
-                    hotbarItem.getAmount(), beforePair, afterPair));
+            deferDeposit(player, location, containerType, slot, hotbarItem.getAmount(),
+                    hotbarItem.getType().name(), occurred, slot, beforeSnapshot, afterSnapshot);
         }
     }
 
@@ -260,24 +258,60 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (!hadSlotItem && !hadCursorItem) {
             return;
         }
+        // Shared (before=slotItem, after=cursor) pair; clone both pre-click
+        // stacks on the main thread, serialize off it (#98).
+        ItemStack beforeSnapshot = hadSlotItem ? slotItem.clone() : null;
+        ItemStack afterSnapshot = hadCursorItem ? cursor.clone() : null;
         if (hadSlotItem) {
-            recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), "withdraw", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), slotItem.getType().name(), containerType, slot, slotItem.getAmount(),
-                    ItemSerialization.storedItem(slot, slotItem),
-                    hadCursorItem ? ItemSerialization.storedItem(slot, cursor) : null));
+            deferWithdraw(player, location, containerType, slot, slotItem.getAmount(),
+                    slotItem.getType().name(), occurred, slot, beforeSnapshot, afterSnapshot);
         }
         if (hadCursorItem) {
-            recorder.record(new ContainerDepositRecord(
-                    support.newId(), "deposit", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), cursor.getType().name(), containerType, slot, cursor.getAmount(),
-                    hadSlotItem ? ItemSerialization.storedItem(slot, slotItem) : null,
-                    ItemSerialization.storedItem(slot, cursor)));
+            deferDeposit(player, location, containerType, slot, cursor.getAmount(),
+                    cursor.getType().name(), occurred, slot, beforeSnapshot, afterSnapshot);
         }
+    }
+
+    // ── deferral helpers ─────────────────────────────────────────────
+    // Each captures the time-ordered id + player-derived context on the
+    // MAIN thread (so the record reflects event time and reads the live
+    // Player safely), then hands the heavy storedItem() serialization of
+    // the already-cloned stacks to the off-thread serializer (#98).
+    // itemSlot is the slot stamped into the before/after StoredItems, which
+    // differs from recordSlot only for slotless shift-click deposits.
+
+    private void deferDeposit(Player player, BlockLocation location, String containerType,
+                             int recordSlot, int amount, String target, Instant occurred,
+                             int itemSlot, @Nullable ItemStack before, @Nullable ItemStack after) {
+        UUID id = support.newId();
+        Origin origin = support.playerOrigin();
+        Source source = support.playerSource(player);
+        Instant expiresAt = support.expiresAt(occurred);
+        String server = support.serverName();
+        serializer.execute(() -> recorder.record(new ContainerDepositRecord(
+                id, "deposit", occurred, expiresAt, origin, source, location, server,
+                target, containerType, recordSlot, amount,
+                ItemSerialization.storedItem(itemSlot, before),
+                ItemSerialization.storedItem(itemSlot, after))));
+    }
+
+    private void deferWithdraw(Player player, BlockLocation location, String containerType,
+                              int recordSlot, int amount, String target, Instant occurred,
+                              int itemSlot, @Nullable ItemStack before, @Nullable ItemStack after) {
+        UUID id = support.newId();
+        Origin origin = support.playerOrigin();
+        Source source = support.playerSource(player);
+        Instant expiresAt = support.expiresAt(occurred);
+        String server = support.serverName();
+        serializer.execute(() -> recorder.record(new ContainerWithdrawRecord(
+                id, "withdraw", occurred, expiresAt, origin, source, location, server,
+                target, containerType, recordSlot, amount,
+                ItemSerialization.storedItem(itemSlot, before),
+                ItemSerialization.storedItem(itemSlot, after))));
+    }
+
+    private static @Nullable ItemStack cloneOrNull(@Nullable ItemStack stack) {
+        return stack == null ? null : stack.clone();
     }
 
     /**
