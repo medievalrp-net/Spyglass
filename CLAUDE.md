@@ -38,7 +38,7 @@ First-touch reads when starting in a new area:
 - [`spyglass/.../rollback/RollbackEngine.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/rollback/RollbackEngine.java) — rollback apply engine
 - [`spyglass/src/main/resources/config.conf`](spyglass/src/main/resources/config.conf) — annotated config reference
 
-Existing prose: `README.md` (architecture + ops), `API.md` (third-party integration surface), `commands.md` (command quick-reference), `docs/operations.md` (runbook).
+Existing prose: `README.md` (architecture + ops), `API.md` (third-party integration surface), `commands.md` (command quick-reference).
 
 ## Hard rules
 

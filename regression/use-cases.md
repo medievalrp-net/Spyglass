@@ -1,6 +1,6 @@
 # Spyglass vs CoreProtect — use-case catalog
 
-> **Latest results:** [2026-06-11 run](../docs/report/use-case-results-2026-06-11.md) — SG 35/12/59 vs CP 36/4/7/59 (pass/fail/n-a/manual); findings filed as issues #27–#34. Runner: `regression/bot/cases/` (`node cases/runner.js [--cat A,G] [--only A1]`).
+> Runner: `regression/bot/cases/` (`node cases/runner.js [--cat A,G] [--only A1]`).
 
 106 scenarios for head-to-head testing against CoreProtect-ClickHouse. Each case is run on both plugins where both claim the capability; cases one side cannot attempt are scored **N/A-capability** (and that asymmetry is itself a result).
 
