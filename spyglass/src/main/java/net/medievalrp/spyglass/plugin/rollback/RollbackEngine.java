@@ -90,6 +90,25 @@ public final class RollbackEngine {
     // from the main thread stay consistent. Null = sync fallback.
     private volatile Executor worldWriteExecutor;
 
+    // Salvage hook (#76): captures container inventories a rollback would
+    // destroy, so they can be recovered via /sg inventory. Null when salvage
+    // is disabled or in unit tests — the engine treats null as a no-op.
+    private volatile SalvageHook salvageHook;
+
+    public void setSalvageHook(SalvageHook hook) {
+        this.salvageHook = hook;
+    }
+
+    // Marks the start of one rollback so salvaged containers are attributed to
+    // the operator and the capturer's per-run dedup is reset. No-op without a
+    // hook, so unit tests and salvage-disabled backends are unaffected.
+    public void salvageBegin(String operatorName) {
+        SalvageHook hook = salvageHook;
+        if (hook != null) {
+            hook.begin(operatorName);
+        }
+    }
+
     // How many chunks' palette writes the apply path dispatches
     // concurrently per batch — matched to the worldWriteExecutor pool
     // size so every thread stays busy without queueing. 1 keeps the
@@ -508,6 +527,9 @@ public final class RollbackEngine {
                 // writeBlock only re-resolves the section on Y crossings.
                 ChunkDirectWriter.ChunkContext chunkCtx =
                         ChunkDirectWriter.prepareChunk(world, cx, cz);
+                if (salvageHook != null) {
+                    salvageHook.onChunkResolved(world, cx, cz);
+                }
 
                 for (int j = i; j < chunkEnd; j++) {
                     int targetIndex = blockReplaceIndices.get(j);
@@ -536,6 +558,9 @@ public final class RollbackEngine {
                 } catch (RuntimeException ignored) {
                     // Best-effort: a failed resend only delays the client's view
                     // of the restored chunk until its next natural update.
+                }
+                if (salvageHook != null) {
+                    salvageHook.onChunkWritten(world, cx, cz);
                 }
             }
 
@@ -644,6 +669,9 @@ public final class RollbackEngine {
             }
             ChunkDirectWriter.ChunkContext ctx =
                     ChunkDirectWriter.prepareChunk(world, cx, cz);
+            if (salvageHook != null) {
+                salvageHook.onChunkResolved(world, cx, cz);
+            }
             batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
             cursor = chunkEnd;
         }
@@ -795,6 +823,9 @@ public final class RollbackEngine {
             } catch (RuntimeException ignored) {
                 // Best-effort: a failed resend only delays the client's view
                 // of the restored chunk until its next natural update.
+            }
+            if (salvageHook != null) {
+                salvageHook.onChunkWritten(world, work.cx, work.cz);
             }
         } finally {
             if (work.ticketAdded && chunkTicketHolder != null) {
@@ -963,6 +994,9 @@ public final class RollbackEngine {
                 }
             }
             ChunkDirectWriter.ChunkContext ctx = ChunkDirectWriter.prepareChunk(world, cx, cz);
+            if (salvageHook != null) {
+                salvageHook.onChunkResolved(world, cx, cz);
+            }
             batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
             cursor = rangeEnd;
         }
@@ -985,6 +1019,9 @@ public final class RollbackEngine {
                 } catch (RuntimeException ignored) {
                     // Best-effort: a failed resend only delays the client's view
                     // of the restored chunk until its next natural update.
+                }
+                if (salvageHook != null) {
+                    salvageHook.onChunkWritten(world, cc.cx, cc.cz);
                 }
                 if (cc.ticketAdded && ticketHolder != null) {
                     try {
