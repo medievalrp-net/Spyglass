@@ -490,7 +490,7 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         if (isWorldEditInstalled()) {
             try {
-                worldEditSubscriber = new WorldEditSubscriber(recorder, support, getLogger());
+                worldEditSubscriber = new WorldEditSubscriber(recorder, support, queryExecutor, this, getLogger());
                 worldEditSubscriber.register();
             } catch (Throwable thrown) {
                 getLogger().warning("Spyglass: WorldEdit integration failed to initialize: " + thrown);
@@ -503,7 +503,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         // subscriber is handed in and the listener only acts on a
         // future disable.
         worldEditLifecycle = new WorldEditLifecycleListener(
-                recorder, support, getLogger(), worldEditSubscriber);
+                recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber);
         getServer().getPluginManager().registerEvents(worldEditLifecycle, this);
 
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
