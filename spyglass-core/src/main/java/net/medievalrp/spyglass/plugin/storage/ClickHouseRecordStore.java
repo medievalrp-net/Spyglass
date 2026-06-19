@@ -117,11 +117,17 @@ public final class ClickHouseRecordStore implements RecordStore {
             "entity_dismount", "entity_old_name", "entity_new_name",
             "extensions");
 
+    // Item StoredItem blobs ride the display path (not heavy-only) so the
+    // search hover can show an item's custom name / lore / enchants. They're
+    // small — one blob per container/item row — unlike the block snapshots
+    // below, which carry two BlockSnapshot payloads per block row and stay
+    // heavy-only to keep block-heavy searches cheap.
+    private static final List<String> ITEM_COLUMNS = List.of(
+            "before_item", "after_item", "item");
+
     private static final List<String> HEAVY_COLUMNS = List.of(
             "before_material", "before_blockdata", "before_extras",
             "after_material", "after_blockdata", "after_extras",
-            "before_item", "after_item",
-            "item",
             "entity_nbt",
             "op_reference");
 
@@ -225,8 +231,8 @@ public final class ClickHouseRecordStore implements RecordStore {
         this.database = database;
         this.table = table;
         this.qualifiedTable = ClickHouseSchema.qualifiedTable(database, table);
-        this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS));
-        this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, HEAVY_COLUMNS));
+        this.summarySelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, ITEM_COLUMNS));
+        this.fullSelect = String.join(", ", concat(COMMON_COLUMNS, SUMMARY_EXTRAS, ITEM_COLUMNS, HEAVY_COLUMNS));
         this.rollbackSelect = String.join(", ", ROLLBACK_COLUMNS);
         this.rollbackReadSelect = String.join(", ", concat(LEAN_COMMON_COLUMNS, LEAN_ROLLBACK_BLOCK));
         this.restoreReadSelect = String.join(", ", concat(LEAN_COMMON_COLUMNS, LEAN_RESTORE_BLOCK));
@@ -943,8 +949,8 @@ public final class ClickHouseRecordStore implements RecordStore {
                     row.getString("container_type"),
                     row.getInteger("slot"),
                     row.getInteger("amount"),
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("before_item")) : null,
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("after_item")) : null);
+                    BsonBlobs.decodeStoredItem(row.getString("before_item")),
+                    BsonBlobs.decodeStoredItem(row.getString("after_item")));
         }
         if (clazz == ContainerWithdrawRecord.class) {
             return new ContainerWithdrawRecord(id, event, occurred, expiresAt,
@@ -952,8 +958,8 @@ public final class ClickHouseRecordStore implements RecordStore {
                     row.getString("container_type"),
                     row.getInteger("slot"),
                     row.getInteger("amount"),
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("before_item")) : null,
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("after_item")) : null);
+                    BsonBlobs.decodeStoredItem(row.getString("before_item")),
+                    BsonBlobs.decodeStoredItem(row.getString("after_item")));
         }
         if (clazz == ContainerInteractRecord.class) {
             return new ContainerInteractRecord(id, event, occurred, expiresAt,
@@ -963,13 +969,13 @@ public final class ClickHouseRecordStore implements RecordStore {
             return new ItemDropRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target,
                     row.getInteger("amount"),
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
+                    BsonBlobs.decodeStoredItem(row.getString("item")));
         }
         if (clazz == ItemPickupRecord.class) {
             return new ItemPickupRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target,
                     row.getInteger("amount"),
-                    includeHeavy ? BsonBlobs.decodeStoredItem(row.getString("item")) : null);
+                    BsonBlobs.decodeStoredItem(row.getString("item")));
         }
         if (clazz == TeleportRecord.class) {
             BlockLocation from = readOptionalLocation(row, "teleport_from_");
