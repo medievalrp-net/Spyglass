@@ -15,6 +15,7 @@ import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import net.medievalrp.spyglass.plugin.storage.SqliteRecordStore;
 import net.medievalrp.spyglass.proxy.command.SpyglassCommand;
 import net.medievalrp.spyglass.proxy.config.SpyglassProxyConfig;
 import org.slf4j.Logger;
@@ -60,7 +61,7 @@ public final class SpyglassProxy {
         }
 
         try {
-            this.recordStore = openStore(config);
+            this.recordStore = openStore(config, dataDirectory);
         } catch (RuntimeException ex) {
             logger.error("Failed to open Spyglass record store; plugin disabled.", ex);
             return;
@@ -91,7 +92,7 @@ public final class SpyglassProxy {
         }
     }
 
-    private static RecordStore openStore(SpyglassProxyConfig cfg) {
+    private static RecordStore openStore(SpyglassProxyConfig cfg, Path dataDirectory) {
         SpyglassProxyConfig.Database db = cfg.database();
         return switch (db.backend()) {
             case MONGO -> new MongoRecordStore(
@@ -103,6 +104,16 @@ public final class SpyglassProxy {
                 yield new ClickHouseRecordStore(
                         ch.host(), ch.port(), ch.database(), ch.table(),
                         ch.user(), ch.password(), ch.ssl());
+            }
+            case SQLITE -> {
+                // Read-only: the embedded file must be reachable on the
+                // proxy host (same machine / shared mount). A relative path
+                // resolves under the proxy's data directory.
+                Path configured = Path.of(db.sqlite().path());
+                Path dbPath = configured.isAbsolute()
+                        ? configured
+                        : dataDirectory.resolve(configured);
+                yield new SqliteRecordStore(dbPath, true);
             }
         };
     }
