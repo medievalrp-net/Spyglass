@@ -7,6 +7,7 @@ import java.util.Set;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bukkit.Material;
 import org.bukkit.Tag;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
@@ -55,22 +56,50 @@ public final class BlockDependents {
         NONE
     }
 
+    /**
+     * The six axial faces, cached so the hot break path never clones
+     * {@link BlockFace#values()} (which copies all ~80 enum constants) and
+     * re-filters it on every block break. Order matches the previous
+     * {@code values()}-then-{@code isAxial} scan so dependent ordering is
+     * unchanged.
+     */
+    private static final BlockFace[] AXIAL_FACES = {
+            BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH,
+            BlockFace.WEST, BlockFace.UP, BlockFace.DOWN,
+    };
+
     private BlockDependents() {
     }
 
     /** Walk each face of {@code broken} and collect neighbors that are attached to it. */
     public static List<Block> collectDependents(Block broken) {
-        List<Block> out = new ArrayList<>();
-        for (BlockFace face : BlockFace.values()) {
-            if (!isAxial(face)) {
+        // The common break (stone, dirt, ore) has no attached neighbors, so
+        // keep that path allocation-free: cached AXIAL_FACES (no values()
+        // clone), no ArrayList until the first dependent, and no Block
+        // wrapper for NONE-style neighbors. A Material probe via
+        // World.getType(x,y,z) returns an enum constant (no CraftBlock),
+        // so getRelative() — which does allocate a Block — is paid only for
+        // a neighbor that could actually attach.
+        World world = broken.getWorld();
+        int x = broken.getX();
+        int y = broken.getY();
+        int z = broken.getZ();
+        List<Block> out = null;
+        for (BlockFace face : AXIAL_FACES) {
+            Material neighborType = world.getType(
+                    x + face.getModX(), y + face.getModY(), z + face.getModZ());
+            if (styleOf(neighborType) == Style.NONE) {
                 continue;
             }
             Block neighbor = broken.getRelative(face);
             if (isAttachedTo(neighbor, face)) {
+                if (out == null) {
+                    out = new ArrayList<>(4);
+                }
                 out.add(neighbor);
             }
         }
-        return out;
+        return out == null ? List.of() : out;
     }
 
     /**
@@ -155,15 +184,6 @@ public final class BlockDependents {
             return directional.getFacing().getOppositeFace() == expectedHostFace;
         }
         return false;
-    }
-
-    private static boolean isAxial(BlockFace face) {
-        return face == BlockFace.UP
-                || face == BlockFace.DOWN
-                || face == BlockFace.NORTH
-                || face == BlockFace.SOUTH
-                || face == BlockFace.EAST
-                || face == BlockFace.WEST;
     }
 
     public static Style styleOf(Material material) {
