@@ -4,11 +4,10 @@ import com.fastasyncworldedit.core.extent.processor.ExtentBatchProcessorHolder;
 import com.sk89q.worldedit.event.extent.EditSessionEvent;
 import com.sk89q.worldedit.extent.AbstractDelegateExtent;
 import com.sk89q.worldedit.extent.Extent;
-import java.util.UUID;
+import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.World;
-import org.bukkit.entity.Player;
 import org.jetbrains.annotations.ApiStatus;
 
 @ApiStatus.Internal
@@ -20,7 +19,7 @@ final class FaweHook {
     }
 
     static boolean tryInstall(Recorder recorder, RecordingSupport support,
-                              EditSessionEvent event, Player player, World world) {
+                              EditSessionEvent event, Source source, World world) {
         Extent extent = event.getExtent();
         if (extent == null) {
             return false;
@@ -29,12 +28,8 @@ final class FaweHook {
         if (holder == null) {
             return false;
         }
-        UUID worldId = world.getUID();
-        String worldName = world.getName();
         FaweBatchLogger logger = new FaweBatchLogger(
-                recorder, support,
-                player.getUniqueId(), player.getName(),
-                worldId, worldName);
+                recorder, support, source, world.getUID(), world.getName());
         try {
             holder.addProcessor(logger);
             return true;
