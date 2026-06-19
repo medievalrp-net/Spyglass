@@ -2,7 +2,7 @@
 
 Forensic logging and rollback for Paper 1.21.x. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
 
-> **Preview.** Spyglass is built for medium and large servers. It will run on a small one, but it is overkill there; CoreProtect or Prism are a better fit for small servers.
+> **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
 ## Performance
 
@@ -17,6 +17,21 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 | On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~160 MiB | ~180 MiB |
 
 Read it by backend, not by row. **ClickHouse wins outright on speed and storage** (the fastest wall-clock figures, a worst tick near 50 ms, and a 54x compression ratio), and it is the backend for the largest servers. The rollback read was paying for a blocking in-memory sort on every page; ending each rollback index with the same id the reader pages by made the scan index-ordered and removed it, which roughly halved the read and dropped a 2M rollback from ~14 s to ~7 s. MongoDB holds 20.0 TPS throughout where CoreProtect dips into the teens, keeps its worst tick near 100 ms against CoreProtect's 300-700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. Disk used to be its one weak axis, and two changes closed it. A zstd block compressor (vs the snappy default) cut the stored data by two thirds, from 136 MiB to 46. Then bucketing the location index by chunk coordinate (x and z shifted right by four) rather than raw block coordinate, which prefix-compresses far better because neighbours share a chunk, cut that index from ~96 MiB to ~22. Together they bring the footprint to ~145 MiB, under both CoreProtect backends; only ClickHouse, with its columnar 54x compression, is smaller. Pick ClickHouse for the lowest latency and smallest disk, MongoDB for a document store that now matches or beats CoreProtect on every axis.
+
+### Zero-ops: the SQLite backend
+
+Not every server wants to run MongoDB or ClickHouse. The SQLite backend (`database.backend = "sqlite"`) keeps everything (events, undo ledger, wand state, salvage) in one embedded file, so a small or medium server gets the full Spyglass feature set with no external database to stand up, the zero-ops setup CoreProtect has always had.
+
+It is built to beat CoreProtect on CoreProtect's home turf. Spyglass records are richer (snapshots, items, sources), so a naive row-per-record schema would lose on disk; four levers earn the density back, all measured on the same `//replace stone air` cube the table above uses:
+
+- **Palette interning.** Block-data strings, event and server names live once in a `dict` table; world and player UUIDs (with their display names) live once in a `uuids` table. Each row carries small integer references instead, CoreProtect-class density.
+- **Hybrid schema.** A clean player-sourced block edit lives entirely in indexed columns; only complex records (containers, entities, chat, tile-entity blocks) carry a compressed blob. The block-edit majority carries no blob at all, and the lean rollback read never decodes one.
+- **`seq` is the sort key.** The record-id sequence is the SQLite `rowid` and is co-monotonic with event time, so the store sorts and keysets on it alone. That drops the timestamp out of every index and removes the standalone time index entirely.
+- **Derived and folded columns.** A block's material comes back from its block-data string, player and world names from the UUID palette, and the expiry from the retention window, so none of them costs a column. The chunk-bucketed location index (x and z shifted right by four, mirroring the MongoDB work) is an expression index, so the buckets are not even stored on the row.
+
+At 2,000,000 block records the footprint is **~156 MiB** (table ~81, the two indexes ~75), under CoreProtect · SQLite's ~160 MiB on the same dataset. The rollback read is allocation-lean like the other backends: a full 2M-row keyset sweep resolves in about a second (palette references resolve to the same interned objects, so the hot path allocates nothing per row), and it feeds the same off-main, tick-budgeted apply engine that holds the server at 20.0 TPS on MongoDB and ClickHouse. Reproduce the footprint and read throughput with `./gradlew :spyglass-core:sqliteBench`; confirm the in-world TPS head to head against CoreProtect with `SG_BACKEND=sqlite CP_BACKEND=sqlite node regression/bot/compare.js`.
+
+SQLite is the zero-ops choice for small and medium servers; ClickHouse stays the backend for the largest, MongoDB the document-store default. Run exactly one; the unused backend blocks are ignored.
 
 ## Features
 
@@ -46,16 +61,17 @@ Spyglass and CoreProtect both log the world and roll it back. Where they part wa
 | TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
 | Worst single tick | **~100 ms** | up to ~900 ms |
 | Automatic data pruning | ✓ |  |
-| Storage engines | MongoDB, ClickHouse | SQLite, MySQL |
+| Storage engines | SQLite, MongoDB, ClickHouse | SQLite, MySQL |
 | Minecraft versions | 1.21.x | 1.7+ |
 
-Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already run SQLite or MySQL and nothing else, CoreProtect installs with no new database to stand up.
+Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB and ClickHouse are there when you outgrow it.
 
 ## Requirements
 
 - Paper 1.21.8 or newer 1.21.x
 - Java 21
 - A database, one of:
+  - Embedded SQLite, no external database (set `database.backend = "sqlite"`); writes to a file under the plugin folder
   - MongoDB at `mongodb://localhost:27017` (default)
   - ClickHouse (set `database.backend = "clickhouse"` in config)
 - Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded — `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike — for player and non-player (console/plugin) edits
