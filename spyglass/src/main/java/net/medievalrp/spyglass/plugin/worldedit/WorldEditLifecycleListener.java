@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.worldedit;
 
+import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
@@ -26,13 +27,18 @@ public final class WorldEditLifecycleListener implements Listener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    private final Executor asyncExecutor;
+    private final org.bukkit.plugin.Plugin plugin;
     private final Logger logger;
     private WorldEditSubscriber subscriber;
 
-    public WorldEditLifecycleListener(Recorder recorder, RecordingSupport support, Logger logger,
-                                      @Nullable WorldEditSubscriber existing) {
+    public WorldEditLifecycleListener(Recorder recorder, RecordingSupport support,
+                                      Executor asyncExecutor, org.bukkit.plugin.Plugin plugin,
+                                      Logger logger, @Nullable WorldEditSubscriber existing) {
         this.recorder = recorder;
         this.support = support;
+        this.asyncExecutor = asyncExecutor;
+        this.plugin = plugin;
         this.logger = logger;
         this.subscriber = existing;
     }
@@ -46,7 +52,7 @@ public final class WorldEditLifecycleListener implements Listener {
             return;
         }
         try {
-            subscriber = new WorldEditSubscriber(recorder, support, logger);
+            subscriber = new WorldEditSubscriber(recorder, support, asyncExecutor, plugin, logger);
             subscriber.register();
             logger.info("Spyglass: WorldEdit integration enabled after hot-load ("
                     + event.getPlugin().getName() + ").");
