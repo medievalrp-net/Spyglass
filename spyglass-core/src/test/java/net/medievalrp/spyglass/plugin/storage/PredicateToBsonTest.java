@@ -61,6 +61,35 @@ class PredicateToBsonTest {
     }
 
     @Test
+    void rangeOnLocationXAlsoBoundsChunkBucketCx() {
+        // A block-x range adds a floor-divided cx bound so the chunk-bucketed
+        // location index is seekable. floor(100/16)=6, floor(130/16)=8.
+        String json = asBson(translator.translate(
+                new QueryPredicate.Range("location.x", 100, 130))).toJson();
+        assertThat(json).contains("location.cx").contains("6").contains("8");
+    }
+
+    @Test
+    void rangeOnLocationZBoundsChunkBucketCzWithNegativeFloor() {
+        // floor(-20/16) = -2 (not -1) — negative coordinates floor toward
+        // negative infinity, matching BlockLocationCodec's >> 4.
+        String json = asBson(translator.translate(
+                new QueryPredicate.Range("location.z", -20, 40))).toJson();
+        assertThat(json).contains("location.cz").contains("-2");
+    }
+
+    @Test
+    void rangeOnNonHorizontalFieldHasNoChunkBucket() {
+        // y is not bucketed (the chunk index is 2D), and neither is occurred.
+        assertThat(asBson(translator.translate(
+                new QueryPredicate.Range("location.y", 0, 256))).toJson())
+                .doesNotContain("location.cx").doesNotContain("location.cz");
+        assertThat(asBson(translator.translate(
+                new QueryPredicate.Range("occurred", 5L, 9L))).toJson())
+                .doesNotContain("location.c");
+    }
+
+    @Test
     void translatesNotWrapping() {
         BsonDocument doc = asBson(translator.translate(new QueryPredicate.Not(new QueryPredicate.Eq("event", "break"))));
         assertThat(doc.toJson()).contains("$not");
