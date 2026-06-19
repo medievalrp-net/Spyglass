@@ -179,6 +179,36 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void recordCollectionUsesZstdBlockCompressor() {
+        // The store creates the collection with WiredTiger's zstd block
+        // compressor (vs the snappy default) to roughly third the on-disk
+        // data. Verify the creation option stuck.
+        org.bson.Document spec = rawClient.getDatabase("IT")
+                .listCollections()
+                .filter(com.mongodb.client.model.Filters.eq("name", "EventRecords"))
+                .first();
+        assertThat(spec).isNotNull();
+        org.bson.Document options = spec.get("options", org.bson.Document.class);
+        org.bson.Document storageEngine = options.get("storageEngine", org.bson.Document.class);
+        org.bson.Document wiredTiger = storageEngine.get("wiredTiger", org.bson.Document.class);
+        assertThat(wiredTiger.getString("configString")).contains("block_compressor=zstd");
+    }
+
+    @Test
+    void constructingAgainstAnExistingCollectionDoesNotFail() {
+        // The collection already exists (created in @BeforeAll), so the
+        // second construction's createCollection raises NamespaceExists; that
+        // path must be swallowed, not propagated, and the existing zstd
+        // collection left intact.
+        MongoRecordStore second = new MongoRecordStore(
+                container.getReplicaSetUrl(), "IT", "EventRecords", new IndexManager());
+        second.close();
+        org.bson.Document spec = rawClient.getDatabase("IT").listCollections()
+                .filter(com.mongodb.client.model.Filters.eq("name", "EventRecords")).first();
+        assertThat(spec).isNotNull();
+    }
+
+    @Test
     void dropEmptyCollectionAndRecreate() {
         rawClient.getDatabase("IT").getCollection("EventRecords").deleteMany(new org.bson.Document());
         QueryRequest empty = new QueryRequest(

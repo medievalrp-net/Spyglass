@@ -1,11 +1,13 @@
 package net.medievalrp.spyglass.plugin.storage;
 
 import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCommandException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.CreateCollectionOptions;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
@@ -34,6 +36,7 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.BsonDocument;
 import org.bson.BsonDocumentReader;
+import org.bson.BsonString;
 import org.bson.UuidRepresentation;
 import org.bson.codecs.DecoderContext;
 import org.bson.codecs.configuration.CodecRegistries;
@@ -86,9 +89,46 @@ public final class MongoRecordStore implements RecordStore {
                 .build();
         this.client = MongoClients.create(settings);
         this.database = client.getDatabase(databaseName).withCodecRegistry(codecRegistry);
+        ensureZstdCollection(database, collectionName);
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
         this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
         indexManager.ensureRecordIndexes(rawCollection);
+    }
+
+    /**
+     * Create the record collection with WiredTiger's zstd block compressor
+     * when it doesn't yet exist. The records are a row store of highly
+     * repetitive forensic events — the same world id, event names, and block
+     * data strings recur across millions of rows — and zstd roughly thirds
+     * the on-disk data versus the snappy default: a measured 2M-block
+     * footprint dropped from ~136 MiB to ~46 MiB with no schema or query
+     * change.
+     *
+     * <p>WiredTiger fixes the block compressor at creation time. It can't be
+     * flipped on an existing collection, and neither collMod nor compact
+     * rewrites it, so a deployment that predates this keeps snappy until the
+     * collection is recreated or resynced; fresh installs get zstd for free.
+     * We only create the collection (first write would otherwise auto-create
+     * it with the server default), so existing data is never touched.
+     *
+     * <p>Create-and-ignore-exists rather than check-then-create: it needs
+     * only the createCollection privilege the index setup already requires
+     * (not listCollections), and it is race-safe if another node — say the
+     * read-only Velocity companion — creates the collection concurrently.
+     */
+    private static void ensureZstdCollection(MongoDatabase database, String collectionName) {
+        try {
+            database.createCollection(collectionName, new CreateCollectionOptions()
+                    .storageEngineOptions(new BsonDocument("wiredTiger",
+                            new BsonDocument("configString", new BsonString("block_compressor=zstd")))));
+        } catch (MongoCommandException e) {
+            // NamespaceExists (48): the collection is already there and keeps
+            // whatever compressor it was made with. Anything else (bad perms,
+            // rejected option) is a real fault and must surface.
+            if (e.getErrorCode() != 48) {
+                throw e;
+            }
+        }
     }
 
     public MongoDatabase database() {
