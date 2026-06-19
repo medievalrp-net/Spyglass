@@ -30,7 +30,8 @@ import sys
 import urllib.parse
 import urllib.request
 
-ALL_BACKENDS = ["spyglass-mongo", "spyglass-clickhouse", "cp-sqlite", "cp-mysql"]
+ALL_BACKENDS = ["spyglass-mongo", "spyglass-clickhouse", "spyglass-sqlite",
+                "cp-sqlite", "cp-mysql"]
 
 
 def human(n):
@@ -83,7 +84,11 @@ def measure_clickhouse(url, ch_db):
     }
 
 
-def measure_sqlite(path):
+def measure_sqlite(path, backend="cp-sqlite"):
+    # Both SQLite footprints (Spyglass and CoreProtect) are the db file plus
+    # its WAL/SHM sidecars; indexes live in the same file. Checkpoint the
+    # Spyglass db before measuring (its writer leaves rows in the -wal until
+    # a checkpoint folds them back) so the file reflects the full dataset.
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     total = 0
@@ -92,7 +97,7 @@ def measure_sqlite(path):
         if os.path.exists(p):
             total += os.path.getsize(p)
     return {
-        "backend": "cp-sqlite",
+        "backend": backend,
         "path": path,
         "storage_bytes": total,
         "index_bytes": 0,  # SQLite indexes live in the same file
@@ -134,6 +139,8 @@ def main():
     p.add_argument("--ch-db", default="spyglass")
     p.add_argument("--sqlite", default=str(
         (os.path.dirname(__file__) or ".") + "/../../RP_Server/plugins/CoreProtect/database.db"))
+    p.add_argument("--sg-sqlite", default=str(
+        (os.path.dirname(__file__) or ".") + "/../../RP_Server/plugins/Spyglass/spyglass.db"))
     p.add_argument("--mysql-host", default=os.environ.get("MYSQL_HOST", "127.0.0.1"))
     p.add_argument("--mysql-port", type=int, default=int(os.environ.get("MYSQL_PORT", "3306")))
     p.add_argument("--mysql-user", default=os.environ.get("MYSQL_USER", "root"))
@@ -146,6 +153,7 @@ def main():
     runners = {
         "spyglass-mongo": lambda: measure_mongo(args.mongo, args.mongo_db),
         "spyglass-clickhouse": lambda: measure_clickhouse(args.clickhouse, args.ch_db),
+        "spyglass-sqlite": lambda: measure_sqlite(os.path.abspath(args.sg_sqlite), "spyglass-sqlite"),
         "cp-sqlite": lambda: measure_sqlite(os.path.abspath(args.sqlite)),
         "cp-mysql": lambda: measure_mysql(args.mysql_host, args.mysql_port,
                                           args.mysql_user, args.mysql_password, args.mysql_db),

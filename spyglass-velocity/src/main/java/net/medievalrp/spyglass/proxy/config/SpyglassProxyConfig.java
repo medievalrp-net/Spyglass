@@ -35,9 +35,10 @@ public record SpyglassProxyConfig(
         String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
             case "clickhouse" -> Backend.CLICKHOUSE;
+            case "sqlite" -> Backend.SQLITE;
             case "mongo", "mongodb" -> Backend.MONGO;
             default -> throw new IOException("Unknown database.backend: " + backendName
-                    + " (expected 'mongo' or 'clickhouse')");
+                    + " (expected 'mongo', 'clickhouse', or 'sqlite')");
         };
 
         return new SpyglassProxyConfig(
@@ -53,7 +54,9 @@ public record SpyglassProxyConfig(
                                 root.node("database", "clickhouse", "table").getString("event_records"),
                                 root.node("database", "clickhouse", "user").getString("default"),
                                 root.node("database", "clickhouse", "password").getString(""),
-                                root.node("database", "clickhouse", "ssl").getBoolean(false))),
+                                root.node("database", "clickhouse", "ssl").getBoolean(false)),
+                        new Sqlite(
+                                root.node("database", "sqlite", "path").getString("spyglass.db"))),
                 new Defaults(
                         Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
@@ -63,7 +66,8 @@ public record SpyglassProxyConfig(
 
     public enum Backend {
         MONGO,
-        CLICKHOUSE
+        CLICKHOUSE,
+        SQLITE
     }
 
     public record Database(
@@ -71,7 +75,21 @@ public record SpyglassProxyConfig(
             String uri,
             String name,
             String collection,
-            ClickHouse clickhouse) {
+            ClickHouse clickhouse,
+            Sqlite sqlite) {
+    }
+
+    /**
+     * Embedded-SQLite location (used when {@code backend = "sqlite"}). The
+     * proxy opens this file <b>read-only</b>; it must be reachable on the
+     * proxy host's filesystem (same machine or a shared mount), since
+     * unlike Mongo / ClickHouse an embedded SQLite file is not served over
+     * the network.
+     */
+    public record Sqlite(String path) {
+        public Sqlite {
+            path = path == null || path.isBlank() ? "spyglass.db" : path.trim();
+        }
     }
 
     public record ClickHouse(
@@ -106,7 +124,8 @@ public record SpyglassProxyConfig(
                 # Spyglass plugin. Copy the database block from your Paper
                 # config.conf so this proxy reads the same backend.
                 database {
-                  # "mongo" or "clickhouse" - must match the Paper-side backend.
+                  # "mongo", "clickhouse", or "sqlite" - must match the
+                  # Paper-side backend.
                   backend = "mongo"
 
                   # Mongo (used when backend = "mongo")
@@ -123,6 +142,15 @@ public record SpyglassProxyConfig(
                     user = "default"
                     password = ""
                     ssl = false
+                  }
+
+                  # SQLite (used when backend = "sqlite"). The proxy opens
+                  # this file READ-ONLY, so it must sit on the proxy host's
+                  # filesystem (same machine as the Paper server, or a shared
+                  # mount) - an embedded SQLite file is not served over the
+                  # network the way Mongo / ClickHouse are.
+                  sqlite {
+                    path = "spyglass.db"
                   }
                 }
 

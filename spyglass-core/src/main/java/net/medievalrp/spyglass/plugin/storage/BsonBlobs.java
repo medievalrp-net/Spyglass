@@ -6,6 +6,7 @@ import java.nio.ByteOrder;
 import java.util.Base64;
 import java.util.List;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import org.bson.BsonArray;
@@ -60,6 +61,10 @@ public final class BsonBlobs {
                     new BsonValueCodecProvider(),
                     new Jsr310CodecProvider(),
                     new RecordCodecProvider(),
+                    // Dispatches the sealed EventRecord hierarchy on the
+                    // `event` field, so a whole record round-trips as one
+                    // BSON document — the SQLite backend's per-event blob.
+                    EventRecordCodec.provider(),
                     RollbackEffectCodec.provider(),
                     PojoCodecProvider.builder().automatic(true).build()));
 
@@ -67,6 +72,8 @@ public final class BsonBlobs {
             REGISTRY.get(BlockSnapshot.class);
     private static final Codec<StoredItem> STORED_ITEM_CODEC =
             REGISTRY.get(StoredItem.class);
+    private static final Codec<EventRecord> EVENT_RECORD_CODEC =
+            REGISTRY.get(EventRecord.class);
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static final Codec<RollbackEffect> ROLLBACK_EFFECT_CODEC =
             (Codec) REGISTRY.get(RollbackEffect.class);
@@ -220,6 +227,31 @@ public final class BsonBlobs {
     public static @Nullable StoredItem decodeStoredItem(@Nullable String base64) {
         byte[] bytes = fromBase64(base64);
         return bytes == null ? null : decode(STORED_ITEM_CODEC, bytes);
+    }
+
+    /**
+     * Serialize a whole {@link EventRecord} to BSON bytes (no base64) for
+     * the SQLite backend's per-event blob. The concrete record codec
+     * writes the {@code event} field, so {@link #decodeRecordBytes}
+     * dispatches the sealed hierarchy on it — the same self-describing
+     * shape Mongo stores, minus the document wrapper. Callers compress the
+     * returned bytes before persisting them.
+     */
+    public static byte[] encodeRecordBytes(EventRecord record) {
+        BasicOutputBuffer buffer = new BasicOutputBuffer();
+        try (BsonBinaryWriter writer = new BsonBinaryWriter(buffer)) {
+            EVENT_RECORD_CODEC.encode(writer, record, EncoderContext.builder().build());
+        }
+        return buffer.toByteArray();
+    }
+
+    /** Inverse of {@link #encodeRecordBytes}. */
+    public static EventRecord decodeRecordBytes(byte[] bytes) {
+        ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        try (BsonBinaryReader reader = new BsonBinaryReader(new ByteBufferBsonInput(
+                new org.bson.ByteBufNIO(buf)))) {
+            return EVENT_RECORD_CODEC.decode(reader, DecoderContext.builder().build());
+        }
     }
 
     /**
