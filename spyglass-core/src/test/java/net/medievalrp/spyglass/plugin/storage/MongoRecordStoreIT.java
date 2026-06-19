@@ -139,12 +139,43 @@ class MongoRecordStoreIT {
                 .map(document -> document.getString("name"))
                 .toList();
 
+        // Rollback indexes end with id (-1) so the keyset (occurred, id) sort
+        // is fully index-covered — no blocking SORT stage per page.
         assertThat(indexNames).contains(
                 "_id_",
-                "source.playerId_1_occurred_-1",
-                "event_1_occurred_-1",
-                "location.worldId_1_location.x_1_location.z_1_location.y_1_occurred_-1",
+                "source.playerId_1_occurred_-1_id_-1",
+                "event_1_occurred_-1_id_-1",
+                "location.worldId_1_location.x_1_location.z_1_location.y_1_occurred_-1_id_-1",
                 "expiresAt_1");
+    }
+
+    @Test
+    void supersededLegacyRollbackIndexIsDropped() {
+        com.mongodb.client.MongoCollection<org.bson.BsonDocument> collection = rawClient
+                .getDatabase("IT").getCollection("EventRecords", org.bson.BsonDocument.class);
+        // Recreate the pre-id legacy rollback index, as a Mongo deployment
+        // upgraded in place from before the id-covered keyset shape would have.
+        collection.createIndex(com.mongodb.client.model.Indexes.compoundIndex(
+                com.mongodb.client.model.Indexes.ascending("event"),
+                com.mongodb.client.model.Indexes.descending("occurred")));
+        assertThat(legacyIndexNames(collection)).contains("event_1_occurred_-1");
+
+        new IndexManager().ensureRecordIndexes(collection);
+
+        // The legacy index is gone (no double write-amplification) and the
+        // id-covered superset that replaced it is present.
+        assertThat(legacyIndexNames(collection))
+                .doesNotContain("event_1_occurred_-1")
+                .contains("event_1_occurred_-1_id_-1");
+    }
+
+    private static List<String> legacyIndexNames(
+            com.mongodb.client.MongoCollection<org.bson.BsonDocument> collection) {
+        return collection.listIndexes(org.bson.BsonDocument.class)
+                .into(new java.util.ArrayList<>())
+                .stream()
+                .map(document -> document.getString("name").getValue())
+                .toList();
     }
 
     @Test
