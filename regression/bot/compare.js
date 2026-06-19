@@ -31,7 +31,7 @@ const RCON_PORT = 25576, PASS = 'test123';
 // sqlite|mysql — so the report records the disk those two spend on the dataset.
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DISK_PY = path.resolve(SCRIPT_DIR, '..', 'disk.py');
-const SG_BACKEND = process.env.SG_BACKEND || 'mongo';   // mongo | clickhouse
+const SG_BACKEND = process.env.SG_BACKEND || 'mongo';   // mongo | clickhouse | sqlite
 const CP_BACKEND = process.env.CP_BACKEND || 'sqlite';  // sqlite | mysql
 
 function measureDisk() {

@@ -97,14 +97,17 @@ import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.RollbackPhysicsBlocker;
+import net.medievalrp.spyglass.plugin.rollback.SqliteUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
+import net.medievalrp.spyglass.plugin.storage.SqliteRecordStore;
 import net.medievalrp.spyglass.plugin.storage.SynthesizingRecordStore;
 import net.medievalrp.spyglass.plugin.salvage.ClickHouseSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.MongoSalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.SqliteSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
 import net.medievalrp.spyglass.plugin.salvage.SalvageGui;
 import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
@@ -112,6 +115,7 @@ import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
+import net.medievalrp.spyglass.plugin.command.service.tool.SqliteToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.WandInteractListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditLifecycleListener;
@@ -185,6 +189,24 @@ public final class SpyglassPlugin extends JavaPlugin {
                             chStore.client(), ch.database());
                     salvageStore = new ClickHouseSalvageStore(
                             chStore.client(), ch.database(), 30L);
+                }
+                case SQLITE -> {
+                    // One embedded file holds every store. A relative path
+                    // resolves under the plugin data folder.
+                    java.nio.file.Path configured =
+                            java.nio.file.Path.of(config.database().sqlite().path());
+                    java.nio.file.Path dbPath = configured.isAbsolute()
+                            ? configured
+                            : getDataFolder().toPath().resolve(configured);
+                    // Retention drives the SQLite TTL sweep and the reconstructed
+                    // expiry on column-stored rows (which don't carry an
+                    // expires_at column).
+                    SqliteRecordStore sqliteStore = new SqliteRecordStore(
+                            dbPath, false, config.storage().retention().seconds());
+                    recordStore = sqliteStore;
+                    undoStack = new SqliteUndoStack(sqliteStore);
+                    toolStateStore = new SqliteToolStateStore(sqliteStore);
+                    salvageStore = new SqliteSalvageStore(sqliteStore, 30L);
                 }
             }
             if (config.storage().rolledAuditSynthesized()) {

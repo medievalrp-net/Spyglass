@@ -5,6 +5,7 @@ plugins {
 val paperApiVersion: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
+val sqliteJdbcVersion: String by rootProject.extra
 val junitVersion: String by rootProject.extra
 val assertjVersion: String by rootProject.extra
 val mockitoVersion: String by rootProject.extra
@@ -51,6 +52,12 @@ dependencies {
     api("com.clickhouse:clickhouse-data:$clickhouseClientVersion")
     runtimeOnly("org.apache.httpcomponents.client5:httpclient5:5.3.1")
 
+    // Embedded SQLite backend (#106): a third, zero-ops record store for
+    // small/medium servers. xerial sqlite-jdbc bundles the native SQLite
+    // engine; exposed as `api` so the plugin + proxy can construct the
+    // store directly, mirroring the Mongo / ClickHouse drivers above.
+    api("org.xerial:sqlite-jdbc:$sqliteJdbcVersion")
+
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
@@ -68,13 +75,40 @@ tasks.withType<JacocoReport>().configureEach {
 }
 
 tasks.test {
-    // The `bench` and `ch-bench` tags cover long-running throughput
-    // benches; they live here now alongside the storage code they
-    // exercise. Run via `./gradlew :spyglass-core:clickhouseBench`.
+    // The `bench`, `ch-bench`, and `sqlite-bench` tags cover long-running
+    // throughput benches; they live here now alongside the storage code they
+    // exercise. Run via `./gradlew :spyglass-core:clickhouseBench` /
+    // `:spyglass-core:sqliteBench`.
     useJUnitPlatform {
-        excludeTags("bench", "ch-bench")
+        excludeTags("bench", "ch-bench", "sqlite-bench")
     }
     finalizedBy(tasks.named("jacocoTestReport"))
+}
+
+tasks.register<Test>("sqliteBench") {
+    description = "Spyglass·SQLite disk + rollback-read benchmark (#106; no Docker)."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("sqlite-bench")
+    }
+    extensions.configure<JacocoTaskExtension> {
+        isEnabled = false
+    }
+    testLogging {
+        events("started", "passed", "failed", "standard_out")
+        showStandardStreams = true
+        showExceptions = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+    maxHeapSize = "4g"
+    for ((key, value) in System.getProperties()) {
+        val name = key.toString()
+        if (name.startsWith("SG_BENCH_")) {
+            systemProperty(name, value.toString())
+        }
+    }
 }
 
 tasks.register<Test>("clickhouseBench") {
