@@ -17,22 +17,21 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 
 ## Features
 
-Both cover the basics the same way: block, container, entity, sign, and item logging, an inspector wand, lookup, and rollback or restore by player, time, radius, and region. The table is only where they differ.
+Both log every change and roll it back. The difference is what it costs your server, and how far you can search and recover afterward.
 
 | | Spyglass | CoreProtect |
 |---|---|---|
-| Storage | MongoDB or ClickHouse | SQLite or MySQL |
-| Rollback execution | off the main thread, holds 20 TPS | on the main thread, TPS dips on large jobs |
-| Rollback footprint | one synthesized row per operation | re-logs every reverted block |
-| Undo | dedicated `/sg undo` stack, any depth | re-run the inverse with `/co restore` |
-| Interrupted rollback | resumes from a saved cursor | restart it by hand |
-| Item search | material, name, lore, or enchantment | material only |
-| Cross-server search | Velocity proxy companion | per-server only |
-| Plugin API | custom items and searchable fields | logging and lookup |
-| Movement and teleports | logged | not logged |
-| Minecraft versions | 1.21.x | 1.7 and up |
+| TPS during a 2M-block rollback | **20.0, flat** | dips to ~13 |
+| Worst single tick | **~60 ms** | up to ~900 ms |
+| Rollback execution | ✓ off the main thread | on the main thread |
+| Undo any operation, any size | ✓ `/sg undo` | rerun the inverse |
+| Crash-resume a rollback | ✓ | restart by hand |
+| Item search by name, lore, or enchantment | ✓ | material only |
+| Cross-server search | ✓ Velocity proxy | per server |
+| Plugin-defined searchable fields | ✓ | logging API only |
+| Storage engines | MongoDB, ClickHouse | SQLite, MySQL |
 
-Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already have a MySQL or SQLite setup and no Mongo or ClickHouse instance, CoreProtect drops in with no new database to stand up.
+Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already run SQLite or MySQL and nothing else, CoreProtect installs with no new database to stand up.
 
 ## Requirements
 
