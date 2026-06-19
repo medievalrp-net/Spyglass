@@ -179,4 +179,4 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 ## License
 
-Spyglass is source-available for private use. You may run it and modify it for your own servers, including commercial ones. You may not redistribute it, sell it, or sell access to it. See [LICENSE](LICENSE) for the full terms.
+Spyglass is source-available under the [PolyForm Internal Use License 1.0.0](LICENSE), with an added permission covering Minecraft servers. You may run it and fork it for your own servers, including commercial ones. You may not redistribute it, sublicense it, or sell it or access to it.
