@@ -14,6 +14,8 @@ val assertjVersion = "3.27.6"
 val mockitoVersion = "5.20.0"
 val testcontainersVersion = "1.21.3"
 val jetbrainsAnnotationsVersion = "26.0.2"
+val faweVersion = "2.15.2"
+val worldeditVersion = "7.3.15"
 
 // True when a Docker daemon is reachable. Used to warn (not fail) when the
 // Testcontainers store ITs will assume-skip, so a no-Docker `check` isn't
@@ -152,4 +154,6 @@ extra.apply {
     set("mockitoVersion", mockitoVersion)
     set("testcontainersVersion", testcontainersVersion)
     set("jetbrainsAnnotationsVersion", jetbrainsAnnotationsVersion)
+    set("faweVersion", faweVersion)
+    set("worldeditVersion", worldeditVersion)
 }
