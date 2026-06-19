@@ -54,9 +54,9 @@ Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend nee
 - Paper 1.21.8 or newer 1.21.x
 - Java 21
 - A database, one of:
-  - Embedded SQLite, no external database (set `database.backend = "sqlite"`); writes to a file under the plugin folder
-  - MongoDB at `mongodb://localhost:27017` (default)
-  - ClickHouse (set `database.backend = "clickhouse"` in config)
+  - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
+  - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
+  - ClickHouse (set `database.backend = "clickhouse"`)
 - Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded — `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike — for player and non-player (console/plugin) edits
 
 ## Commands
