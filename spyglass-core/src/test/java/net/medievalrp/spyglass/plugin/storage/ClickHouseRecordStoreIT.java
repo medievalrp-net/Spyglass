@@ -269,6 +269,35 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void summaryQueryRetainsItemProjectionsForHover() {
+        // Feature: the search hover shows an item's custom name / lore /
+        // enchants. The display path (querySummary) must carry the item even
+        // when no item predicate triggers the post-filter hydrate — a plain
+        // event filter must still come back with afterItem populated.
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation loc = new BlockLocation(WORLD, "world", 0, 64, 0);
+        StoredItem stormCaller = new StoredItem(0, "IRON_HORSE_ARMOR", "AAAA",
+                "Storm Caller",
+                List.of("Forged in the primordial deep"),
+                List.of("protection=4"));
+        store.save(List.of(new net.medievalrp.spyglass.api.event.ContainerDepositRecord(
+                UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                loc, "test", "IRON_HORSE_ARMOR", "CHEST", 0, 1, null, stormCaller)));
+        flushAsyncInserts();
+
+        QueryRequest q = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "deposit")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        var deposit = (net.medievalrp.spyglass.api.event.ContainerDepositRecord)
+                store.querySummary(q).records().get(0);
+        assertThat(deposit.afterItem()).isNotNull();
+        assertThat(deposit.afterItem().name()).isEqualTo("Storm Caller");
+        assertThat(deposit.afterItem().lore()).contains("Forged in the primordial deep");
+        assertThat(deposit.afterItem().enchants()).contains("protection=4");
+    }
+
+    @Test
     void replayedRecordCollapsesUnderReplacingMergeTree() throws Exception {
         // Simulates a WAL replay after a mid-batch crash: the same
         // record (same UUID id, same event, same occurred) is saved
