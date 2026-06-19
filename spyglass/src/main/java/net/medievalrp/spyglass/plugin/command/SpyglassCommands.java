@@ -7,6 +7,7 @@ import net.medievalrp.spyglass.plugin.command.service.HelpService;
 import net.medievalrp.spyglass.plugin.command.service.RbqueueService;
 import net.medievalrp.spyglass.plugin.command.service.RollbackMode;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
+import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
 import net.medievalrp.spyglass.plugin.command.service.TeleportService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
@@ -37,6 +38,7 @@ public final class SpyglassCommands {
     private final PageCache pageCache;
     private final ToolService tool;
     private final TeleportService teleport;
+    private final SalvageService salvage;
     private final SpyglassSuggestions suggestions;
 
     public SpyglassCommands(JavaPlugin plugin,
@@ -49,6 +51,7 @@ public final class SpyglassCommands {
                         PageCache pageCache,
                         ToolService tool,
                         TeleportService teleport,
+                        SalvageService salvage,
                         SpyglassSuggestions suggestions) {
         this.plugin = plugin;
         this.api = api;
@@ -60,6 +63,7 @@ public final class SpyglassCommands {
         this.pageCache = pageCache;
         this.tool = tool;
         this.teleport = teleport;
+        this.salvage = salvage;
         this.suggestions = suggestions;
     }
 
@@ -76,6 +80,7 @@ public final class SpyglassCommands {
     private static final List<String> TOOL_ALIASES = List.of("tool", "t", "inspect");
     private static final List<String> EVENTS_ALIASES = List.of("events", "e");
     private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
+    private static final List<String> INVENTORY_ALIASES = List.of("inventory", "inv", "salvage");
 
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
@@ -147,6 +152,12 @@ public final class SpyglassCommands {
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.tool")
                         .handler(ctx -> tool.toggle(ctx.sender())));
+            }
+
+            for (String name : INVENTORY_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.rollback")
+                        .handler(ctx -> salvage.execute(ctx.sender())));
             }
 
             // /spyglass tele <world> <x> <y> <z> — wired to search-result click
