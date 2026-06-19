@@ -11,8 +11,10 @@ import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.BsonDocument;
 import org.bson.BsonDocumentReader;
@@ -304,6 +306,34 @@ class EventRecordCodecTest {
             assertThat(decoded).isInstanceOf(BlockBreakRecord.class);
             assertThat(((BlockBreakRecord) decoded).event()).isEqualTo(alias);
         }
+    }
+
+    @Test
+    void roundTripsItemRecordWithNullDataProjection() {
+        // #103: pickups/drops store only the searchable projection — the
+        // base64 NBT blob (StoredItem.data) is null. The Mongo write path
+        // must encode a null record component and read it back without
+        // throwing, and null must stay null on the way out.
+        StoredItem projection = new StoredItem(
+                0, "DIAMOND_SWORD", null,
+                "Excaliblur",
+                List.of("Forged in fire"),
+                List.of("sharpness=5"));
+        ItemPickupRecord original = new ItemPickupRecord(
+                UUID.randomUUID(), "pickup", WHEN, WHEN.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 1, 64, 2),
+                "test", "DIAMOND_SWORD", 1, projection);
+
+        EventRecord decoded = decode(encode(original));
+
+        assertThat(decoded).isInstanceOf(ItemPickupRecord.class).isEqualTo(original);
+        StoredItem item = ((ItemPickupRecord) decoded).item();
+        assertThat(item.data()).as("null blob must stay null through the codec").isNull();
+        assertThat(item.material()).isEqualTo("DIAMOND_SWORD");
+        assertThat(item.name()).isEqualTo("Excaliblur");
+        assertThat(item.lore()).containsExactly("Forged in fire");
+        assertThat(item.enchants()).containsExactly("sharpness=5");
     }
 
     @Test
