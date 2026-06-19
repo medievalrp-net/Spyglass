@@ -65,9 +65,10 @@ public record SpyglassConfig(
         String backendName = root.node("database", "backend").getString("mongo").trim().toLowerCase(java.util.Locale.ROOT);
         Backend backend = switch (backendName) {
             case "clickhouse" -> Backend.CLICKHOUSE;
+            case "sqlite" -> Backend.SQLITE;
             case "mongo", "mongodb" -> Backend.MONGO;
             default -> throw new IOException("Unknown database.backend: " + backendName
-                    + " (expected 'mongo' or 'clickhouse')");
+                    + " (expected 'mongo', 'clickhouse', or 'sqlite')");
         };
         return new SpyglassConfig(
                 new Database(
@@ -82,7 +83,9 @@ public record SpyglassConfig(
                                 root.node("database", "clickhouse", "table").getString("event_records"),
                                 root.node("database", "clickhouse", "user").getString("default"),
                                 root.node("database", "clickhouse", "password").getString(""),
-                                root.node("database", "clickhouse", "ssl").getBoolean(false))),
+                                root.node("database", "clickhouse", "ssl").getBoolean(false)),
+                        new Sqlite(
+                                root.node("database", "sqlite", "path").getString("spyglass.db"))),
                 new Storage(
                         Duration.parse(root.node("storage", "retention").getString("4w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
@@ -150,10 +153,17 @@ public record SpyglassConfig(
      * undo ledger and the wand-state ledger. Mongo is not required at
      * all when this backend is selected. Operators run one or the
      * other, never both.
+     *
+     * <p>{@link #SQLITE} is the zero-ops option: every store the plugin
+     * needs (records, undo ledger, wand state, salvage) lives in one
+     * embedded SQLite file ({@code database.sqlite.path}), so a small or
+     * medium server runs Spyglass with no external database process at
+     * all.
      */
     public enum Backend {
         MONGO,
-        CLICKHOUSE
+        CLICKHOUSE,
+        SQLITE
     }
 
     public record Database(
@@ -161,7 +171,23 @@ public record SpyglassConfig(
             String uri,
             String name,
             String collection,
-            ClickHouse clickhouse) {
+            ClickHouse clickhouse,
+            Sqlite sqlite) {
+    }
+
+    /**
+     * Embedded-SQLite settings (used when {@code backend = "sqlite"}).
+     *
+     * @param path location of the SQLite database file. A relative path
+     *     is resolved against the plugin data folder, so the default
+     *     {@code "spyglass.db"} lands at {@code plugins/Spyglass/spyglass.db}.
+     *     The {@code -wal} / {@code -shm} sidecar files SQLite creates in
+     *     WAL mode live alongside it.
+     */
+    public record Sqlite(String path) {
+        public Sqlite {
+            path = path == null || path.isBlank() ? "spyglass.db" : path.trim();
+        }
     }
 
     public record ClickHouse(

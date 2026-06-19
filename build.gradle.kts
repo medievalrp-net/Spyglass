@@ -6,6 +6,7 @@ val paperApiVersion = "1.21.8-R0.1-SNAPSHOT"
 val velocityApiVersion = "3.4.0-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
 val clickhouseClientVersion = "0.9.8"
+val sqliteJdbcVersion = "3.50.1.0"
 val configurateVersion = "4.2.0"
 val cloudMinecraftVersion = "2.0.0-beta.16"
 val cloudCoreVersion = "2.0.0"
@@ -146,6 +147,7 @@ extra.apply {
     set("velocityApiVersion", velocityApiVersion)
     set("mongoDriverVersion", mongoDriverVersion)
     set("clickhouseClientVersion", clickhouseClientVersion)
+    set("sqliteJdbcVersion", sqliteJdbcVersion)
     set("configurateVersion", configurateVersion)
     set("cloudMinecraftVersion", cloudMinecraftVersion)
     set("cloudCoreVersion", cloudCoreVersion)
