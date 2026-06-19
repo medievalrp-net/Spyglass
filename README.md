@@ -16,8 +16,6 @@ A 2,000,376-block rollback, measured five ways: Spyglass on each of its three ba
 | Worst single tick | ~50 ms | ~100 ms | **~37 ms** | ~670 ms | ~270 ms |
 | On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~156 MiB | ~160 MiB | ~180 MiB |
 
-Read it by backend. ClickHouse has the smallest disk (columnar 54x compression) and is the backend for the largest servers; MongoDB is the document-store default; and the embedded SQLite backend, with no network between the engine and a local file, turns in the fastest rollback of the three (~3 s at a flat 20.0 TPS) while staying smaller on disk than CoreProtect. Pick SQLite for zero-ops on a small or medium server, MongoDB to scale up, ClickHouse for the largest. Run exactly one; the unused backend blocks are ignored.
-
 ## Features
 
 Spyglass and CoreProtect both log the world and roll it back. Where they part ways: performance under load, search depth, recovery, and what survives a crash.
