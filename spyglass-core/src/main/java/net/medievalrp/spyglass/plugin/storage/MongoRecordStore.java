@@ -4,22 +4,38 @@ import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import net.medievalrp.spyglass.api.event.BlockBreakRecord;
+import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
+import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
+import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
+import net.medievalrp.spyglass.api.rollback.RollbackEffect;
+import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.BsonDocument;
+import org.bson.BsonDocumentReader;
 import org.bson.UuidRepresentation;
+import org.bson.codecs.DecoderContext;
 import org.bson.codecs.configuration.CodecRegistries;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.codecs.jsr310.Jsr310CodecProvider;
@@ -106,33 +122,10 @@ public final class MongoRecordStore implements RecordStore {
         // per call rather than O(matchSet) — same goal as the CH path.
         // Used by the rollback engine to stream million-row result sets
         // a page at a time instead of allocating one huge list.
-        Bson baseFilter = buildFilter(request);
         boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
-        Bson sort = newestFirst
-                ? Sorts.orderBy(Sorts.descending(RecordFields.OCCURRED), Sorts.descending(RecordFields.ID))
-                : Sorts.orderBy(Sorts.ascending(RecordFields.OCCURRED), Sorts.ascending(RecordFields.ID));
+        Bson filter = keysetFilter(buildFilter(request), cursor, newestFirst);
 
-        Bson filter = baseFilter;
-        if (cursor != null) {
-            // Tuple compare expanded to OR-of-AND so Mongo can index it.
-            // For NEWEST_FIRST: occurred < co OR (occurred == co AND id < ci).
-            // High-level Filters builder handles the UUID/Instant codec
-            // wiring so we don't have to round-trip through BsonString.
-            Bson occLess = newestFirst
-                    ? com.mongodb.client.model.Filters.lt(RecordFields.OCCURRED, cursor.occurred())
-                    : com.mongodb.client.model.Filters.gt(RecordFields.OCCURRED, cursor.occurred());
-            Bson tieBreak = com.mongodb.client.model.Filters.and(
-                    com.mongodb.client.model.Filters.eq(RecordFields.OCCURRED, cursor.occurred()),
-                    newestFirst
-                            ? com.mongodb.client.model.Filters.lt(RecordFields.ID, cursor.id())
-                            : com.mongodb.client.model.Filters.gt(RecordFields.ID, cursor.id()));
-            Bson keysetClause = com.mongodb.client.model.Filters.or(occLess, tieBreak);
-            filter = baseFilter == null
-                    ? keysetClause
-                    : com.mongodb.client.model.Filters.and(baseFilter, keysetClause);
-        }
-
-        var iter = polymorphicCollection.find(filter).sort(sort).limit(pageSize);
+        var iter = polymorphicCollection.find(filter).sort(keysetSort(newestFirst)).limit(pageSize);
         List<EventRecord> records = iter.into(new ArrayList<>(pageSize));
         QueryPage.Cursor next = null;
         if (records.size() == pageSize) {
@@ -142,6 +135,197 @@ public final class MongoRecordStore implements RecordStore {
             }
         }
         return new QueryPage(records, next);
+    }
+
+    private static Bson keysetSort(boolean newestFirst) {
+        return newestFirst
+                ? Sorts.orderBy(Sorts.descending(RecordFields.OCCURRED), Sorts.descending(RecordFields.ID))
+                : Sorts.orderBy(Sorts.ascending(RecordFields.OCCURRED), Sorts.ascending(RecordFields.ID));
+    }
+
+    // Tuple compare on (occurred, id) expanded to OR-of-AND so Mongo can index
+    // it. For NEWEST_FIRST: occurred < co OR (occurred == co AND id < ci). The
+    // high-level Filters builder handles the UUID/Instant codec wiring so we
+    // don't round-trip through BsonString.
+    private static Bson keysetFilter(Bson baseFilter, QueryPage.Cursor cursor, boolean newestFirst) {
+        if (cursor == null) {
+            return baseFilter;
+        }
+        Bson occCmp = newestFirst
+                ? Filters.lt(RecordFields.OCCURRED, cursor.occurred())
+                : Filters.gt(RecordFields.OCCURRED, cursor.occurred());
+        Bson tieBreak = Filters.and(
+                Filters.eq(RecordFields.OCCURRED, cursor.occurred()),
+                newestFirst
+                        ? Filters.lt(RecordFields.ID, cursor.id())
+                        : Filters.gt(RecordFields.ID, cursor.id()));
+        Bson keyset = Filters.or(occCmp, tieBreak);
+        return baseFilter == null ? keyset : Filters.and(baseFilter, keyset);
+    }
+
+    // Direction-specific lean rollback read — the Mongo mirror of the
+    // ClickHouse #67/#83 path. The default streamRollbackEffects rides
+    // queryPage(), which decodes the FULL EventRecord graph per row (both
+    // block snapshots, origin, source, server, target) only to keep the one
+    // replacement side; on a million-row rollback that record churn is what
+    // fills eden and forces a young GC mid-op. Here we read raw BSON projected
+    // to just the fields a RollbackEffect needs, emit the simple-block hot
+    // path straight to sink.block() primitives (no record, snapshot, or effect
+    // object), and build a snapshot/item only for the rare tile-entity /
+    // container / entity rows. force-overwrite (#69) never reads the expected
+    // side, so the projection omits it: a rollback reads originalBlock, a
+    // restore reads newBlock.
+    @Override
+    public QueryPage.Cursor streamRollbackEffects(QueryRequest request, QueryPage.Cursor cursor,
+                                                  int windowLimit, boolean rollback,
+                                                  RollbackEffectSink sink) {
+        boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
+        Bson filter = keysetFilter(buildFilter(request), cursor, newestFirst);
+        String replacementSide = rollback ? RecordFields.ORIGINAL_BLOCK : RecordFields.NEW_BLOCK;
+        Bson projection = Projections.fields(
+                Projections.include(RecordFields.ID, RecordFields.EVENT, RecordFields.OCCURRED,
+                        RecordFields.LOCATION, replacementSide,
+                        RecordFields.SLOT, RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
+                        RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT),
+                Projections.excludeId());
+
+        Instant lastOccurred = null;
+        UUID lastId = null;
+        int count = 0;
+        try (MongoCursor<BsonDocument> iterator = rawCollection.find(filter)
+                .projection(projection)
+                .sort(keysetSort(newestFirst))
+                .limit(windowLimit)
+                .iterator()) {
+            while (iterator.hasNext()) {
+                BsonDocument doc = iterator.next();
+                UUID id = readUuid(doc, RecordFields.ID);
+                Instant occurred = readInstant(doc, RecordFields.OCCURRED);
+                lastOccurred = occurred;
+                lastId = id;
+                count++;
+                emitEffect(doc, rollback, occurred, id, sink);
+            }
+        }
+        // Match queryPage's cursor contract: a full window means more rows
+        // may follow, so hand back the last (occurred, id); a short window is
+        // the end of the stream.
+        if (count == windowLimit && lastOccurred != null && lastId != null) {
+            return new QueryPage.Cursor(lastOccurred, lastId);
+        }
+        return null;
+    }
+
+    // Resolve one projected BSON row to a rollback effect in the requested
+    // direction. Mirrors the per-record-type Rollbackable.rollbackEffect() /
+    // restoreEffect() logic (and the ClickHouse emitEffect) exactly — keep the
+    // three in lockstep.
+    private void emitEffect(BsonDocument doc, boolean rollback, Instant occurred, UUID id,
+                            RollbackEffectSink sink) {
+        String event = doc.containsKey(RecordFields.EVENT) && doc.get(RecordFields.EVENT).isString()
+                ? doc.getString(RecordFields.EVENT).getValue() : null;
+        Class<? extends EventRecord> clazz = event == null ? null : EventCatalog.recordClassOf(event);
+
+        if (clazz == BlockBreakRecord.class || clazz == BlockPlaceRecord.class) {
+            // rollback writes the before-state (originalBlock), restore the
+            // after-state (newBlock); the projection only fetched that side.
+            String sideKey = rollback ? RecordFields.ORIGINAL_BLOCK : RecordFields.NEW_BLOCK;
+            BsonDocument side = doc.containsKey(sideKey) && doc.get(sideKey).isDocument()
+                    ? doc.getDocument(sideKey) : null;
+            if (side == null) {
+                sink.skip(occurred, id);
+                return;
+            }
+            boolean simple = side.containsKey(RecordFields.SIMPLE)
+                    && side.get(RecordFields.SIMPLE).isBoolean()
+                    && side.getBoolean(RecordFields.SIMPLE).getValue();
+            String blockData = side.containsKey(RecordFields.BLOCK_DATA)
+                    && side.get(RecordFields.BLOCK_DATA).isString()
+                    ? side.getString(RecordFields.BLOCK_DATA).getValue() : null;
+            if (simple && blockData != null) {
+                // Hot path: no snapshot / effect object. expectedData is unused
+                // under force-overwrite (#69), so pass null.
+                BsonDocument loc = doc.getDocument(RecordFields.LOCATION);
+                sink.block(readUuid(loc, RecordFields.WORLD_ID),
+                        loc.getInt32(RecordFields.X).getValue(),
+                        loc.getInt32(RecordFields.Y).getValue(),
+                        loc.getInt32(RecordFields.Z).getValue(),
+                        blockData, null, occurred, id);
+                return;
+            }
+            // Tile-entity payload (or malformed block-data): build the snapshot.
+            // expectedCurrent is null — force-overwrite ignores it.
+            sink.complex(new RollbackEffect.BlockReplace(readLocation(doc), null,
+                    decodeSnapshot(side)), occurred, id);
+            return;
+        }
+
+        if (clazz == ContainerDepositRecord.class || clazz == ContainerWithdrawRecord.class) {
+            BlockLocation location = readLocation(doc);
+            int slot = doc.containsKey(RecordFields.SLOT) && doc.get(RecordFields.SLOT).isInt32()
+                    ? doc.getInt32(RecordFields.SLOT).getValue() : 0;
+            StoredItem before = decodeItem(doc, RecordFields.BEFORE_ITEM);
+            StoredItem after = decodeItem(doc, RecordFields.AFTER_ITEM);
+            sink.complex(rollback
+                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before)
+                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after), occurred, id);
+            return;
+        }
+
+        if (clazz == EntityDeathRecord.class) {
+            BlockLocation location = readLocation(doc);
+            String entityType = doc.containsKey(RecordFields.ENTITY_TYPE)
+                    && doc.get(RecordFields.ENTITY_TYPE).isString()
+                    ? doc.getString(RecordFields.ENTITY_TYPE).getValue() : null;
+            if (rollback) {
+                String nbt = doc.containsKey(RecordFields.ENTITY_NBT)
+                        && doc.get(RecordFields.ENTITY_NBT).isString()
+                        ? doc.getString(RecordFields.ENTITY_NBT).getValue() : null;
+                sink.complex(new RollbackEffect.EntitySpawn(location, entityType, nbt), occurred, id);
+            } else {
+                UUID entityId = doc.containsKey(RecordFields.ENTITY_ID)
+                        && doc.get(RecordFields.ENTITY_ID).isBinary()
+                        ? readUuid(doc, RecordFields.ENTITY_ID) : null;
+                sink.complex(new RollbackEffect.EntityRemove(location, entityType,
+                        entityId == null ? null : entityId.toString()), occurred, id);
+            }
+            return;
+        }
+
+        // Matched but not rollbackable — advance the cursor only.
+        sink.skip(occurred, id);
+    }
+
+    private BlockLocation readLocation(BsonDocument doc) {
+        BsonDocument loc = doc.getDocument(RecordFields.LOCATION);
+        String worldName = loc.containsKey(RecordFields.WORLD_NAME)
+                && loc.get(RecordFields.WORLD_NAME).isString()
+                ? loc.getString(RecordFields.WORLD_NAME).getValue() : null;
+        return new BlockLocation(readUuid(loc, RecordFields.WORLD_ID), worldName,
+                loc.getInt32(RecordFields.X).getValue(),
+                loc.getInt32(RecordFields.Y).getValue(),
+                loc.getInt32(RecordFields.Z).getValue());
+    }
+
+    private BlockSnapshot decodeSnapshot(BsonDocument side) {
+        return codecRegistry.get(BlockSnapshot.class)
+                .decode(new BsonDocumentReader(side), DecoderContext.builder().build());
+    }
+
+    private StoredItem decodeItem(BsonDocument doc, String key) {
+        if (!doc.containsKey(key) || !doc.get(key).isDocument()) {
+            return null;
+        }
+        return codecRegistry.get(StoredItem.class)
+                .decode(new BsonDocumentReader(doc.getDocument(key)), DecoderContext.builder().build());
+    }
+
+    private static UUID readUuid(BsonDocument doc, String key) {
+        return doc.getBinary(key).asUuid();
+    }
+
+    private static Instant readInstant(BsonDocument doc, String key) {
+        return Instant.ofEpochMilli(doc.getDateTime(key).getValue());
     }
 
     /**
