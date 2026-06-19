@@ -50,6 +50,7 @@ public final class SalvageCapturer implements SalvageHook {
     // via the object path) double-persisting the same destroyed container.
     private final Set<String> salvagedCells = new HashSet<>();
     private volatile String operator = "console";
+    private volatile UUID rollbackId = new UUID(0L, 0L);
 
     public SalvageCapturer(SalvageStore store, Executor persistExecutor, Logger logger) {
         this.store = store;
@@ -61,8 +62,9 @@ public final class SalvageCapturer implements SalvageHook {
     }
 
     @Override
-    public void begin(String operatorName) {
+    public void begin(String operatorName, UUID rollbackId) {
         this.operator = operatorName == null ? "console" : operatorName;
+        this.rollbackId = rollbackId == null ? new UUID(0L, 0L) : rollbackId;
         this.pending.clear();
         this.salvagedCells.clear();
     }
@@ -85,7 +87,7 @@ public final class SalvageCapturer implements SalvageHook {
         // thread, before any write to this chunk). Most chunks have none.
         for (BlockState state : chunk.getTileEntities(false)) {
             if (state instanceof Container container) {
-                List<StoredItem> items = capture(container.getInventory());
+                List<StoredItem> items = capture(inventoryOf(container));
                 if (!items.isEmpty()) {
                     if (captured == null) {
                         captured = new ArrayList<>();
@@ -123,13 +125,13 @@ public final class SalvageCapturer implements SalvageHook {
             } else if (block.getState() instanceof Container container) {
                 // Same container type still here — destroyed only if its contents
                 // changed (e.g. the rollback restored a different recorded inv).
-                destroyed = !sameItems(capture(container.getInventory()), cap.items());
+                destroyed = !sameItems(capture(inventoryOf(container)), cap.items());
             } else {
                 destroyed = true;
             }
             if (destroyed && salvagedCells.add(
                     world.getUID() + ":" + cap.x() + ":" + cap.y() + ":" + cap.z())) {
-                toSave.add(new SalvageSnapshot(UUID.randomUUID(), null,
+                toSave.add(new SalvageSnapshot(UUID.randomUUID(), rollbackId,
                         world.getUID(), world.getName(),
                         cap.x(), cap.y(), cap.z(), cap.type(), op,
                         Instant.now(), cap.items()));
@@ -149,6 +151,14 @@ public final class SalvageCapturer implements SalvageHook {
                 }
             });
         }
+    }
+
+    // A chest that is half of a double chest reports the COMBINED 54-slot
+    // inventory via getInventory(); the per-block inventory keeps each half its
+    // own 27-slot snapshot so a double chest is never captured (recovered) twice.
+    private static Inventory inventoryOf(Container container) {
+        return container instanceof org.bukkit.block.Chest chest
+                ? chest.getBlockInventory() : container.getInventory();
     }
 
     private static List<StoredItem> capture(Inventory inventory) {

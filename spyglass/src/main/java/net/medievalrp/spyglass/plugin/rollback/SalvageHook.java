@@ -20,8 +20,9 @@ import org.bukkit.World;
  */
 public interface SalvageHook {
 
-    /** Mark the start of one rollback/restore so captures are attributed. */
-    void begin(String operatorName);
+    /** Mark the start of one rollback/restore: captures are attributed to the
+     *  operator and grouped under {@code rollbackId}. */
+    void begin(String operatorName, java.util.UUID rollbackId);
 
     /** Before a chunk's blocks are overwritten: snapshot its live containers. */
     void onChunkResolved(World world, int chunkX, int chunkZ);

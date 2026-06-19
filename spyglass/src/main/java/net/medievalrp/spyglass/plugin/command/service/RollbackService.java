@@ -285,8 +285,9 @@ public final class RollbackService {
         CommandSender sender = job.sender;
         AtomicBoolean cancelFlag = job.cancelFlag;
         // Attribute any containers this rollback salvages to the operator and
-        // reset the capturer's per-run dedup state (#76).
-        engine.salvageBegin(sender == null ? "console" : sender.getName());
+        // group them under one rollback id; also resets per-run dedup (#76).
+        engine.salvageBegin(sender == null ? "console" : sender.getName(),
+                java.util.UUID.randomUUID());
         // Encoded once per job: checkpoint() re-writes the whole marker
         // after every applied window and must carry the same resolved
         // plan markStart wrote (#49). Null for replays — see runJob.
