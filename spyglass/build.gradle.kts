@@ -14,6 +14,8 @@ val assertjVersion: String by rootProject.extra
 val mockitoVersion: String by rootProject.extra
 val testcontainersVersion: String by rootProject.extra
 val jetbrainsAnnotationsVersion: String by rootProject.extra
+val faweVersion: String by rootProject.extra
+val worldeditVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -25,16 +27,6 @@ java {
 repositories {
     maven("https://maven.enginehub.org/repo/")
 }
-
-// FAWE jar for compileOnly. Look in both plugins/ and plugins/disabled/ —
-// when an operator wants to test against vanilla WorldEdit they typically
-// move the FAWE jar to plugins/disabled/ rather than delete it. Either
-// location keeps Spyglass's FAWE-aware classes (FaweHook, FaweBatchLogger)
-// compilable.
-val faweJar = listOf(
-    rootProject.rootDir.resolve("../RP_Server/plugins/FastAsyncWorldEdit.jar"),
-    rootProject.rootDir.resolve("../RP_Server/plugins/disabled/FastAsyncWorldEdit.jar")
-).firstOrNull { it.exists() }
 
 // ClickHouse 0.9.x pulls Guava 33.4.6 transitively, but Paper / WorldEdit
 // pin Guava strictly to 33.3.1. Force the Paper version so the runtime
@@ -56,10 +48,17 @@ dependencies {
 
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
-    compileOnly("com.sk89q.worldedit:worldedit-core:7.3.15")
-    compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
-    if (faweJar != null) {
-        compileOnly(files(faweJar))
+    compileOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
+    compileOnly("com.sk89q.worldedit:worldedit-bukkit:$worldeditVersion")
+    // FastAsyncWorldEdit API (Maven Central). compileOnly — the server
+    // provides FAWE at runtime; this just makes FaweHook / FaweBatchLogger
+    // compilable. Core-only: every FAWE import is com.fastasyncworldedit.core.*.
+    // Pulled non-transitively: FAWE-Core's POM otherwise drags in a gson it
+    // pins (strictly 2.11.0) that collides with Paper/adventure's gson, and
+    // we need none of its transitives — paper-api + worldedit already supply
+    // every other type these two classes touch.
+    compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Core:$faweVersion") {
+        isTransitive = false
     }
     implementation("org.spongepowered:configurate-hocon:$configurateVersion")
     implementation("org.incendo:cloud-paper:$cloudMinecraftVersion")
@@ -73,8 +72,8 @@ dependencies {
     // branch via mockStatic, which requires the WE classes to be
     // verifiable at test runtime. Pull the same coordinates onto the
     // test runtime classpath only.
-    testRuntimeOnly("com.sk89q.worldedit:worldedit-core:7.3.15")
-    testRuntimeOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.15")
+    testRuntimeOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
+    testRuntimeOnly("com.sk89q.worldedit:worldedit-bukkit:$worldeditVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testImplementation("org.assertj:assertj-core:$assertjVersion")
     testImplementation("org.mockito:mockito-core:$mockitoVersion")

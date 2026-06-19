@@ -17,6 +17,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.block.DoubleChest;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -113,6 +114,46 @@ class ContainerTransactionListenerTest {
         assertThat(deposit.afterItem().material()).isEqualTo("GOLD_INGOT");
     }
 
+    @Test
+    void doubleChestDepositIsRecorded() {
+        // A double chest's holder is a DoubleChest (not a Container), so the
+        // old resolveTarget returned null and silently dropped every chest
+        // deposit while barrels (a Container) kept working.
+        InventoryClickEvent event = doubleChestClickEvent(InventoryAction.PLACE_ALL, 0,
+                null, ironStack(64));
+
+        listener.onInventoryClick(event);
+
+        assertThat(recorder.records)
+                .as("double-chest deposits must be recorded, not dropped")
+                .hasSize(1);
+        ContainerDepositRecord record = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(record.amount()).isEqualTo(64);
+        // Left-half slot 0 attributes to the left block at x=1, slot unchanged.
+        assertThat(record.location().x()).isEqualTo(1);
+        assertThat(record.slot()).isEqualTo(0);
+    }
+
+    @Test
+    void doubleChestRightHalfSlotIsRebasedToOwningBlock() {
+        // Raw slot 30 lives in the right half (slots 27-53). It must attribute
+        // to the right block and re-base to that block's local slot 3, so the
+        // single-block rollback path can find it.
+        InventoryClickEvent event = doubleChestClickEvent(InventoryAction.PICKUP_ALL, 30,
+                ironStack(16), null);
+
+        listener.onInventoryClick(event);
+
+        assertThat(recorder.records).hasSize(1);
+        ContainerWithdrawRecord record = (ContainerWithdrawRecord) recorder.records.get(0);
+        assertThat(record.location().x())
+                .as("right-half click attributes to the right block")
+                .isEqualTo(2);
+        assertThat(record.slot())
+                .as("slot 30 re-bases to local slot 3 in the right half")
+                .isEqualTo(3);
+    }
+
     // ── fixtures ─────────────────────────────────────────────────
 
     private InventoryClickEvent clickEvent(InventoryAction action, int slot,
@@ -140,6 +181,53 @@ class ContainerTransactionListenerTest {
         when(event.getSlot()).thenReturn(slot);
         when(event.getCursor()).thenReturn(cursor);
         return event;
+    }
+
+    /**
+     * A click on a double chest: holder is a {@link DoubleChest} whose two
+     * halves are {@link Chest} blocks at x=1 (left) and x=2 (right), each a
+     * 27-slot block inventory. The clicked (combined) inventory presents the
+     * raw slot the player touched.
+     */
+    private InventoryClickEvent doubleChestClickEvent(InventoryAction action, int rawSlot,
+                                                      ItemStack slotItem, ItemStack cursor) {
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(PLAYER_ID);
+        when(player.getName()).thenReturn("Alice");
+
+        when(world.getUID()).thenReturn(UUID.fromString("77777777-7777-7777-7777-777777777777"));
+        when(world.getName()).thenReturn("world");
+
+        Chest left = chestHalf(1);
+        Chest right = chestHalf(2);
+        DoubleChest doubleChest = mock(DoubleChest.class);
+        when(doubleChest.getLeftSide()).thenReturn(left);
+        when(doubleChest.getRightSide()).thenReturn(right);
+
+        Inventory inventory = mock(Inventory.class);
+        when(inventory.getHolder()).thenReturn(doubleChest);
+        when(inventory.getItem(rawSlot)).thenReturn(slotItem);
+
+        InventoryClickEvent event = mock(InventoryClickEvent.class);
+        when(event.getWhoClicked()).thenReturn(player);
+        when(event.getClickedInventory()).thenReturn(inventory);
+        when(event.getAction()).thenReturn(action);
+        when(event.getSlot()).thenReturn(rawSlot);
+        when(event.getCursor()).thenReturn(cursor);
+        return event;
+    }
+
+    /** A 27-slot chest block at the given x, used as one half of a double chest. */
+    private Chest chestHalf(int x) {
+        Block block = mock(Block.class);
+        when(block.getLocation()).thenReturn(new Location(world, x, 64, 2));
+        when(block.getType()).thenReturn(Material.CHEST);
+        Inventory blockInv = mock(Inventory.class);
+        when(blockInv.getSize()).thenReturn(27);
+        Chest chest = mock(Chest.class);
+        when(chest.getBlock()).thenReturn(block);
+        when(chest.getBlockInventory()).thenReturn(blockInv);
+        return chest;
     }
 
     private static ItemStack ironStack(int amount) {
