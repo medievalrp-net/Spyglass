@@ -78,8 +78,27 @@ public final class MongoRecordStore implements RecordStore {
     private final MongoCollection<EventRecord> polymorphicCollection;
     private final CodecRegistry codecRegistry;
 
+    /**
+     * Opens a store that performs write-side setup on startup: collection
+     * creation (zstd), the chunk-bucket backfill, and index creation. Use
+     * this from the primary backend plugin.
+     */
     public MongoRecordStore(String uri, String databaseName, String collectionName,
                             IndexManager indexManager) {
+        this(uri, databaseName, collectionName, indexManager, true);
+    }
+
+    /**
+     * @param performSetup when {@code false}, the store skips all write-side
+     *     setup — collection creation, the cx/cz backfill, and index creation
+     *     — and only reads. The read-only Velocity companion passes
+     *     {@code false}: it shares a database with the backend plugin, which
+     *     owns schema, indexes, and migrations, so the proxy must not create
+     *     the collection or rewrite records (the backfill is an
+     *     {@code updateMany}) on startup.
+     */
+    public MongoRecordStore(String uri, String databaseName, String collectionName,
+                            IndexManager indexManager, boolean performSetup) {
         this.codecRegistry = CodecRegistries.fromRegistries(
                 // First, so it wins for BlockLocation over both the default
                 // registry's record support and RecordCodecProvider below — it
@@ -101,11 +120,15 @@ public final class MongoRecordStore implements RecordStore {
                 .build();
         this.client = MongoClients.create(settings);
         this.database = client.getDatabase(databaseName).withCodecRegistry(codecRegistry);
-        ensureZstdCollection(database, collectionName);
+        if (performSetup) {
+            ensureZstdCollection(database, collectionName);
+        }
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
         this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
-        backfillChunkBuckets(rawCollection);
-        indexManager.ensureRecordIndexes(rawCollection);
+        if (performSetup) {
+            backfillChunkBuckets(rawCollection);
+            indexManager.ensureRecordIndexes(rawCollection);
+        }
     }
 
     /**
