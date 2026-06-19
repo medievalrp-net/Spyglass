@@ -521,4 +521,132 @@ class MongoRecordStoreIT {
                 .containsExactlyElementsOf(pagedIds);
         assertThat(streamRounds).isEqualTo(pageRounds);
     }
+
+    // Captures the lean streamRollbackEffects sink calls, keyed by row id so
+    // each emitted effect can be checked against the canonical Rollbackable.
+    private static final class CapturingSink implements RecordStore.RollbackEffectSink {
+        record BlockCall(UUID worldId, int x, int y, int z, String blockData, String expected) {
+        }
+
+        final Map<UUID, BlockCall> blocks = new java.util.HashMap<>();
+        final Map<UUID, net.medievalrp.spyglass.api.rollback.RollbackEffect> complex = new java.util.HashMap<>();
+        final java.util.Set<UUID> skipped = new java.util.HashSet<>();
+
+        @Override
+        public void block(UUID worldId, int x, int y, int z, String blockData,
+                          String expectedData, Instant occurred, UUID id) {
+            blocks.put(id, new BlockCall(worldId, x, y, z, blockData, expectedData));
+        }
+
+        @Override
+        public void complex(net.medievalrp.spyglass.api.rollback.RollbackEffect effect,
+                            Instant occurred, UUID id) {
+            complex.put(id, effect);
+        }
+
+        @Override
+        public void skip(Instant occurred, UUID id) {
+            skipped.add(id);
+        }
+    }
+
+    private CapturingSink drainLeanRollback(QueryRequest request, boolean rollback) {
+        CapturingSink sink = new CapturingSink();
+        QueryPage.Cursor cursor = null;
+        do {
+            // Small window so multi-page cursor stepping is exercised too.
+            cursor = store.streamRollbackEffects(request, cursor, 3, rollback, sink);
+        } while (cursor != null);
+        return sink;
+    }
+
+    @Test
+    void leanStreamRollbackEffectsMatchesCanonicalEffects() {
+        // The native Mongo streamRollbackEffects override (the ClickHouse #67/
+        // #83 mirror) reads raw projected BSON and emits effects directly. It
+        // must produce exactly what each record's Rollbackable.rollbackEffect()
+        // / restoreEffect() would — the simple-block hot path via sink.block()
+        // primitives, everything else via sink.complex() — in both directions.
+        // Block effects drop expectedCurrent (force-overwrite #69 ignores it).
+        Instant now = Instant.parse("2026-04-23T12:00:00Z");
+        BlockLocation loc = new BlockLocation(WORLD, "world", 10, 64, 20);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        BlockSnapshot stone = new BlockSnapshot(org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        StoredItem diamond = new StoredItem(3, "DIAMOND", null);
+        BlockSnapshot chest = new BlockSnapshot(org.bukkit.Material.CHEST, "minecraft:chest",
+                List.of(diamond), List.of(), List.of(), List.of(), null);
+
+        BlockBreakRecord brk = new BlockBreakRecord(UUID.randomUUID(), "break",
+                now.plusSeconds(1), now.plusSeconds(3600), origin, source, loc, "test", "STONE", stone, air);
+        BlockPlaceRecord place = new BlockPlaceRecord(UUID.randomUUID(), "place",
+                now.plusSeconds(2), now.plusSeconds(3600), origin, source, loc, "test", "STONE", air, stone);
+        BlockBreakRecord chestBreak = new BlockBreakRecord(UUID.randomUUID(), "break",
+                now.plusSeconds(3), now.plusSeconds(3600), origin, source,
+                new BlockLocation(WORLD, "world", 11, 64, 20), "test", "CHEST", chest, air);
+        ContainerDepositRecord deposit = new ContainerDepositRecord(UUID.randomUUID(), "deposit",
+                now.plusSeconds(4), now.plusSeconds(3600), origin, source, loc, "test", "DIAMOND", "CHEST",
+                3, 1, null, diamond);
+        EntityDeathRecord death = new EntityDeathRecord(UUID.randomUUID(), "death",
+                now.plusSeconds(5), now.plusSeconds(3600), origin, source, loc, "test", "ZOMBIE", "ZOMBIE",
+                UUID.randomUUID(), "player", "ENTITY_ATTACK", null);
+        net.medievalrp.spyglass.api.event.ChatRecord chat = new net.medievalrp.spyglass.api.event.ChatRecord(
+                UUID.randomUUID(), "say", now.plusSeconds(6), now.plusSeconds(3600),
+                origin, source, loc, "test", "Alice", "hi", List.of(), java.util.Map.of());
+        store.save(List.of(brk, place, chestBreak, deposit, death, chat));
+
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
+                Sort.NEWEST_FIRST, 1000, EnumSet.noneOf(Flag.class), false);
+
+        for (boolean rollback : new boolean[] {true, false}) {
+            CapturingSink sink = drainLeanRollback(request, rollback);
+
+            // Non-rollbackable chat advances the cursor via skip(), never an effect.
+            assertThat(sink.skipped).as("chat skipped (%s)", rollback).containsExactly(chat.id());
+            assertThat(sink.blocks.keySet()).doesNotContain(chat.id());
+            assertThat(sink.complex.keySet()).doesNotContain(chat.id());
+
+            // Simple blocks: hot path via sink.block(); blockData is the
+            // canonical replacement side, expected is dropped to null.
+            var brkExpected = (net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace)
+                    (rollback ? brk.rollbackEffect() : brk.restoreEffect());
+            assertThat(sink.blocks.get(brk.id()).blockData()).isEqualTo(brkExpected.replacement().blockData());
+            assertThat(sink.blocks.get(brk.id()).expected()).isNull();
+            assertThat(sink.blocks.get(brk.id()).x()).isEqualTo(10);
+
+            var placeExpected = (net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace)
+                    (rollback ? place.rollbackEffect() : place.restoreEffect());
+            assertThat(sink.blocks.get(place.id()).blockData()).isEqualTo(placeExpected.replacement().blockData());
+
+            // The chest break exercises direction-specific side selection:
+            // rollback writes originalBlock (the chest, a tile-entity → complex
+            // object path); restore writes newBlock (air → simple hot path).
+            var chestCanonical = (net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace)
+                    (rollback ? chestBreak.rollbackEffect() : chestBreak.restoreEffect());
+            if (rollback) {
+                var chestEffect = (net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace)
+                        sink.complex.get(chestBreak.id());
+                assertThat(chestEffect).as("chest rollback uses the complex path").isNotNull();
+                assertThat(chestEffect.location()).isEqualTo(chestCanonical.location());
+                assertThat(chestEffect.replacement()).isEqualTo(chestCanonical.replacement());
+                assertThat(chestEffect.expectedCurrent()).isNull();
+                assertThat(sink.blocks).doesNotContainKey(chestBreak.id());
+            } else {
+                assertThat(sink.blocks.get(chestBreak.id()).blockData())
+                        .isEqualTo(chestCanonical.replacement().blockData());
+                assertThat(sink.complex).doesNotContainKey(chestBreak.id());
+            }
+
+            // Container + entity rows match the canonical effect exactly
+            // (those paths keep expectedCurrent, same as ClickHouse).
+            assertThat(sink.complex.get(deposit.id()))
+                    .isEqualTo(rollback ? deposit.rollbackEffect() : deposit.restoreEffect());
+            assertThat(sink.complex.get(death.id()))
+                    .isEqualTo(rollback ? death.rollbackEffect() : death.restoreEffect());
+        }
+    }
 }
