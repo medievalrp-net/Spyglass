@@ -19,9 +19,41 @@
 
 import mineflayer from 'mineflayer';
 import net from 'net';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 const HOST = '127.0.0.1', PORT = 25566;
 const RCON_PORT = 25576, PASS = 'test123';
+
+// Disk-footprint measurement (regression/disk.py). Which two backends the run
+// is actually exercising — Spyglass on mongo|clickhouse, CoreProtect on
+// sqlite|mysql — so the report records the disk those two spend on the dataset.
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DISK_PY = path.resolve(SCRIPT_DIR, '..', 'disk.py');
+const SG_BACKEND = process.env.SG_BACKEND || 'mongo';   // mongo | clickhouse
+const CP_BACKEND = process.env.CP_BACKEND || 'sqlite';  // sqlite | mysql
+
+function measureDisk() {
+    try {
+        const which = `spyglass-${SG_BACKEND},cp-${CP_BACKEND}`;
+        const out = execSync(
+            `python3 ${JSON.stringify(DISK_PY)} --json --which ${which}`,
+            { encoding: 'utf8', timeout: 30000 });
+        return JSON.parse(out);
+    } catch (e) {
+        log('  disk measure failed:', e.message.split('\n')[0]);
+        return null;
+    }
+}
+
+function fmtBytes(n) {
+    if (n == null) return 'n/a';
+    const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    let f = n, i = 0;
+    while (f >= 1024 && i < u.length - 1) { f /= 1024; i++; }
+    return i === 0 ? `${n} B` : `${f.toFixed(1)} ${u[i]}`;
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ts = () => '[' + new Date().toISOString().slice(11, 19) + ']';
@@ -308,6 +340,21 @@ async function runOneSize(s, idx) {
         baselineTps: baseline,
     };
 
+    // Disk footprint of the seeded dataset. Measured now — after the
+    // //replace drained into both stores, before any rollback writes the
+    // undo ledger — so it's the cost of holding `expected` events on each
+    // active backend (Spyglass on SG_BACKEND, CoreProtect on CP_BACKEND).
+    r.disk = measureDisk();
+    if (r.disk) {
+        const sg = r.disk[`spyglass-${SG_BACKEND}`];
+        const cp = r.disk[`cp-${CP_BACKEND}`];
+        const fmtDisk = (d) => d && !d.skipped
+            ? `${fmtBytes(d.total_bytes)} (${fmtBytes(d.storage_bytes)} data + ${fmtBytes(d.index_bytes)} index)`
+            : `n/a (${d && d.skipped ? d.skipped.slice(0, 40) : 'not measured'})`;
+        log(`  disk SG·${SG_BACKEND}: ${fmtDisk(sg)}`);
+        log(`  disk CP·${CP_BACKEND}: ${fmtDisk(cp)}`);
+    }
+
     // ── Spyglass rollback ─────────────────────────────────────────
     log('  /spyglass rollback');
     const sgRb = await timedOp(bot, `/spyglass rollback p:${botName} t:30m -g`,
@@ -433,6 +480,21 @@ function printReport() {
             return `${op.tps.min.toFixed(1).padStart(4)}/${op.tps.avg.toFixed(1).padEnd(4)} (n=${op.tps.n.toString().padEnd(2)})`;
         };
         log(`${r.size.padEnd(5)} | ${fmt(r.sgRollback)} | ${fmt(r.sgUndo)} | ${fmt(r.cpRollback)} | ${fmt(r.cpRestore)}`);
+    }
+    log('');
+    log(`DISK FOOTPRINT of the seeded dataset (data + index where applicable):`);
+    log(`Size  | Blocks    | Spyglass · ${SG_BACKEND.padEnd(10)} | CoreProtect · ${CP_BACKEND}`);
+    log('------|-----------|--------------------------------|--------------------------------');
+    for (const r of results) {
+        const cell = (d) => {
+            if (!d || d.skipped) return 'n/a                           ';
+            const extra = d.compression_ratio ? ` ${d.compression_ratio}x` : '';
+            const idx = d.index_bytes ? ` +${fmtBytes(d.index_bytes)} idx` : '';
+            return `${fmtBytes(d.total_bytes)}${idx}${extra}`.padEnd(30);
+        };
+        const sg = r.disk ? r.disk[`spyglass-${SG_BACKEND}`] : null;
+        const cp = r.disk ? r.disk[`cp-${CP_BACKEND}`] : null;
+        log(`${r.size.padEnd(5)} | ${r.blocks.toLocaleString().padStart(9)} | ${cell(sg)} | ${cell(cp)}`);
     }
 }
 
