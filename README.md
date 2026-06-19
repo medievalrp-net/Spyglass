@@ -6,14 +6,17 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 ## Performance
 
-A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on both of their backends, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags). Each number is the warmed steady state over three runs of [`regression/bot/compare.js`](regression/bot/compare.js).
+A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on both of their backends, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags). Each number is a warmed run of [`regression/bot/compare.js`](regression/bot/compare.js) on a shared developer host — read the ordering as the signal, not the absolute milliseconds.
 
 | 2M-block rollback | Spyglass · ClickHouse | Spyglass · MongoDB | CoreProtect · SQLite | CoreProtect · MySQL |
 |---|---|---|---|---|
-| Rollback wall-clock | **~6 s** | ~19 s | ~11 s | ~15 s |
-| Undo / restore wall-clock | **~5 s** | ~21 s | ~10 s | ~65 s |
-| TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | 15 / 19 | 13 / 19 |
-| Worst single tick | ~60 ms | ~100 ms | ~350 ms | ~700 ms |
+| Rollback wall-clock | **~5 s** | ~14 s | ~10 s | ~12 s |
+| Undo / restore wall-clock | **~4 s** | ~18 s | ~9 s | ~210 s |
+| TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | 19 / 20 | 13 / 20 |
+| Worst single tick | ~50 ms | **~25 ms** | ~670 ms | ~270 ms |
+| On-disk footprint (data + index) | **115 MiB** | ~350 MiB | ~160 MiB | ~280 MiB |
+
+Read it by backend, not by row. **ClickHouse wins on raw speed and storage** — every wall-clock figure and a 54x compression ratio — and it is the backend to run on a large server. **MongoDB is the default and the smoothest**: it never drops below 20 TPS and its worst tick stays under 30 ms while CoreProtect spikes to 300–700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. What it does *not* win is rollback wall-clock — a row store read over the wire pays more to stream a million-row result set than ClickHouse's columnar scan or SQLite's in-process read, so even after a 2026-06 lean-read pass (rollback down ~30%, from ~19 s) it trails the embedded stores on that one axis. Pick ClickHouse for speed and disk, MongoDB for operational simplicity and tick stability.
 
 ## Features
 
