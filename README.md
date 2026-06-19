@@ -14,7 +14,7 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 | Undo / restore wall-clock | **~4 s** | ~18 s | ~9 s | ~210 s |
 | TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | 19 / 20 | 13 / 20 |
 | Worst single tick | ~50 ms | **~25 ms** | ~670 ms | ~270 ms |
-| On-disk footprint (data + index) | **115 MiB** | ~350 MiB | ~160 MiB | ~280 MiB |
+| On-disk footprint (data + index) | **~11 MiB** | ~245 MiB | ~160 MiB | ~180 MiB |
 
 Read it by backend, not by row. **ClickHouse wins on raw speed and storage** — every wall-clock figure and a 54x compression ratio — and it is the backend to run on a large server. **MongoDB is the default and the smoothest**: it never drops below 20 TPS and its worst tick stays under 30 ms while CoreProtect spikes to 300–700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. What it does *not* win is rollback wall-clock — a row store read over the wire pays more to stream a million-row result set than ClickHouse's columnar scan or SQLite's in-process read, so even after a 2026-06 lean-read pass (rollback down ~30%, from ~19 s) it trails the embedded stores on that one axis. Pick ClickHouse for speed and disk, MongoDB for operational simplicity and tick stability.
 
