@@ -20,8 +20,6 @@ A 2,000,376-block rollback, measured five ways: Spyglass on each of its three ba
 
 ## Features
 
-Spyglass and CoreProtect both log the world and roll it back. Where they part ways: performance under load, search depth, recovery, and what survives a crash.
-
 | | Spyglass | CoreProtect |
 |---|---|---|
 | Block, container, and entity logging | ✓ | ✓ |
