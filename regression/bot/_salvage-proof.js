@@ -121,9 +121,9 @@ const check = (name, ok, detail) => { results.push({ name, ok }); log(`  ${ok ? 
 
     log('── Verifying ──');
     // 1. CAPTURE + 2. PRECISION (ClickHouse salvage table)
-    const rowCount = await chQuery(`SELECT count() FROM spyglass.spyglass_salvage FINAL WHERE deleted = 0`);
-    check('CAPTURE: exactly one salvage row exists', rowCount === '1', `rows=${rowCount} (expect 1: victim only)`);
-    const types = await chQuery(`SELECT container_type FROM spyglass.spyglass_salvage FINAL WHERE deleted = 0`);
+    const rowCount = await chQuery(`SELECT count() FROM spyglass.spyglass_salvage FINAL WHERE deleted=0 AND operator_name='${BOT}'`);
+    check('CAPTURE: exactly one salvage row (the victim)', rowCount === '1', `rows=${rowCount} (expect 1)`);
+    const types = await chQuery(`SELECT container_type FROM spyglass.spyglass_salvage FINAL WHERE deleted=0 AND operator_name='${BOT}'`);
     check('CAPTURE: salvaged a CHEST', /CHEST/i.test(types), `container_type=${types}`);
 
     // 3. WORLD: victim restored to stone, survivor intact
@@ -133,29 +133,28 @@ const check = (name, ok, detail) => { results.push({ name, ok }); log(`  ${ok ? 
     check('WORLD: survivor chest intact', sBlock === 'chest', `survivor block=${sBlock}`);
 
     // 4. LISTING: /sg inventory text shows diamonds, not emeralds
-    const listing = await rcon('sg inventory');
-    const clean = listing.replace(/§./g, '');
-    check('LISTING: /sg inventory shows DIAMOND', /DIAMOND/i.test(clean), clean.replace(/\s+/g, ' ').slice(0, 160));
-    check('PRECISION: survivor EMERALD not salvaged', !/EMERALD/i.test(clean), 'emeralds absent from salvage');
+    const listing = (await rcon('sg inventory')).replace(/§./g, '');
+    check('LISTING: /sg inventory lists this rollback', listing.includes('by ' + BOT) && /DIAMOND/i.test(listing),
+        listing.replace(/\s+/g, ' ').slice(0, 200));
+    // Survivor chest sat in the SAME chunk but outside the grief; precision =
+    // exactly one container salvaged for this operator (the victim), not two.
+    check('PRECISION: same-chunk survivor not salvaged', rowCount === '1', `bot salvaged ${rowCount} (survivor excluded)`);
 
     // 5. EXTRACT: player opens the GUI and takes the diamonds
-    log('Stage 4: extract via the GUI…');
+    log('Stage 4: extract via the GUI (rollbacks -> chests -> items)…');
     let extracted = false;
+    const waitWin = ms => Promise.race([new Promise(r => bot.once('windowOpen', r)), sleep(ms).then(() => null)]);
     try {
-        const idxOpen = new Promise(r => bot.once('windowOpen', r));
         bot.chat('/sg inventory');
-        const idx = await Promise.race([idxOpen, sleep(8000).then(() => null)]);
-        if (idx) {
-            await sleep(800);
-            bot.clickWindow(0, 0, 0);                 // click the chest icon
-            const snapOpen = new Promise(r => bot.once('windowOpen', r));
-            const snap = await Promise.race([snapOpen, sleep(8000).then(() => null)]);
-            if (snap) {
-                await sleep(800);
-                try { bot.clickWindow(0, 0, 0); } catch { } // take slot 0
-                await sleep(400);
-                try { bot.clickWindow(1, 0, 0); } catch { } // take slot 1
-                await sleep(1200);
+        if (await waitWin(8000)) {                        // rollbacks level
+            await sleep(700); bot.clickWindow(0, 0, 0);   // open the rollback
+            if (await waitWin(8000)) {                    // chests level
+                await sleep(700); bot.clickWindow(0, 0, 0); // open the container
+                if (await waitWin(8000)) {                // items level
+                    await sleep(700);
+                    // each take re-renders the window; click slot 0 to drain
+                    for (let i = 0; i < 4; i++) { try { bot.clickWindow(0, 0, 0); } catch { } await sleep(900); }
+                }
             }
         }
         try { bot.closeWindow(bot.currentWindow); } catch { }
@@ -168,9 +167,9 @@ const check = (name, ok, detail) => { results.push({ name, ok }); log(`  ${ok ? 
     }
     await sleep(4000); // let withdraw + store update persist
 
-    const afterCount = await chQuery(`SELECT count() FROM spyglass.spyglass_salvage FINAL WHERE deleted = 0`);
-    check('EXTRACT: salvage snapshot emptied/removed after taking all', afterCount === '0', `rows=${afterCount} (expect 0)`);
-    const withdraws = await chQuery(`SELECT count() FROM spyglass.event_records WHERE event = 'salvage-withdraw'`);
+    const afterCount = await chQuery(`SELECT count() FROM spyglass.spyglass_salvage FINAL WHERE deleted=0 AND operator_name='${BOT}'`);
+    check('EXTRACT: snapshot emptied/removed after taking all', afterCount === '0', `rows=${afterCount} (expect 0)`);
+    const withdraws = await chQuery(`SELECT count() FROM spyglass.event_records WHERE event='salvage-withdraw' AND source_player_name='${BOT}'`);
     check('EXTRACT: salvage-withdraw event logged', Number(withdraws) >= 1, `count=${withdraws}`);
 
     // Summary
