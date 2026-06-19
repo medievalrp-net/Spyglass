@@ -145,7 +145,7 @@ class MongoRecordStoreIT {
                 "_id_",
                 "source.playerId_1_occurred_-1_id_-1",
                 "event_1_occurred_-1_id_-1",
-                "location.worldId_1_location.x_1_location.z_1_location.y_1_occurred_-1_id_-1",
+                "location.worldId_1_location.cx_1_location.cz_1_occurred_-1_id_-1",
                 "expiresAt_1");
     }
 
@@ -206,6 +206,63 @@ class MongoRecordStoreIT {
         org.bson.Document spec = rawClient.getDatabase("IT").listCollections()
                 .filter(com.mongodb.client.model.Filters.eq("name", "EventRecords")).first();
         assertThat(spec).isNotNull();
+    }
+
+    @Test
+    void regionQueryReturnsOnlyInRegionRecordsAndWritesChunkBuckets() {
+        Instant now = Instant.parse("2026-05-01T00:00:00Z");
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        BlockSnapshot stone = new BlockSnapshot(org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        store.save(List.of(
+                new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600), origin,
+                        source, new BlockLocation(WORLD, "world", 100, 64, 100), "t", "STONE", stone, air),
+                new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600), origin,
+                        source, new BlockLocation(WORLD, "world", 118, 64, 109), "t", "STONE", stone, air),
+                new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600), origin,
+                        source, new BlockLocation(WORLD, "world", 5000, 64, 5000), "t", "STONE", stone, air)));
+
+        // BlockLocationCodec wrote the chunk buckets cx = x>>4, cz = z>>4.
+        org.bson.BsonDocument stored = rawClient.getDatabase("IT")
+                .getCollection("EventRecords", org.bson.BsonDocument.class)
+                .find(new org.bson.Document("location.x", 100)).first();
+        assertThat(stored).isNotNull();
+        org.bson.BsonDocument loc = stored.getDocument("location");
+        assertThat(loc.getInt32("cx").getValue()).isEqualTo(100 >> 4);
+        assertThat(loc.getInt32("cz").getValue()).isEqualTo(100 >> 4);
+
+        // A box query (chunk bounds added by PredicateToBson seek the index,
+        // exact x/z bounds filter within) returns the two inside, not the far one.
+        QueryRequest region = new QueryRequest(List.of(
+                new QueryPredicate.Eq("location.worldId", WORLD),
+                new QueryPredicate.Range("location.x", 90, 120),
+                new QueryPredicate.Range("location.z", 90, 120)),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(region).records()).hasSize(2);
+    }
+
+    @Test
+    void backfillPopulatesChunkBucketsOnRecordsMissingThem() {
+        // A record written before cx/cz existed: raw insert with no chunk
+        // buckets. Negative x exercises floor-toward-negative-infinity.
+        com.mongodb.client.MongoCollection<org.bson.Document> coll =
+                rawClient.getDatabase("IT").getCollection("EventRecords");
+        coll.insertOne(new org.bson.Document("event", "break").append("location",
+                new org.bson.Document("x", -33).append("y", 64).append("z", 17)));
+
+        // Constructing a store runs the one-time backfill.
+        new MongoRecordStore(container.getReplicaSetUrl(), "IT", "EventRecords",
+                new IndexManager()).close();
+
+        org.bson.BsonDocument loc = rawClient.getDatabase("IT")
+                .getCollection("EventRecords", org.bson.BsonDocument.class)
+                .find(new org.bson.Document("location.x", -33)).first().getDocument("location");
+        // int32 (not double) so the chunk index is single-typed; floor semantics.
+        assertThat(loc.getInt32("cx").getValue()).isEqualTo(-33 >> 4); // floor(-33/16) = -3
+        assertThat(loc.getInt32("cz").getValue()).isEqualTo(17 >> 4);  // floor(17/16) = 1
     }
 
     @Test

@@ -11,6 +11,7 @@ import com.mongodb.client.model.CreateCollectionOptions;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
+import com.mongodb.client.result.UpdateResult;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
@@ -34,8 +36,10 @@ import net.medievalrp.spyglass.api.query.QueryResult;
 import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.util.BlockLocation;
+import org.bson.BsonArray;
 import org.bson.BsonDocument;
 import org.bson.BsonDocumentReader;
+import org.bson.BsonInt32;
 import org.bson.BsonString;
 import org.bson.UuidRepresentation;
 import org.bson.codecs.DecoderContext;
@@ -65,6 +69,8 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class MongoRecordStore implements RecordStore {
 
+    private static final Logger LOGGER = Logger.getLogger(MongoRecordStore.class.getName());
+
     private final PredicateToBson predicateToBson = new PredicateToBson();
     private final MongoClient client;
     private final MongoDatabase database;
@@ -75,6 +81,12 @@ public final class MongoRecordStore implements RecordStore {
     public MongoRecordStore(String uri, String databaseName, String collectionName,
                             IndexManager indexManager) {
         this.codecRegistry = CodecRegistries.fromRegistries(
+                // First, so it wins for BlockLocation over both the default
+                // registry's record support and RecordCodecProvider below — it
+                // adds the chunk-bucket (cx/cz) storage fields the location
+                // index seeks on. (It only claims BlockLocation; everything
+                // else falls through.)
+                CodecRegistries.fromProviders(BlockLocationCodec.provider()),
                 MongoClientSettings.getDefaultCodecRegistry(),
                 CodecRegistries.fromProviders(
                         new Jsr310CodecProvider(),
@@ -92,6 +104,7 @@ public final class MongoRecordStore implements RecordStore {
         ensureZstdCollection(database, collectionName);
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
         this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
+        backfillChunkBuckets(rawCollection);
         indexManager.ensureRecordIndexes(rawCollection);
     }
 
@@ -129,6 +142,40 @@ public final class MongoRecordStore implements RecordStore {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Backfill the chunk-bucket fields ({@code location.cx} / {@code cz}) on
+     * records that predate them, so the chunk-bucketed location index
+     * covers old data too. {@link BlockLocationCodec} writes these on every
+     * new record, so this is gated on {@code location.cx} being absent: a
+     * no-op (instant) on fresh collections, and self-healing if a prior run
+     * was interrupted. A 2M backfill measured ~15 s — a one-time cost paid
+     * only when upgrading an existing collection. The server-side
+     * {@code floor(coord / 16)} matches the codec's {@code coord >> 4} for
+     * negative coordinates as well.
+     */
+    private static void backfillChunkBuckets(MongoCollection<BsonDocument> collection) {
+        BsonDocument set = new BsonDocument()
+                .append(RecordFields.LOCATION_CX, chunkExpr(RecordFields.LOCATION_X))
+                .append(RecordFields.LOCATION_CZ, chunkExpr(RecordFields.LOCATION_Z));
+        UpdateResult result = collection.updateMany(
+                Filters.exists(RecordFields.LOCATION_CX, false),
+                List.of(new BsonDocument("$set", set)));
+        if (result.getModifiedCount() > 0) {
+            LOGGER.info(() -> "Backfilled chunk buckets on " + result.getModifiedCount()
+                    + " record(s) for the location index.");
+        }
+    }
+
+    private static BsonDocument chunkExpr(String coordField) {
+        // $toInt so the backfilled cx/cz are int32, matching the int32 the
+        // BlockLocationCodec writes ($divide/$floor would yield a double and
+        // split the index across two numeric types). $floor before $toInt
+        // keeps floor-toward-negative-infinity ($toInt alone truncates).
+        BsonDocument floored = new BsonDocument("$floor", new BsonDocument("$divide",
+                new BsonArray(List.of(new BsonString("$" + coordField), new BsonInt32(16)))));
+        return new BsonDocument("$toInt", floored);
     }
 
     public MongoDatabase database() {
