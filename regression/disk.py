@@ -101,7 +101,10 @@ def measure_sqlite(path):
 
 
 def measure_mysql(host, port, user, password, db):
-    sql = ("SELECT IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0) "
+    # table_rows is InnoDB's estimate (good enough to flag a non-pristine DB);
+    # co_block is CoreProtect's block-edit table, the bulk of a rollback set.
+    sql = ("SELECT IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0), "
+           "IFNULL(MAX(CASE WHEN table_name='co_block' THEN table_rows END),0) "
            f"FROM information_schema.tables WHERE table_schema = '{db}'")
     cmd = ["mysql", "-h", host, "-P", str(port), "-u", user, "-N", "-B", "-e", sql]
     if password:
@@ -109,11 +112,12 @@ def measure_mysql(host, port, user, password, db):
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip() or "mysql query failed")
-    data_len, index_len = (out.stdout.strip().split("\t") + ["0", "0"])[:2]
+    data_len, index_len, rows = (out.stdout.strip().split("\t") + ["0", "0", "0"])[:3]
     data_len = int(data_len or 0)
     index_len = int(index_len or 0)
     return {
         "backend": "cp-mysql",
+        "objects": int(rows or 0),
         "storage_bytes": data_len,
         "index_bytes": index_len,
         "total_bytes": data_len + index_len,
