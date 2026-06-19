@@ -1,4 +1,4 @@
-# Spyglass
+# Spyglass (Preview)
 
 Forensic logging and rollback for Paper 1.21.x. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
 
@@ -6,7 +6,7 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 ## Performance
 
-A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on both of their backends, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags). Each number is a warmed run of [`regression/bot/compare.js`](regression/bot/compare.js) on a shared developer host. Read the ordering as the signal, not the absolute milliseconds.
+A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on both of their backends, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags). 
 
 | 2M-block rollback | Spyglass · ClickHouse | Spyglass · MongoDB | CoreProtect · SQLite | CoreProtect · MySQL |
 |---|---|---|---|---|
@@ -16,7 +16,7 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 | Worst single tick | **~50 ms** | ~100 ms | ~670 ms | ~270 ms |
 | On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~160 MiB | ~180 MiB |
 
-Read it by backend, not by row. **ClickHouse wins outright on speed and storage** (the fastest wall-clock figures, a worst tick near 50 ms, and a 54x compression ratio), and it is the backend for the largest servers. **MongoDB is the default, and after a 2026-06 pass it now out-runs both CoreProtect backends.** The rollback read was paying for a blocking in-memory sort on every page; ending each rollback index with the same id the reader pages by made the scan index-ordered and removed it, which roughly halved the read and dropped a 2M rollback from ~14 s to ~7 s. MongoDB holds 20.0 TPS throughout where CoreProtect dips into the teens, keeps its worst tick near 100 ms against CoreProtect's 300-700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. Disk used to be its one weak axis, and two changes closed it. A zstd block compressor (vs the snappy default) cut the stored data by two thirds, from 136 MiB to 46. Then bucketing the location index by chunk coordinate (x and z shifted right by four) rather than raw block coordinate, which prefix-compresses far better because neighbours share a chunk, cut that index from ~96 MiB to ~22. Together they bring the footprint to ~145 MiB, under both CoreProtect backends; only ClickHouse, with its columnar 54x compression, is smaller. Pick ClickHouse for the lowest latency and smallest disk, MongoDB for a document store that now matches or beats CoreProtect on every axis.
+Read it by backend, not by row. **ClickHouse wins outright on speed and storage** (the fastest wall-clock figures, a worst tick near 50 ms, and a 54x compression ratio), and it is the backend for the largest servers. The rollback read was paying for a blocking in-memory sort on every page; ending each rollback index with the same id the reader pages by made the scan index-ordered and removed it, which roughly halved the read and dropped a 2M rollback from ~14 s to ~7 s. MongoDB holds 20.0 TPS throughout where CoreProtect dips into the teens, keeps its worst tick near 100 ms against CoreProtect's 300-700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. Disk used to be its one weak axis, and two changes closed it. A zstd block compressor (vs the snappy default) cut the stored data by two thirds, from 136 MiB to 46. Then bucketing the location index by chunk coordinate (x and z shifted right by four) rather than raw block coordinate, which prefix-compresses far better because neighbours share a chunk, cut that index from ~96 MiB to ~22. Together they bring the footprint to ~145 MiB, under both CoreProtect backends; only ClickHouse, with its columnar 54x compression, is smaller. Pick ClickHouse for the lowest latency and smallest disk, MongoDB for a document store that now matches or beats CoreProtect on every axis.
 
 ## Features
 
