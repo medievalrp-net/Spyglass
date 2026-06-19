@@ -39,9 +39,31 @@ public final class ItemSerialization {
      * Serialize a stack for storage. Extracts display name, lore, and
      * enchantments into indexable plain-text fields alongside the opaque
      * base64 blob so operators can query by
-     * {@code iname:} / {@code ilore:} / {@code ench:}.
+     * {@code iname:} / {@code ilore:} / {@code ench:}. The blob is the
+     * source of truth for faithful reconstruction (rollback, salvage), so
+     * this variant is for records that may be replayed.
      */
     public static StoredItem storedItem(int slot, ItemStack itemStack) {
+        return build(slot, itemStack, true);
+    }
+
+    /**
+     * Projection-only variant: identical to {@link #storedItem} but leaves
+     * {@code data} {@code null}, skipping the {@code serializeAsBytes()} +
+     * Base64 encode that dominates per-item allocation. Use for forensic
+     * records that are never rolled back or salvaged
+     * ({@code ItemPickupRecord}, {@code ItemDropRecord}) — nothing ever
+     * decodes their blob, so it is pure dead weight in memory and on disk
+     * (#103). {@code material}, {@code name}, {@code lore} and
+     * {@code enchants} are populated exactly as in {@link #storedItem}, so
+     * {@code imaterial:} / {@code iname:} / {@code ilore:} / {@code ench:} /
+     * {@code cu:} queries match unchanged.
+     */
+    public static StoredItem storedItemProjection(int slot, ItemStack itemStack) {
+        return build(slot, itemStack, false);
+    }
+
+    private static StoredItem build(int slot, ItemStack itemStack, boolean includeData) {
         if (itemStack == null || itemStack.getType() == Material.AIR) {
             return null;
         }
@@ -70,8 +92,8 @@ public final class ItemSerialization {
                 enchants = enchantStrings(meta.getEnchants());
             }
         }
-        return new StoredItem(slot, itemStack.getType().name(),
-                encode(itemStack), name, lore, enchants);
+        String data = includeData ? encode(itemStack) : null;
+        return new StoredItem(slot, itemStack.getType().name(), data, name, lore, enchants);
     }
 
     /**
