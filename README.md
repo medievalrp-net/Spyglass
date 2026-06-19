@@ -17,29 +17,22 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 
 ## Features
 
-How Spyglass compares to CoreProtect. CoreProtect is the mature option with the wider Minecraft-version range; Spyglass adds richer search, cross-server lookup, a rollback that runs off the main thread, and ClickHouse storage.
+Both cover the basics the same way: block, container, entity, sign, and item logging, an inspector wand, lookup, and rollback or restore by player, time, radius, and region. The table is only where they differ.
 
 | | Spyglass | CoreProtect |
 |---|---|---|
-| Block, container, entity, sign, and item logging | ✓ | ✓ |
-| Chat, command, session, and join-IP logging | ✓ | ✓ |
-| Explosion, fire, liquid, piston, and growth logging | ✓ | ✓ |
-| Player movement and teleport logging | ✓ | ✗ |
-| WorldEdit edit logging | ✓ | ✓ |
-| Inspector wand | ✓ | ✓ |
-| Lookup and search | ✓ | ✓ |
-| Rollback and restore by player, time, radius, region | ✓ | ✓ |
-| Search by item name, lore, or enchantment | ✓ | ✗ |
-| Plugin-extensible search (custom items and fields) | ✓ | ✗ |
-| Cross-server search through a proxy | ✓ | ✗ |
-| Undo your last operation | ✓ `/sg undo` | via `/co restore` |
-| Resume a rollback after a crash | ✓ | ✗ |
-| Rollback runs off the main thread (holds 20 TPS) | ✓ | ✗ |
-| Rollback footprint in the store | one synthesized row | re-logs every block |
-| Storage backends | MongoDB, ClickHouse | SQLite, MySQL |
-| Old-data pruning | automatic, by retention | manual `/co purge` |
-| Minecraft versions | 1.21.x | 1.7+ |
-| Maturity | Preview | production-proven |
+| Storage | MongoDB or ClickHouse | SQLite or MySQL |
+| Rollback execution | off the main thread, holds 20 TPS | on the main thread, TPS dips on large jobs |
+| Rollback footprint | one synthesized row per operation | re-logs every reverted block |
+| Undo | dedicated `/sg undo` stack, any depth | re-run the inverse with `/co restore` |
+| Interrupted rollback | resumes from a saved cursor | restart it by hand |
+| Item search | material, name, lore, or enchantment | material only |
+| Cross-server search | Velocity proxy companion | per-server only |
+| Plugin API | custom items and searchable fields | logging and lookup |
+| Movement and teleports | logged | not logged |
+| Minecraft versions | 1.21.x | 1.7 and up |
+
+Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already have a MySQL or SQLite setup and no Mongo or ClickHouse instance, CoreProtect drops in with no new database to stand up.
 
 ## Requirements
 
