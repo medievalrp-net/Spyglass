@@ -102,6 +102,13 @@ import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.storage.SynthesizingRecordStore;
+import net.medievalrp.spyglass.plugin.salvage.ClickHouseSalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.MongoSalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
+import net.medievalrp.spyglass.plugin.salvage.SalvageGui;
+import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
+import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
@@ -127,6 +134,7 @@ public final class SpyglassPlugin extends JavaPlugin {
     private java.util.concurrent.ExecutorService worldWriteExecutor;
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
+    private SalvageStore salvageStore;
     private Executor queryExecutor;
     private SpyglassConfig config;
     private WorldEditSubscriber worldEditSubscriber;
@@ -153,6 +161,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                             mongoStore.database(), mongoStore.codecRegistry());
                     toolStateStore = new MongoToolStateStore(
                             mongoStore.database(), getLogger());
+                    salvageStore = new MongoSalvageStore(
+                            mongoStore.database(), mongoStore.codecRegistry(), 30L);
                 }
                 case CLICKHOUSE -> {
                     SpyglassConfig.ClickHouse ch = config.database().clickhouse();
@@ -164,6 +174,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                             chStore.client(), ch.database());
                     toolStateStore = new ClickHouseToolStateStore(
                             chStore.client(), ch.database());
+                    salvageStore = new ClickHouseSalvageStore(
+                            chStore.client(), ch.database(), 30L);
                 }
             }
             if (config.storage().rolledAuditSynthesized()) {
@@ -384,6 +396,16 @@ public final class SpyglassPlugin extends JavaPlugin {
         // chunk during the async write phase — chunks pinned loaded
         // until each chunk's main-thread post-processing completes.
         engine.setChunkTicketHolder(this);
+        // Container salvage (#76): capture inventories a rollback would destroy
+        // so they can be recovered via /sg inventory. Wired only when the
+        // backend provides a salvage store (Mongo for now); the persist runs on
+        // the virtual-thread query executor, never the main thread.
+        if (salvageStore != null) {
+            engine.setSalvageHook(new SalvageCapturer(salvageStore, queryExecutor, getLogger()));
+            getLogger().info("Spyglass: container salvage capture enabled.");
+        } else {
+            getLogger().info("Spyglass: container salvage capture disabled for this backend.");
+        }
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
@@ -427,6 +449,30 @@ public final class SpyglassPlugin extends JavaPlugin {
         TeleportService teleportService = new TeleportService();
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
 
+        // Container salvage GUI + command (#76). The withdraw logger records a
+        // salvage-withdraw event (reusing ContainerWithdrawRecord) so every
+        // recovery is auditable; the GUI persists off-main on the query pool.
+        SalvageWithdrawLogger salvageWithdrawLogger = (player, snap, taken, amount) -> {
+            net.medievalrp.spyglass.api.util.BlockLocation salvageLoc =
+                    new net.medievalrp.spyglass.api.util.BlockLocation(
+                            snap.worldId(), snap.worldName(), snap.x(), snap.y(), snap.z());
+            net.medievalrp.spyglass.api.event.RecordContext salvageCtx =
+                    support.playerContext(player, salvageLoc);
+            net.medievalrp.spyglass.api.event.StoredItem salvageStored =
+                    net.medievalrp.spyglass.plugin.util.ItemSerialization.storedItem(0, taken);
+            recorder.record(net.medievalrp.spyglass.api.event.ContainerWithdrawRecord.of(
+                    salvageCtx, "salvage-withdraw", taken.getType().name(),
+                    snap.containerType(), 0, amount, salvageStored, null));
+        };
+        SalvageGui salvageGui = salvageStore == null ? null
+                : new SalvageGui(salvageStore, queryExecutor, salvageWithdrawLogger,
+                        config.limits().searchResult(), getLogger());
+        if (salvageGui != null) {
+            getServer().getPluginManager().registerEvents(salvageGui, this);
+        }
+        SalvageService salvageService = new SalvageService(
+                salvageStore, salvageGui, config.limits().searchResult());
+
         SpyglassCommands commands = new SpyglassCommands(
                 this,
                 apiImpl,
@@ -438,6 +484,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 pageCache,
                 toolService,
                 teleportService,
+                salvageService,
                 suggestions);
         commands.register();
 
