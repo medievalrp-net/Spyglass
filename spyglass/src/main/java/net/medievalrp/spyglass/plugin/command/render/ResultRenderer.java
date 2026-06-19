@@ -51,13 +51,19 @@ public final class ResultRenderer {
      *  lacks {@code spyglass.search.ip} (#48). */
     public static final String IP_HIDDEN = "(ip hidden)";
 
-    public Component renderAggregation(QueryResult.RecordAggregation aggregation, boolean showIp) {
+    public Component renderAggregation(QueryResult.RecordAggregation aggregation,
+                                       java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                       boolean showIp) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
+        java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
+                ? java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class)
+                : flags;
         // Aggregations span multiple locations; `-ex` location-append is
         // skipped because any one sample.location() would be misleading.
-        return line(sample, count, true, false, java.util.EnumSet.noneOf(
-                net.medievalrp.spyglass.api.query.Flag.class), showIp);
+        // The flags ride through so the drill-down click command can
+        // carry the parent search's scope (notably -g) forward.
+        return line(sample, count, true, false, safe, showIp);
     }
 
     public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
@@ -125,10 +131,19 @@ public final class ResultRenderer {
         if (grouped) {
             // Grouped result: click drills down into the per-player,
             // per-event stream. Matches v1's buildDetailCommand shape.
-            builder.clickEvent(ClickEvent.runCommand("/spyglass search "
+            // Carry -g forward when the parent search was global: the
+            // drill-down command has no location predicate, so without
+            // -g the re-parse re-applies the default radius around the
+            // operator's *current* position and finds nothing — the
+            // grouped rows were gathered globally, not near the operator.
+            String drill = "/spyglass search "
                     + "a:" + record.event()
                     + " p:" + record.sourceName()
-                    + " -ng"));
+                    + " -ng";
+            if (flags.contains(net.medievalrp.spyglass.api.query.Flag.GLOBAL)) {
+                drill += " -g";
+            }
+            builder.clickEvent(ClickEvent.runCommand(drill));
         } else if (record.location() != null) {
             // Single record: click teleports the operator to the scene.
             builder.clickEvent(teleportClick(record.location()));

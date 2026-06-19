@@ -67,7 +67,7 @@ class SearchServiceTest {
         TestFixture() {
             when(renderer.renderSingle(any(EventRecord.class), any(), anyBoolean()))
                     .thenReturn(Component.text("rendered"));
-            when(renderer.renderAggregation(any(), anyBoolean()))
+            when(renderer.renderAggregation(any(), any(), anyBoolean()))
                     .thenReturn(Component.text("rendered-agg"));
         }
     }
