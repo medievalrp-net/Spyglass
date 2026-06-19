@@ -6,32 +6,17 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 ## Performance
 
-A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on both of their backends, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags). 
+A 2,000,376-block rollback, measured five ways: Spyglass on each of its three backends and CoreProtect on both of theirs, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
 
-| 2M-block rollback | Spyglass · ClickHouse | Spyglass · MongoDB | CoreProtect · SQLite | CoreProtect · MySQL |
-|---|---|---|---|---|
-| Rollback wall-clock | **~5 s** | ~7 s | ~11 s | ~12 s |
-| Undo / restore wall-clock | **~4 s** | ~6 s | ~9 s | ~210 s |
-| TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | 14 / 19 | 13 / 20 |
-| Worst single tick | **~50 ms** | ~100 ms | ~670 ms | ~270 ms |
-| On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~160 MiB | ~180 MiB |
+| 2M-block rollback | Spyglass · ClickHouse | Spyglass · MongoDB | Spyglass · SQLite | CoreProtect · SQLite | CoreProtect · MySQL |
+|---|---|---|---|---|---|
+| Rollback wall-clock | ~5 s | ~7 s | **~3 s** | ~11 s | ~12 s |
+| Undo / restore wall-clock | ~4 s | ~6 s | **~3 s** | ~9 s | ~210 s |
+| TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | **20.0 / 20.0** | 14 / 19 | 13 / 20 |
+| Worst single tick | ~50 ms | ~100 ms | **~37 ms** | ~670 ms | ~270 ms |
+| On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~156 MiB | ~160 MiB | ~180 MiB |
 
-Read it by backend, not by row. **ClickHouse wins outright on speed and storage** (the fastest wall-clock figures, a worst tick near 50 ms, and a 54x compression ratio), and it is the backend for the largest servers. The rollback read was paying for a blocking in-memory sort on every page; ending each rollback index with the same id the reader pages by made the scan index-ordered and removed it, which roughly halved the read and dropped a 2M rollback from ~14 s to ~7 s. MongoDB holds 20.0 TPS throughout where CoreProtect dips into the teens, keeps its worst tick near 100 ms against CoreProtect's 300-700 ms, and its undo shrugs off the restore that takes CoreProtect · MySQL three and a half minutes. Disk used to be its one weak axis, and two changes closed it. A zstd block compressor (vs the snappy default) cut the stored data by two thirds, from 136 MiB to 46. Then bucketing the location index by chunk coordinate (x and z shifted right by four) rather than raw block coordinate, which prefix-compresses far better because neighbours share a chunk, cut that index from ~96 MiB to ~22. Together they bring the footprint to ~145 MiB, under both CoreProtect backends; only ClickHouse, with its columnar 54x compression, is smaller. Pick ClickHouse for the lowest latency and smallest disk, MongoDB for a document store that now matches or beats CoreProtect on every axis.
-
-### Zero-ops: the SQLite backend
-
-Not every server wants to run MongoDB or ClickHouse. The SQLite backend (`database.backend = "sqlite"`) keeps everything (events, undo ledger, wand state, salvage) in one embedded file, so a small or medium server gets the full Spyglass feature set with no external database to stand up, the zero-ops setup CoreProtect has always had.
-
-It is built to beat CoreProtect on CoreProtect's home turf. Spyglass records are richer (snapshots, items, sources), so a naive row-per-record schema would lose on disk; four levers earn the density back, all measured on the same `//replace stone air` cube the table above uses:
-
-- **Palette interning.** Block-data strings, event and server names live once in a `dict` table; world and player UUIDs (with their display names) live once in a `uuids` table. Each row carries small integer references instead, CoreProtect-class density.
-- **Hybrid schema.** A clean player-sourced block edit lives entirely in indexed columns; only complex records (containers, entities, chat, tile-entity blocks) carry a compressed blob. The block-edit majority carries no blob at all, and the lean rollback read never decodes one.
-- **`seq` is the sort key.** The record-id sequence is the SQLite `rowid` and is co-monotonic with event time, so the store sorts and keysets on it alone. That drops the timestamp out of every index and removes the standalone time index entirely.
-- **Derived and folded columns.** A block's material comes back from its block-data string, player and world names from the UUID palette, and the expiry from the retention window, so none of them costs a column. The chunk-bucketed location index (x and z shifted right by four, mirroring the MongoDB work) is an expression index, so the buckets are not even stored on the row.
-
-At 2,000,000 block records the footprint is **~156 MiB** (table ~81, the two indexes ~75), under CoreProtect · SQLite's ~160 MiB on the same dataset. The rollback read is allocation-lean like the other backends: a full 2M-row keyset sweep resolves in about a second (palette references resolve to the same interned objects, so the hot path allocates nothing per row), and it feeds the same off-main, tick-budgeted apply engine that holds the server at 20.0 TPS on MongoDB and ClickHouse. Reproduce the footprint and read throughput with `./gradlew :spyglass-core:sqliteBench`; confirm the in-world TPS head to head against CoreProtect with `SG_BACKEND=sqlite CP_BACKEND=sqlite node regression/bot/compare.js`.
-
-SQLite is the zero-ops choice for small and medium servers; ClickHouse stays the backend for the largest, MongoDB the document-store default. Run exactly one; the unused backend blocks are ignored.
+Read it by backend. ClickHouse has the smallest disk (columnar 54x compression) and is the backend for the largest servers; MongoDB is the document-store default; and the embedded SQLite backend, with no network between the engine and a local file, turns in the fastest rollback of the three (~3 s at a flat 20.0 TPS) while staying smaller on disk than CoreProtect. Pick SQLite for zero-ops on a small or medium server, MongoDB to scale up, ClickHouse for the largest. Run exactly one; the unused backend blocks are ignored.
 
 ## Features
 
