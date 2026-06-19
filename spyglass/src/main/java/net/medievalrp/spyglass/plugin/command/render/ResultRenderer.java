@@ -29,6 +29,7 @@ import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.QuitRecord;
 import net.medievalrp.spyglass.api.event.RollbackOpRecord;
 import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.event.TeleportRecord;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.query.QueryResult;
@@ -272,6 +273,10 @@ public final class ResultRenderer {
         // Plugin-supplied extension fields (e.g. a chat channel) get their own
         // hover line, so they're visible even with no DisplayRenderer registered.
         record.extensions().forEach((key, value) -> lines.add(kv(capitalizeKey(key), value)));
+        // Custom item detail (name / lore / enchants) for the item this record
+        // is about — lets an operator tell one IRON_HORSE_ARMOR apart from the
+        // next. Vanilla items contribute nothing.
+        appendItemDetail(lines, record);
         // Append extra hover lines from a registered DisplayRenderer, if any.
         if (api != null) {
             api.displayRenderer(record.event()).ifPresent(renderer -> {
@@ -294,6 +299,64 @@ public final class ResultRenderer {
 
     private String verb(EventRecord record) {
         return config.pastTense(record.event());
+    }
+
+    /** Hover lore lines are capped so a heavily-flavored RP item can't
+     *  produce a screen-filling tooltip. */
+    private static final int MAX_LORE_LINES = 12;
+
+    /**
+     * The item a record is "about", for hover detail: the deposited item
+     * for a deposit, the withdrawn item for a withdraw, the dropped /
+     * picked-up item otherwise. {@code null} for records carrying no item.
+     */
+    private static StoredItem subjectItem(EventRecord record) {
+        return switch (record) {
+            case ContainerDepositRecord deposit ->
+                    deposit.afterItem() != null ? deposit.afterItem() : deposit.beforeItem();
+            case ContainerWithdrawRecord withdraw ->
+                    withdraw.beforeItem() != null ? withdraw.beforeItem() : withdraw.afterItem();
+            case ItemDropRecord drop -> drop.item();
+            case ItemPickupRecord pickup -> pickup.item();
+            default -> null;
+        };
+    }
+
+    /**
+     * Append "Item Name" / "Enchants" / "Lore" hover lines for the record's
+     * subject item when it carries custom metadata. Plain-text projections
+     * only (colors were stripped at record time); a vanilla item with no
+     * name, lore, or enchants adds nothing.
+     */
+    private static void appendItemDetail(List<Component> lines, EventRecord record) {
+        StoredItem item = subjectItem(record);
+        if (item == null) {
+            return;
+        }
+        boolean hasName = item.name() != null && !item.name().isBlank();
+        boolean hasLore = !item.lore().isEmpty();
+        boolean hasEnchants = !item.enchants().isEmpty();
+        if (!hasName && !hasLore && !hasEnchants) {
+            return;
+        }
+        if (hasName) {
+            lines.add(kv("Item Name", item.name()));
+        }
+        if (hasEnchants) {
+            lines.add(kv("Enchants", String.join(", ", item.enchants())));
+        }
+        if (hasLore) {
+            lines.add(Component.text("Lore:", NamedTextColor.GRAY));
+            List<String> lore = item.lore();
+            int shown = Math.min(lore.size(), MAX_LORE_LINES);
+            for (int index = 0; index < shown; index++) {
+                lines.add(Component.text("  " + lore.get(index), NamedTextColor.GRAY));
+            }
+            if (lore.size() > MAX_LORE_LINES) {
+                lines.add(Component.text("  … (+" + (lore.size() - MAX_LORE_LINES) + " more)",
+                        NamedTextColor.DARK_GRAY));
+            }
+        }
     }
 
     /**

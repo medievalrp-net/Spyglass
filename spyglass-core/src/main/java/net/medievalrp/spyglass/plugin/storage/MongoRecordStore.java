@@ -457,12 +457,12 @@ public final class MongoRecordStore implements RecordStore {
         return runQuery(request, SUMMARY_PROJECTION);
     }
 
+    // Drops only the two bulky BlockSnapshot payloads (the wire/allocation
+    // hot-spot on large pages). The much smaller item blobs are kept so the
+    // search hover can show an item's custom name / lore / enchants.
     private static final Bson SUMMARY_PROJECTION = Projections.exclude(
             RecordFields.ORIGINAL_BLOCK,
-            RecordFields.NEW_BLOCK,
-            RecordFields.BEFORE_ITEM,
-            RecordFields.AFTER_ITEM,
-            RecordFields.ITEM);
+            RecordFields.NEW_BLOCK);
 
     private QueryResult runQuery(QueryRequest request, Bson projection) {
         Bson baseFilter = buildFilter(request);

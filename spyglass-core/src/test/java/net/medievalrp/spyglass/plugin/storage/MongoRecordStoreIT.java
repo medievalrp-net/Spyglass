@@ -367,6 +367,34 @@ class MongoRecordStoreIT {
         assertThat(store.query(missing).records()).isEmpty();
     }
 
+    @Test
+    void summaryQueryRetainsItemProjectionsForHover() {
+        // The display path (querySummary) drops the bulky BlockSnapshot
+        // payloads but must keep the item so the search hover can show its
+        // custom name / lore / enchants — even with no item predicate.
+        Instant now = Instant.now();
+        BlockLocation loc = new BlockLocation(WORLD, "world", 5, 64, 5);
+        StoredItem stormCaller = new StoredItem(
+                0, "IRON_HORSE_ARMOR", null,
+                "Storm Caller",
+                List.of("Forged in the primordial deep"),
+                List.of("protection=4"));
+        store.save(List.of(new ContainerDepositRecord(
+                UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                loc, "test", "IRON_HORSE_ARMOR", "CHEST", 0, 1, null, stormCaller)));
+
+        QueryRequest q = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "deposit")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        ContainerDepositRecord deposit =
+                (ContainerDepositRecord) store.querySummary(q).records().get(0);
+        assertThat(deposit.afterItem()).isNotNull();
+        assertThat(deposit.afterItem().name()).isEqualTo("Storm Caller");
+        assertThat(deposit.afterItem().lore()).contains("Forged in the primordial deep");
+        assertThat(deposit.afterItem().enchants()).contains("protection=4");
+    }
+
     private static QueryPredicate anyItemField(String subField, String raw) {
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
                 java.util.regex.Pattern.quote(raw),
