@@ -258,6 +258,83 @@ class ResultRendererTest {
         assertThat(command.endsWith("-g")).isFalse();
     }
 
+    private static net.medievalrp.spyglass.api.event.ContainerDepositRecord depositRecord(
+            net.medievalrp.spyglass.api.event.StoredItem afterItem) {
+        Instant now = Instant.now();
+        return new net.medievalrp.spyglass.api.event.ContainerDepositRecord(
+                UUID.randomUUID(), "deposit",
+                now, now.plusSeconds(60),
+                Origin.player(),
+                Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 10, 64, 20),
+                "test",
+                "IRON_HORSE_ARMOR", "CHEST", 0, 1,
+                null, afterItem);
+    }
+
+    @Test
+    void hoverShowsCustomItemNameLoreAndEnchants() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("deposit")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("deposit", "deposited"));
+
+        net.medievalrp.spyglass.api.event.StoredItem item =
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "IRON_HORSE_ARMOR", null,
+                        "Storm Caller",
+                        List.of("Forged in the primordial deep", "+10 barding"),
+                        List.of("protection=4", "unbreaking=3"));
+
+        String hover = hoverPlain(renderer.renderSingle(
+                depositRecord(item), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(hover).contains("Storm Caller");
+        assertThat(hover).contains("primordial deep");
+        assertThat(hover).contains("protection=4").contains("unbreaking=3");
+    }
+
+    @Test
+    void hoverOmitsItemDetailForVanillaItem() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("deposit")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("deposit", "deposited"));
+
+        // No custom name, no lore, no enchants -> no item-detail lines.
+        net.medievalrp.spyglass.api.event.StoredItem vanilla =
+                new net.medievalrp.spyglass.api.event.StoredItem(0, "IRON_HORSE_ARMOR", null);
+
+        String hover = hoverPlain(renderer.renderSingle(
+                depositRecord(vanilla), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(hover)
+                .doesNotContain("Item Name")
+                .doesNotContain("Enchants")
+                .doesNotContain("Lore");
+    }
+
+    @Test
+    void hoverCapsLongLore() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("deposit")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("deposit", "deposited"));
+
+        List<String> lore = new java.util.ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            lore.add("lore line " + i);
+        }
+        net.medievalrp.spyglass.api.event.StoredItem item =
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "IRON_HORSE_ARMOR", null, null, lore, List.of());
+
+        String hover = hoverPlain(renderer.renderSingle(
+                depositRecord(item), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(hover).contains("lore line 0").contains("lore line 11");
+        // 12-line cap: the 13th line (index 12) is rolled into the "+N more".
+        assertThat(hover).doesNotContain("lore line 12");
+        assertThat(hover).contains("(+8 more)");
+    }
+
     private static String findRunCommand(Component component) {
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null
