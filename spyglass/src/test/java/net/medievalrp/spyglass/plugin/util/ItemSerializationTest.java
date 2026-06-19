@@ -29,6 +29,7 @@ class ItemSerializationTest {
         when(stack.serializeAsBytes()).thenReturn(new byte[]{1, 2, 3});
 
         ItemMeta meta = mock(ItemMeta.class);
+        when(stack.hasItemMeta()).thenReturn(true);
         when(stack.getItemMeta()).thenReturn(meta);
         when(meta.hasDisplayName()).thenReturn(true);
         when(meta.displayName()).thenReturn(Component.text("Excaliblur"));
@@ -82,6 +83,7 @@ class ItemSerializationTest {
         // never touch it. (If it did, the unstubbed mock returns null and
         // Base64 encode would NPE — a second guard beyond the verify below.)
         ItemMeta meta = mock(ItemMeta.class);
+        when(stack.hasItemMeta()).thenReturn(true);
         when(stack.getItemMeta()).thenReturn(meta);
         when(meta.hasDisplayName()).thenReturn(true);
         when(meta.displayName()).thenReturn(Component.text("Excaliblur"));
@@ -126,5 +128,25 @@ class ItemSerializationTest {
         assertThat(item.lore()).isEmpty();
         assertThat(item.enchants()).isEmpty();
         verify(stack, never()).serializeAsBytes();
+    }
+
+    @Test
+    void skipsGetItemMetaWhenStackHasNoMeta() {
+        // #98 micro-opt: getItemMeta() allocates a fresh meta snapshot even
+        // for a plain item, so it must be skipped when hasItemMeta() is
+        // false. Output is unchanged (no name/lore/enchants).
+        ItemStack stack = mock(ItemStack.class);
+        when(stack.getType()).thenReturn(Material.STONE);
+        when(stack.serializeAsBytes()).thenReturn(new byte[]{0});
+        when(stack.hasItemMeta()).thenReturn(false);
+
+        StoredItem item = ItemSerialization.storedItem(0, stack);
+
+        assertThat(item).isNotNull();
+        assertThat(item.material()).isEqualTo("STONE");
+        assertThat(item.name()).isNull();
+        assertThat(item.lore()).isEmpty();
+        assertThat(item.enchants()).isEmpty();
+        verify(stack, never()).getItemMeta();
     }
 }
