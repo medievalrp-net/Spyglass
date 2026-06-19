@@ -27,26 +27,26 @@ Spyglass and CoreProtect both log the world and roll it back. Where they part wa
 | Block, container, and entity logging | ✓ | ✓ |
 | Chat, command, session, and IP logging | ✓ | ✓ |
 | Explosions, fire, liquids, and growth | ✓ | ✓ |
-| Combat hits, shots, and kills | ✓ | kills only |
-| Movement and teleports | ✓ | not logged |
+| Combat damage logging (hits and shots) | ✓ |  |
+| Movement and teleport logging | ✓ |  |
 | WorldEdit capture | ✓ | ✓ |
-| Password redaction in command logs | ✓ | logs verbatim |
+| Password redaction in command logs | ✓ |  |
 | Inspector wand and lookup | ✓ | ✓ |
-| Item search by name, lore, or enchantment | ✓ | material only |
-| Cross-server search | ✓ Velocity proxy | per server |
-| Extension API (events, query keys, display, rollback hooks) | ✓ | logging and lookup |
+| Item search by name, lore, or enchantment | ✓ |  |
+| Cross-server search | ✓ |  |
+| Extension API (custom events, keys, display) | ✓ |  |
 | Rollback and restore by player, time, or region | ✓ | ✓ |
-| Recover items a rollback destroyed | ✓ `/sg inventory` | not available |
-| Undo any operation, any size | ✓ `/sg undo` | rerun the inverse |
-| Crash-resume an interrupted rollback | ✓ | restart by hand |
-| No events lost on a crash | ✓ optional WAL | in-memory queue |
-| Preview a rollback before applying | lookup first | ✓ `#preview` |
-| Rollback execution | off the main thread | on the main thread |
+| Recover items a rollback destroyed | ✓ |  |
+| One-command undo, any size | ✓ |  |
+| Crash-resume an interrupted rollback | ✓ |  |
+| No events lost on a crash | ✓ |  |
+| Rollback adds no new log rows | ✓ |  |
+| Preview a rollback before applying |  | ✓ |
+| Rollback runs off the main thread | ✓ |  |
 | TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
 | Worst single tick | **~60 ms** | up to ~900 ms |
-| Rollback footprint | one row per operation | re-logs every block |
+| Automatic data pruning | ✓ |  |
 | Storage engines | MongoDB, ClickHouse | SQLite, MySQL |
-| Old-data pruning | automatic, by retention | manual `/co purge` |
 | Minecraft versions | 1.21.x | 1.7+ |
 
 Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already run SQLite or MySQL and nothing else, CoreProtect installs with no new database to stand up.
