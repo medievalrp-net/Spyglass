@@ -77,6 +77,30 @@ public final class ClickHouseSalvageStore implements SalvageStore {
     }
 
     @Override
+    public List<RollbackGroup> listRollbacks(int limit) {
+        List<RollbackGroup> out = new ArrayList<>();
+        for (GenericRecord r : client.queryAll(
+                "SELECT rollback_op_id, count() AS c, any(operator_name) AS op, "
+                        + "max(captured_at) AS latest FROM " + table + " FINAL WHERE deleted = 0 "
+                        + "GROUP BY rollback_op_id ORDER BY latest DESC LIMIT " + Math.max(1, limit))) {
+            out.add(new RollbackGroup(r.getUUID("rollback_op_id"), (int) r.getLong("c"),
+                    r.getString("op"), r.getInstant("latest")));
+        }
+        return out;
+    }
+
+    @Override
+    public List<SalvageSnapshot> listByRollback(UUID rollbackId, int limit) {
+        List<SalvageSnapshot> out = new ArrayList<>();
+        for (GenericRecord r : client.queryAll(selectColumns()
+                + " FROM " + table + " FINAL WHERE deleted = 0 AND rollback_op_id = toUUID('"
+                + rollbackId + "') ORDER BY captured_at DESC LIMIT " + Math.max(1, limit))) {
+            out.add(fromRow(r));
+        }
+        return out;
+    }
+
+    @Override
     public Optional<SalvageSnapshot> get(UUID id) {
         List<GenericRecord> rows = client.queryAll(selectColumns()
                 + " FROM " + table + " FINAL WHERE deleted = 0 AND id = toUUID('" + id + "') LIMIT 1");

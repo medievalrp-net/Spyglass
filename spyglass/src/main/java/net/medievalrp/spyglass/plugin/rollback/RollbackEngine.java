@@ -102,10 +102,10 @@ public final class RollbackEngine {
     // Marks the start of one rollback so salvaged containers are attributed to
     // the operator and the capturer's per-run dedup is reset. No-op without a
     // hook, so unit tests and salvage-disabled backends are unaffected.
-    public void salvageBegin(String operatorName) {
+    public void salvageBegin(String operatorName, java.util.UUID rollbackId) {
         SalvageHook hook = salvageHook;
         if (hook != null) {
-            hook.begin(operatorName);
+            hook.begin(operatorName, rollbackId);
         }
     }
 

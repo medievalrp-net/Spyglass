@@ -2,6 +2,8 @@ package net.medievalrp.spyglass.plugin.salvage;
 
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Accumulators;
+import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
@@ -49,6 +51,31 @@ public final class MongoSalvageStore implements SalvageStore {
     public List<SalvageSnapshot> list(int limit) {
         List<SalvageSnapshot> out = new ArrayList<>();
         collection.find()
+                .sort(Sorts.descending("capturedAt"))
+                .limit(Math.max(1, limit))
+                .into(out);
+        return out;
+    }
+
+    @Override
+    public List<RollbackGroup> listRollbacks(int limit) {
+        List<RollbackGroup> out = new ArrayList<>();
+        collection.aggregate(List.of(
+                        Aggregates.group("$rollbackOpId",
+                                Accumulators.sum("containerCount", 1),
+                                Accumulators.first("operatorName", "$operatorName"),
+                                Accumulators.max("latest", "$capturedAt")),
+                        Aggregates.sort(Sorts.descending("latest")),
+                        Aggregates.limit(Math.max(1, limit))),
+                        RollbackGroup.class)
+                .into(out);
+        return out;
+    }
+
+    @Override
+    public List<SalvageSnapshot> listByRollback(UUID rollbackId, int limit) {
+        List<SalvageSnapshot> out = new ArrayList<>();
+        collection.find(Filters.eq("rollbackOpId", rollbackId))
                 .sort(Sorts.descending("capturedAt"))
                 .limit(Math.max(1, limit))
                 .into(out);

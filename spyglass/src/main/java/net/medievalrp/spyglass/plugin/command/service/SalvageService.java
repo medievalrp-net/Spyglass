@@ -33,7 +33,7 @@ public final class SalvageService {
             return;
         }
         if (sender instanceof Player player) {
-            gui.openIndex(player);
+            gui.openRollbacks(player);
             return;
         }
         List<SalvageSnapshot> snaps = store.list(listLimit);
