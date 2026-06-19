@@ -218,6 +218,46 @@ class ResultRendererTest {
                 .startsWith("/spyglass tele " + WORLD_ID);
     }
 
+    @Test
+    void groupedResultCarriesGlobalFlagIntoDrillDownWhenSearchWasGlobal() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderAggregation(
+                new net.medievalrp.spyglass.api.query.QueryResult.RecordAggregation(useRecord(), 4),
+                EnumSet.of(Flag.GLOBAL), true);
+
+        // Without -g the drill-down re-applies the default radius around the
+        // operator's current position and finds nothing — the rows were
+        // gathered globally. The expand click must carry -g forward.
+        assertThat(findRunCommand(rendered))
+                .as("global grouped drill-down must keep -g")
+                .startsWith("/spyglass search ")
+                .contains("a:sculk")
+                .contains("p:Alice")
+                .contains("-ng")
+                .contains("-g");
+    }
+
+    @Test
+    void groupedResultOmitsGlobalFlagWhenSearchWasNotGlobal() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderAggregation(
+                new net.medievalrp.spyglass.api.query.QueryResult.RecordAggregation(useRecord(), 4),
+                EnumSet.noneOf(Flag.class), true);
+
+        // A radius-scoped grouped search keeps its drill-down radius-scoped:
+        // the trailing token is -ng, with no -g appended.
+        String command = findRunCommand(rendered);
+        assertThat(command).endsWith("-ng");
+        assertThat(command).doesNotContain("-g ");
+        assertThat(command.endsWith("-g")).isFalse();
+    }
+
     private static String findRunCommand(Component component) {
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null

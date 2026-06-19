@@ -105,7 +105,8 @@ public final class SearchService {
         IntFunction<Component> lines;
         if (grouping) {
             List<QueryResult.RecordAggregation> aggregations = result.aggregations();
-            lines = index -> renderer.renderAggregation(aggregations.get(index), showIp);
+            var flags = request.flags();
+            lines = index -> renderer.renderAggregation(aggregations.get(index), flags, showIp);
         } else {
             List<EventRecord> records = result.records();
             var flags = request.flags();
