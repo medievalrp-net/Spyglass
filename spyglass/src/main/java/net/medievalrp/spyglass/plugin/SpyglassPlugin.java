@@ -92,6 +92,7 @@ import net.medievalrp.spyglass.plugin.listener.player.JoinListener;
 import net.medievalrp.spyglass.plugin.listener.player.QuitListener;
 import net.medievalrp.spyglass.plugin.listener.player.TeleportListener;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
+import net.medievalrp.spyglass.plugin.pipeline.RecordCommittedPublisher;
 import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
@@ -213,9 +214,13 @@ public final class SpyglassPlugin extends JavaPlugin {
         // Publish RecordCommittedEvent to Bukkit listeners on every
         // intake. Done via a hook (rather than a direct Bukkit call
         // inside AsyncRecorder) so the recorder stays unit-testable
-        // headless.
-        recorder.onCommitted(record ->
-                Bukkit.getPluginManager().callEvent(new RecordCommittedEvent(record)));
+        // headless. The publisher skips the allocation + dispatch
+        // entirely when nothing is listening — the hook runs on the
+        // recording (main) thread, so an unconsumed dispatch is pure
+        // per-record waste on the ingest hot path of every event type.
+        recorder.onCommitted(new RecordCommittedPublisher(
+                () -> RecordCommittedEvent.getHandlerList().getRegisteredListeners().length,
+                record -> Bukkit.getPluginManager().callEvent(new RecordCommittedEvent(record))));
 
         // Replay any WAL files left from a prior crash before the
         // listeners come online, so recovered records land in the DB
