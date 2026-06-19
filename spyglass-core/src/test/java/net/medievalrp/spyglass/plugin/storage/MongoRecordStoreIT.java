@@ -266,6 +266,24 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void readOnlyStoreSkipsBackfill() {
+        // performSetup=false (the read-only Velocity companion) must not
+        // rewrite records on startup. A doc without cx/cz stays untouched.
+        com.mongodb.client.MongoCollection<org.bson.Document> coll =
+                rawClient.getDatabase("IT").getCollection("EventRecords");
+        coll.insertOne(new org.bson.Document("event", "break").append("location",
+                new org.bson.Document("x", 256).append("y", 64).append("z", 256)));
+
+        new MongoRecordStore(container.getReplicaSetUrl(), "IT", "EventRecords",
+                new IndexManager(), false).close();
+
+        org.bson.BsonDocument loc = rawClient.getDatabase("IT")
+                .getCollection("EventRecords", org.bson.BsonDocument.class)
+                .find(new org.bson.Document("location.x", 256)).first().getDocument("location");
+        assertThat(loc.containsKey("cx")).as("read-only store must not backfill").isFalse();
+    }
+
+    @Test
     void dropEmptyCollectionAndRecreate() {
         rawClient.getDatabase("IT").getCollection("EventRecords").deleteMany(new org.bson.Document());
         QueryRequest empty = new QueryRequest(
