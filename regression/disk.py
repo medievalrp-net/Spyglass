@@ -130,11 +130,11 @@ def main():
     p.add_argument("--ch-db", default="spyglass")
     p.add_argument("--sqlite", default=str(
         (os.path.dirname(__file__) or ".") + "/../../RP_Server/plugins/CoreProtect/database.db"))
-    p.add_argument("--mysql-host", default="127.0.0.1")
-    p.add_argument("--mysql-port", type=int, default=3306)
-    p.add_argument("--mysql-user", default="root")
-    p.add_argument("--mysql-password", default="")
-    p.add_argument("--mysql-db", default="coreprotect")
+    p.add_argument("--mysql-host", default=os.environ.get("MYSQL_HOST", "127.0.0.1"))
+    p.add_argument("--mysql-port", type=int, default=int(os.environ.get("MYSQL_PORT", "3306")))
+    p.add_argument("--mysql-user", default=os.environ.get("MYSQL_USER", "root"))
+    p.add_argument("--mysql-password", default=os.environ.get("MYSQL_PASSWORD", ""))
+    p.add_argument("--mysql-db", default=os.environ.get("MYSQL_DB", "coreprotect"))
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
