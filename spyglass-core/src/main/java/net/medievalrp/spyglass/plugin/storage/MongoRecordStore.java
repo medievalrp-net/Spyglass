@@ -6,6 +6,7 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.CreateCollectionOptions;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
@@ -34,6 +35,7 @@ import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.BsonDocument;
 import org.bson.BsonDocumentReader;
+import org.bson.BsonString;
 import org.bson.UuidRepresentation;
 import org.bson.codecs.DecoderContext;
 import org.bson.codecs.configuration.CodecRegistries;
@@ -86,9 +88,37 @@ public final class MongoRecordStore implements RecordStore {
                 .build();
         this.client = MongoClients.create(settings);
         this.database = client.getDatabase(databaseName).withCodecRegistry(codecRegistry);
+        ensureZstdCollection(database, collectionName);
         this.rawCollection = database.getCollection(collectionName, BsonDocument.class);
         this.polymorphicCollection = database.getCollection(collectionName, EventRecord.class);
         indexManager.ensureRecordIndexes(rawCollection);
+    }
+
+    /**
+     * Create the record collection with WiredTiger's zstd block compressor
+     * when it doesn't yet exist. The records are a row store of highly
+     * repetitive forensic events — the same world id, event names, and block
+     * data strings recur across millions of rows — and zstd roughly thirds
+     * the on-disk data versus the snappy default: a measured 2M-block
+     * footprint dropped from ~136 MiB to ~46 MiB with no schema or query
+     * change.
+     *
+     * <p>WiredTiger fixes the block compressor at creation time. It can't be
+     * flipped on an existing collection, and neither collMod nor compact
+     * rewrites it, so a deployment that predates this keeps snappy until the
+     * collection is recreated or resynced; fresh installs get zstd for free.
+     * We only create the collection (first write would otherwise auto-create
+     * it with the server default), so existing data is never touched.
+     */
+    private static void ensureZstdCollection(MongoDatabase database, String collectionName) {
+        for (String existing : database.listCollectionNames()) {
+            if (existing.equals(collectionName)) {
+                return;
+            }
+        }
+        database.createCollection(collectionName, new CreateCollectionOptions()
+                .storageEngineOptions(new BsonDocument("wiredTiger",
+                        new BsonDocument("configString", new BsonString("block_compressor=zstd")))));
     }
 
     public MongoDatabase database() {
