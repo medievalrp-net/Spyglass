@@ -58,7 +58,7 @@ Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already run 
 - A database, one of:
   - MongoDB at `mongodb://localhost:27017` (default)
   - ClickHouse (set `database.backend = "clickhouse"` in config)
-- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for `//set` and `//paste` capture and `-we` queries
+- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded — `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike — for player and non-player (console/plugin) edits
 
 ## Commands
 

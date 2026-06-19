@@ -68,11 +68,12 @@ dependencies {
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
     // WorldEdit is compileOnly for the production jar (server provides
-    // it), but RollbackEngineChaosTest exercises the FAWE-availability
-    // branch via mockStatic, which requires the WE classes to be
-    // verifiable at test runtime. Pull the same coordinates onto the
-    // test runtime classpath only.
-    testRuntimeOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
+    // it). worldedit-core is on the test *compile* classpath so
+    // WorldEditActorsTest can mock the WE Actor; worldedit-bukkit stays
+    // runtime-only for RollbackEngineChaosTest's FAWE-availability branch
+    // (exercised via mockStatic, which only needs the classes verifiable
+    // at test runtime).
+    testImplementation("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
     testRuntimeOnly("com.sk89q.worldedit:worldedit-bukkit:$worldeditVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testImplementation("org.assertj:assertj-core:$assertjVersion")

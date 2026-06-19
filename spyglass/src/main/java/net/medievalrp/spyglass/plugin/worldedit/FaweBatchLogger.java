@@ -39,18 +39,16 @@ final class FaweBatchLogger implements IBatchProcessor {
 
     private final Recorder recorder;
     private final RecordingSupport support;
-    private final UUID playerId;
-    private final String playerName;
+    private final Source source;
     private final UUID worldId;
     private final String worldName;
 
     FaweBatchLogger(Recorder recorder, RecordingSupport support,
-                    UUID playerId, String playerName,
+                    Source source,
                     UUID worldId, String worldName) {
         this.recorder = recorder;
         this.support = support;
-        this.playerId = playerId;
-        this.playerName = playerName;
+        this.source = source;
         this.worldId = worldId;
         this.worldName = worldName;
     }
@@ -67,7 +65,7 @@ final class FaweBatchLogger implements IBatchProcessor {
         Instant occurred = support.now();
         Instant expires = support.expiresAt(occurred);
         Origin origin = Origin.fawe();
-        Source source = Source.player(playerId, playerName);
+        Source source = this.source;
 
         for (int sy = minSection; sy <= maxSection; sy++) {
             if (!set.hasSection(sy)) {

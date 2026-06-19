@@ -36,11 +36,21 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Subscribes to WorldEdit's EditSessionEvent and wraps the extent chain with a
  * logger. Every setBlock on the wrapped extent yields a break + place record
- * tagged with Origin.worldEdit().
+ * tagged with Origin.worldEdit(). Because the hook is at the edit-session /
+ * setBlock level rather than on command names, every block-mutating operation
+ * is captured the same way — set, replace, walls, overlay, paste, schematic
+ * paste, brushes, generation, move/stack and undo/redo (each a fresh edit
+ * session) alike.
+ *
+ * <p><b>Actor attribution.</b> Edits are tagged with the source resolved by
+ * {@link WorldEditActors#resolveSource} — the player when one is driving the
+ * edit, otherwise the console (covering RCON, command blocks and plugin-API
+ * edits). Non-player edits are logged too so they stay audited and rollbackable.
  *
  * <p><b>Off-main design.</b> Vanilla WorldEdit runs the whole edit on the main
  * thread, so the one thing we cannot move is reading the <em>before</em> block —
@@ -94,28 +104,29 @@ public final class WorldEditSubscriber {
         if (event.getStage() != EditSession.Stage.BEFORE_CHANGE) {
             return;
         }
-        Actor actor = event.getActor();
-        if (actor == null || !actor.isPlayer()) {
-            return;
-        }
-        Player bukkitPlayer = Bukkit.getPlayer(actor.getUniqueId());
-        if (bukkitPlayer == null) {
-            return;
-        }
         World world = BukkitAdapter.adapt(event.getWorld());
         if (world == null) {
             return;
         }
+        // Attribute the edit to its actor — a player when one is driving it,
+        // otherwise the console (covers RCON, command blocks and plugin-API
+        // edits). Non-player edits used to be dropped here (#105).
+        Actor actor = event.getActor();
+        Source source = WorldEditActors.resolveSource(actor);
+        // The live Bukkit player, when there is one, drives the main-thread
+        // falling-block cascade; it stays null for non-player edits.
+        Player bukkitPlayer = (actor != null && actor.isPlayer())
+                ? Bukkit.getPlayer(actor.getUniqueId()) : null;
         if (isFawePresent()) {
             try {
-                if (FaweHook.tryInstall(recorder, support, event, bukkitPlayer, world)) {
+                if (FaweHook.tryInstall(recorder, support, event, source, world)) {
                     return;
                 }
             } catch (Throwable thrown) {
                 logger.warning("Spyglass: FAWE hook failed: " + thrown);
             }
         }
-        event.setExtent(new LoggingExtent(event.getExtent(), bukkitPlayer, world));
+        event.setExtent(new LoggingExtent(event.getExtent(), bukkitPlayer, source, world));
     }
 
     private boolean isFawePresent() {
@@ -138,10 +149,15 @@ public final class WorldEditSubscriber {
          *  waits for the whole op to finish before any record is built. */
         private static final int DRAIN_THRESHOLD = 50_000;
 
+        // Nullable: the live player driving the edit, present only for player
+        // edits. Drives the main-thread falling-block cascade, which is keyed to
+        // a player; non-player (console/plugin) edits log their direct block
+        // changes but skip the predictive gravity cascade.
+        @Nullable
         private final Player player;
+        // Attribution for every record this extent emits — player or console.
+        private final Source source;
         private final World world;
-        private final UUID playerId;
-        private final String playerName;
         private final UUID worldId;
         private final String worldName;
 
@@ -158,12 +174,11 @@ public final class WorldEditSubscriber {
         // commit() on this particular extent.
         private boolean drainScheduled = false;
 
-        LoggingExtent(Extent extent, Player player, World world) {
+        LoggingExtent(Extent extent, @Nullable Player player, Source source, World world) {
             super(extent);
             this.player = player;
+            this.source = source;
             this.world = world;
-            this.playerId = player.getUniqueId();
-            this.playerName = player.getName();
             this.worldId = world.getUID();
             this.worldName = world.getName();
         }
@@ -211,10 +226,12 @@ public final class WorldEditSubscriber {
 
             // Falling-block cascade stays on the main thread: it walks the live
             // column above a break-to-air, which is rare relative to the bulk
-            // per-block path and inherently a main-thread world read.
+            // per-block path and inherently a main-thread world read. It is
+            // keyed to a player (landing attribution), so it runs only for
+            // player edits; non-player edits still log the direct break below.
             boolean beforeAir = !beforeTile && weBefore.getBlockType().getMaterial().isAir();
             boolean afterAir = !afterTile && weAfter.getBlockType().getMaterial().isAir();
-            if (!beforeAir && afterAir) {
+            if (player != null && !beforeAir && afterAir) {
                 FallingBlockCascade.emitCascadeAbove(recorder, support, player, world,
                         x, y, z, cascadedAbove);
             }
@@ -273,7 +290,7 @@ public final class WorldEditSubscriber {
         private void build(List<Pending> batch) {
             try {
                 Origin origin = Origin.worldEdit();
-                Source source = Source.player(playerId, playerName);
+                Source source = this.source;
                 String serverName = support.serverName();
                 List<EventRecord> out = new ArrayList<>(batch.size() * 2);
                 for (Pending p : batch) {
