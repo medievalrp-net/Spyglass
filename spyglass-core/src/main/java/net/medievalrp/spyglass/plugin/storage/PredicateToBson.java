@@ -39,12 +39,27 @@ final class PredicateToBson {
     }
 
     private Bson translateRange(QueryPredicate.Range range) {
-        List<Bson> clauses = new ArrayList<>(2);
+        List<Bson> clauses = new ArrayList<>(4);
         if (range.lowerInclusive() != null) {
             clauses.add(Filters.gte(range.field(), range.lowerInclusive()));
         }
         if (range.upperInclusive() != null) {
             clauses.add(Filters.lte(range.field(), range.upperInclusive()));
+        }
+        // Let a block-coordinate range also seek the chunk-bucketed location
+        // index by bounding the chunk field (cx = x>>4, cz = z>>4) with the
+        // floor-divided coordinate range. The exact x/z clauses above still
+        // filter within the seeked chunks, so results are identical; this just
+        // adds a predicate the index can seek on. floorDiv(coord, 16) matches
+        // BlockLocationCodec's coord >> 4, negatives included.
+        String chunkField = chunkFieldFor(range.field());
+        if (chunkField != null) {
+            if (range.lowerInclusive() instanceof Number lower) {
+                clauses.add(Filters.gte(chunkField, Math.floorDiv(lower.longValue(), 16)));
+            }
+            if (range.upperInclusive() instanceof Number upper) {
+                clauses.add(Filters.lte(chunkField, Math.floorDiv(upper.longValue(), 16)));
+            }
         }
         if (clauses.isEmpty()) {
             return Filters.empty();
@@ -53,5 +68,15 @@ final class PredicateToBson {
             return clauses.getFirst();
         }
         return Filters.and(clauses);
+    }
+
+    private static String chunkFieldFor(String field) {
+        if (RecordFields.LOCATION_X.equals(field)) {
+            return RecordFields.LOCATION_CX;
+        }
+        if (RecordFields.LOCATION_Z.equals(field)) {
+            return RecordFields.LOCATION_CZ;
+        }
+        return null;
     }
 }
