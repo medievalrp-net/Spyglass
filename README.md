@@ -17,19 +17,29 @@ A 2,000,376-block rollback, measured four ways: Spyglass and CoreProtect each on
 
 ## Features
 
-Both log every change and roll it back. The difference is what it costs your server, and how far you can search and recover afterward.
+Spyglass and CoreProtect cover the same logging and rollback ground. They part ways on performance under load, search depth, and recovery.
 
 | | Spyglass | CoreProtect |
 |---|---|---|
-| TPS during a 2M-block rollback | **20.0, flat** | dips to ~13 |
-| Worst single tick | **~60 ms** | up to ~900 ms |
-| Rollback execution | ✓ off the main thread | on the main thread |
+| Block, container, and entity logging | ✓ | ✓ |
+| Chat, command, session, and IP logging | ✓ | ✓ |
+| Explosions, fire, liquids, and growth | ✓ | ✓ |
+| WorldEdit capture | ✓ | ✓ |
+| Inspector wand and lookup | ✓ | ✓ |
+| Rollback and restore by player, time, or region | ✓ | ✓ |
+| Movement and teleports | ✓ | not logged |
+| Item search by name, lore, or enchantment | ✓ | material only |
+| Plugin-extensible search | ✓ | logging API only |
+| Cross-server search | ✓ Velocity proxy | per server |
 | Undo any operation, any size | ✓ `/sg undo` | rerun the inverse |
 | Crash-resume a rollback | ✓ | restart by hand |
-| Item search by name, lore, or enchantment | ✓ | material only |
-| Cross-server search | ✓ Velocity proxy | per server |
-| Plugin-defined searchable fields | ✓ | logging API only |
+| Rollback execution | off the main thread | on the main thread |
+| TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
+| Worst single tick | **~60 ms** | up to ~900 ms |
+| Rollback footprint | one row per operation | re-logs every block |
 | Storage engines | MongoDB, ClickHouse | SQLite, MySQL |
+| Old-data pruning | automatic, by retention | manual `/co purge` |
+| Minecraft versions | 1.21.x | 1.7+ |
 
 Spyglass runs on MongoDB or ClickHouse, not MySQL or SQLite. If you already run SQLite or MySQL and nothing else, CoreProtect installs with no new database to stand up.
 
