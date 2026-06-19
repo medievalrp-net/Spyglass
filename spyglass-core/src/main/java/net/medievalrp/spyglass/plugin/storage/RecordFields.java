@@ -14,6 +14,11 @@ final class RecordFields {
     static final String LOCATION_X = "location.x";
     static final String LOCATION_Y = "location.y";
     static final String LOCATION_Z = "location.z";
+    // Chunk buckets (x >> 4, z >> 4), written by BlockLocationCodec and
+    // indexed by the rollback location index. Low-cardinality vs raw block
+    // coordinates, so the index prefix-compresses far smaller.
+    static final String LOCATION_CX = "location.cx";
+    static final String LOCATION_CZ = "location.cz";
 
     // Sub-fields of the embedded location document, read directly by the
     // lean rollback path (which reads raw BSON, not "location.x" dot paths).
@@ -22,6 +27,8 @@ final class RecordFields {
     static final String X = "x";
     static final String Y = "y";
     static final String Z = "z";
+    static final String CX = "cx";
+    static final String CZ = "cz";
 
     // Heavy snapshot fields, dropped by the summary projection.
     static final String ORIGINAL_BLOCK = "originalBlock";
