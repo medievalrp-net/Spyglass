@@ -1,6 +1,5 @@
 package net.medievalrp.spyglass.plugin.pipeline;
 
-import com.mongodb.MongoClientSettings;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -15,26 +14,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.event.EventRecord;
-import net.medievalrp.spyglass.plugin.storage.EventRecordCodec;
-import net.medievalrp.spyglass.plugin.storage.RollbackEffectCodec;
-import org.bson.BsonArray;
-import org.bson.BsonBinaryReader;
-import org.bson.BsonBinaryWriter;
-import org.bson.BsonDocument;
-import org.bson.BsonValue;
-import org.bson.UuidRepresentation;
-import org.bson.codecs.BsonValueCodecProvider;
-import org.bson.codecs.Codec;
-import org.bson.codecs.DecoderContext;
-import org.bson.codecs.EncoderContext;
-import org.bson.codecs.UuidCodec;
-import org.bson.codecs.configuration.CodecRegistries;
-import org.bson.codecs.configuration.CodecRegistry;
-import org.bson.codecs.jsr310.Jsr310CodecProvider;
-import org.bson.codecs.pojo.PojoCodecProvider;
-import org.bson.codecs.record.RecordCodecProvider;
-import org.bson.io.BasicOutputBuffer;
-import org.bson.io.ByteBufferBsonInput;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
@@ -87,23 +66,6 @@ import org.jetbrains.annotations.Nullable;
 public final class WalDurability {
 
     private static final String EXTENSION = ".wal";
-    private static final String RECORDS_KEY = "r";
-    private static final String VALUE_KEY = "v";
-
-    private static final CodecRegistry REGISTRY = CodecRegistries.fromRegistries(
-            CodecRegistries.fromCodecs(new UuidCodec(UuidRepresentation.STANDARD)),
-            MongoClientSettings.getDefaultCodecRegistry(),
-            CodecRegistries.fromProviders(
-                    new BsonValueCodecProvider(),
-                    new Jsr310CodecProvider(),
-                    new RecordCodecProvider(),
-                    EventRecordCodec.provider(),
-                    RollbackEffectCodec.provider(),
-                    PojoCodecProvider.builder().automatic(true).build()));
-
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    private static final Codec<EventRecord> EVENT_RECORD_CODEC =
-            (Codec) REGISTRY.get(EventRecord.class);
 
     private final boolean enabled;
     private final Path pendingDir;
@@ -138,7 +100,7 @@ public final class WalDurability {
         if (!enabled || batch.isEmpty()) {
             return null;
         }
-        byte[] bytes = encode(batch);
+        byte[] bytes = EventBatchCodec.encode(batch);
         Path file = pendingDir.resolve(UUID.randomUUID() + EXTENSION);
         try (FileChannel channel = FileChannel.open(file,
                 StandardOpenOption.CREATE_NEW,
@@ -192,7 +154,7 @@ public final class WalDurability {
         for (Path file : files) {
             try {
                 byte[] bytes = Files.readAllBytes(file);
-                List<EventRecord> batch = decode(bytes);
+                List<EventRecord> batch = EventBatchCodec.decode(bytes);
                 recovered.addAll(batch);
                 filesRecovered++;
             } catch (RuntimeException | IOException ex) {
@@ -224,54 +186,5 @@ public final class WalDurability {
         } catch (IOException ex) {
             return 0L;
         }
-    }
-
-    /**
-     * Encode a batch as a single BSON document with shape:
-     * {@code { r: [ <wrapped record>, <wrapped record>, ... ] }}.
-     * Each wrapped record is itself a one-key document {@code { v:
-     * <record-doc> }} so the polymorphic {@link EventRecordCodec}
-     * round-trips identically to how it does on the storage path.
-     */
-    private static byte[] encode(List<EventRecord> batch) {
-        BsonArray array = new BsonArray();
-        for (EventRecord record : batch) {
-            BsonDocument wrapper = new BsonDocument();
-            try (org.bson.BsonDocumentWriter writer = new org.bson.BsonDocumentWriter(wrapper)) {
-                writer.writeStartDocument();
-                writer.writeName(VALUE_KEY);
-                EVENT_RECORD_CODEC.encode(writer, record, EncoderContext.builder().build());
-                writer.writeEndDocument();
-            }
-            array.add(wrapper.get(VALUE_KEY));
-        }
-        BsonDocument document = new BsonDocument().append(RECORDS_KEY, array);
-        BasicOutputBuffer buffer = new BasicOutputBuffer();
-        try (BsonBinaryWriter writer = new BsonBinaryWriter(buffer)) {
-            REGISTRY.get(BsonDocument.class).encode(writer, document, EncoderContext.builder().build());
-        }
-        return buffer.toByteArray();
-    }
-
-    private static List<EventRecord> decode(byte[] bytes) {
-        ByteBuffer buf = ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        BsonDocument document;
-        try (BsonBinaryReader reader = new BsonBinaryReader(new ByteBufferBsonInput(
-                new org.bson.ByteBufNIO(buf)))) {
-            document = REGISTRY.get(BsonDocument.class)
-                    .decode(reader, DecoderContext.builder().build());
-        }
-        BsonArray array = document.getArray(RECORDS_KEY);
-        List<EventRecord> out = new ArrayList<>(array.size());
-        for (BsonValue value : array) {
-            BsonDocument wrapper = new BsonDocument().append(VALUE_KEY, value);
-            try (org.bson.BsonDocumentReader reader = new org.bson.BsonDocumentReader(wrapper)) {
-                reader.readStartDocument();
-                reader.readName();
-                out.add(EVENT_RECORD_CODEC.decode(reader, DecoderContext.builder().build()));
-                reader.readEndDocument();
-            }
-        }
-        return out;
     }
 }
