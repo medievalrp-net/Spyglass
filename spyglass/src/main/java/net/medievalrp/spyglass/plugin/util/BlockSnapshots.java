@@ -16,7 +16,6 @@ import org.bukkit.block.Jukebox;
 import org.bukkit.block.Sign;
 import org.bukkit.block.banner.Pattern;
 import org.bukkit.block.sign.Side;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
 public final class BlockSnapshots {
@@ -24,7 +23,48 @@ public final class BlockSnapshots {
     private BlockSnapshots() {
     }
 
+    /**
+     * Capture a full {@link BlockSnapshot} from a (live or snapshot)
+     * {@link BlockState}. MUST run on the main thread - it reads live Bukkit
+     * state (the jukebox/decorated-pot upgrade reads the live block) and
+     * serializes container contents inline.
+     *
+     * <p>Equivalent to {@code finishCapture(captureRaw(state))}: for the bulk
+     * paths (explosions) that want to keep the heavy item serialization off the
+     * tick, call {@link #captureRaw} on the main thread and {@link #finishCapture}
+     * off it. Both yield an identical snapshot.
+     */
     public static BlockSnapshot capture(BlockState state) {
+        return finishCapture(captureRaw(state));
+    }
+
+    /**
+     * Cheap intermediate from {@link #captureRaw}. Holds everything a
+     * {@link BlockSnapshot} needs <em>except</em> the serialized item blobs:
+     * the container contents and jukebox disc are kept as <b>cloned</b>
+     * {@link ItemStack}s (detached from the live world), so {@link #finishCapture}
+     * can run the expensive {@code serializeAsBytes()} off the main thread.
+     */
+    public record RawCapture(
+            Material type,
+            String blockData,
+            ItemStack[] containerContents, // cloned; null when the state isn't a Container
+            List<String> signFront,
+            List<String> signBack,
+            List<String> bannerPatterns,
+            ItemStack jukeboxRecord,       // cloned; null when not a jukebox / empty
+            List<String> potSherds) {
+    }
+
+    /**
+     * Main-thread half of {@link #capture}: does every live-Bukkit read (the
+     * jukebox/pot upgrade, sign/banner/sherd reads) and <b>clones</b> the
+     * container contents and jukebox disc, but does NOT serialize them. The
+     * heavy {@code serializeAsBytes()} is deferred to {@link #finishCapture},
+     * which is safe to run off-thread because it only touches the cloned,
+     * world-detached stacks in the returned {@link RawCapture}.
+     */
+    public static RawCapture captureRaw(BlockState state) {
         // For tile-entity types where Paper's snapshot BlockState has
         // a detached BlockEntity (level=null, fields not populated),
         // upgrade to the LIVE state. Affects Jukebox (record disc
@@ -36,13 +76,13 @@ public final class BlockSnapshots {
             try {
                 state = state.getBlock().getState(false);
             } catch (Throwable ignored) {
-                // Fall through with the snapshot — at worst we lose
+                // Fall through with the snapshot - at worst we lose
                 // the disc / sherds (the original bug), nothing else.
             }
         }
-        List<StoredItem> items = List.of();
+        ItemStack[] containerContents = null;
         if (state instanceof Container container) {
-            items = captureInventory(container.getSnapshotInventory());
+            containerContents = cloneContents(container.getSnapshotInventory().getContents());
         }
 
         List<String> signFront = List.of();
@@ -59,10 +99,10 @@ public final class BlockSnapshots {
                     .toList();
         }
 
-        String jukeboxRecord = null;
+        ItemStack jukeboxRecord = null;
         if (state instanceof Jukebox jukebox) {
             ItemStack record = jukebox.getSnapshotInventory().getItem(0);
-            jukeboxRecord = ItemSerialization.encode(record);
+            jukeboxRecord = record == null ? null : record.clone();
         }
 
         List<String> potSherds = List.of();
@@ -70,7 +110,7 @@ public final class BlockSnapshots {
             // 4 sides in declaration order: BACK, LEFT, RIGHT, FRONT.
             // A blank face stores BRICK; on rollback we restore that
             // exact material. Map.get returning null means "no sherd
-            // on this face" — fall back to BRICK so the apply round-
+            // on this face" - fall back to BRICK so the apply round-
             // trips cleanly.
             Map<DecoratedPot.Side, Material> sherdMap = pot.getSherds();
             DecoratedPot.Side[] sides = DecoratedPot.Side.values();
@@ -82,10 +122,10 @@ public final class BlockSnapshots {
             potSherds = List.copyOf(names);
         }
 
-        return new BlockSnapshot(
+        return new RawCapture(
                 state.getType(),
                 state.getBlockData().getAsString(),
-                items,
+                containerContents,
                 signFront,
                 signBack,
                 bannerPatterns,
@@ -94,11 +134,33 @@ public final class BlockSnapshots {
     }
 
     /**
+     * Off-thread half of {@link #capture}: serialize the cloned container
+     * contents and jukebox disc held in {@code raw} into the final
+     * {@link BlockSnapshot}. Touches only world-detached cloned stacks, so it
+     * is safe off the main thread.
+     */
+    public static BlockSnapshot finishCapture(RawCapture raw) {
+        List<StoredItem> items = raw.containerContents() == null
+                ? List.of()
+                : serializeContents(raw.containerContents());
+        String jukeboxRecord = ItemSerialization.encode(raw.jukeboxRecord());
+        return new BlockSnapshot(
+                raw.type(),
+                raw.blockData(),
+                items,
+                raw.signFront(),
+                raw.signBack(),
+                raw.bannerPatterns(),
+                jukeboxRecord,
+                raw.potSherds());
+    }
+
+    /**
      * The "broken to air" after-snapshot is the same immutable value on
      * every break, so it's a shared constant rather than a fresh allocation
      * per record. {@link BlockSnapshot} is an immutable record and nothing
      * identity-checks it, so sharing one instance is observably identical to
-     * constructing a new one each call — it just skips the per-break
+     * constructing a new one each call - it just skips the per-break
      * allocation (and the compact constructor's {@code List.copyOf} /
      * {@code simple} recompute) across the ~12 break call sites.
      */
@@ -112,7 +174,7 @@ public final class BlockSnapshots {
     /**
      * Plain material + blockData snapshot for callers that don't have a
      * {@link BlockState} handy (FAWE chunk diff, brush/vault delayed checks).
-     * Inventory / sign / banner / jukebox lists are empty — callers pass a
+     * Inventory / sign / banner / jukebox lists are empty - callers pass a
      * {@link BlockState} to {@link #capture} when they want that data.
      */
     public static BlockSnapshot of(Material material, String blockData) {
@@ -137,9 +199,16 @@ public final class BlockSnapshots {
         return legacy != null ? legacy : Material.AIR;
     }
 
-    private static List<StoredItem> captureInventory(Inventory inventory) {
+    private static ItemStack[] cloneContents(ItemStack[] contents) {
+        ItemStack[] out = new ItemStack[contents.length];
+        for (int slot = 0; slot < contents.length; slot++) {
+            out[slot] = contents[slot] == null ? null : contents[slot].clone();
+        }
+        return out;
+    }
+
+    private static List<StoredItem> serializeContents(ItemStack[] contents) {
         List<StoredItem> items = new ArrayList<>();
-        ItemStack[] contents = inventory.getContents();
         for (int slot = 0; slot < contents.length; slot++) {
             StoredItem item = ItemSerialization.storedItem(slot, contents[slot]);
             if (item != null) {
