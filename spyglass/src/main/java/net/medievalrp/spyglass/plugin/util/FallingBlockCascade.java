@@ -85,7 +85,7 @@ public final class FallingBlockCascade {
             BlockState state = above.getState();
             BlockSnapshot original = BlockSnapshots.capture(state);
             BlockSnapshot after = BlockSnapshots.air();
-            BlockLocation location = BlockLocations.fromLocation(above.getLocation());
+            BlockLocation location = BlockLocations.from(world, x, y, z);
             RecordContext ctx = support.playerContext(player, location);
             recorder.record(BlockBreakRecord.of(
                     ctx, "break", original.material().name(), original, after));
