@@ -50,7 +50,7 @@ public final class DependantBreakListener implements RecordingListener {
         for (Block dependent : BlockDependents.collectDependents(broken)) {
             BlockSnapshot original = BlockSnapshots.capture(dependent.getState());
             BlockSnapshot after = BlockSnapshots.air();
-            BlockLocation location = BlockLocations.fromLocation(dependent.getLocation());
+            BlockLocation location = BlockLocations.fromBlock(dependent);
             RecordContext ctx = support.playerContext(event.getPlayer(), location);
             recorder.record(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
         }

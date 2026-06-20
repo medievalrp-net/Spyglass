@@ -53,7 +53,7 @@ public final class MultiBlockBreakListener implements RecordingListener {
         }
         BlockSnapshot original = BlockSnapshots.capture(partner.getState());
         BlockSnapshot after = BlockSnapshots.air();
-        BlockLocation location = BlockLocations.fromLocation(partner.getLocation());
+        BlockLocation location = BlockLocations.fromBlock(partner);
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
         recorder.record(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
     }
