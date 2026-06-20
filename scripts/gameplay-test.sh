@@ -13,7 +13,7 @@ WORK="${BOOT_SMOKE_DIR:-/Volumes/External-NVME/tmp-bootmatrix}"
 pj="$WORK/paper-cache/paper-$V.jar"
 [ -s "$pj" ] || { echo "FAIL  $V  $BE  no cached paper jar (run boot-smoke first)"; exit 2; }
 
-# Isolated ports (the live bench/RP_Server uses 25566/25576 — never touch it).
+# Isolated ports (the live bench/RP_Server uses 25566/25576 - never touch it).
 GAME_PORT=25599; RCON_PORT=25579
 for p in "$GAME_PORT" "$RCON_PORT"; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then

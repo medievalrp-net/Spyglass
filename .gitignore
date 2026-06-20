@@ -18,3 +18,10 @@ regression/.runtime/
 # Local IDE scratch
 *.swp
 *.swo
+
+# Internal AI operator tooling - kept locally, never published
+CLAUDE.md
+.claude/
+
+# Stray run/boot logs
+*.log

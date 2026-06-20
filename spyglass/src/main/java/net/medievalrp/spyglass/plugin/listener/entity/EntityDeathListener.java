@@ -66,23 +66,32 @@ public final class EntityDeathListener implements RecordingListener {
                 ? victim.getLastDamageCause().getCause().name()
                 : "UNKNOWN";
 
+        // Entity NBT is rollbackable (a death rollback respawns the mob via
+        // Bukkit.getUnsafe().deserializeEntity), so it must be serialized here,
+        // at event time, on the main thread: NMS entity reads are not
+        // thread-safe and the victim is removed once the event returns, so this
+        // cannot be deferred off-thread the way item blobs can (#129).
         String nbt = serializeEntity(victim);
 
         RecordContext ctx = support.context(origin, source, location);
         recorder.record(EntityDeathRecord.of(ctx, entityType, entityType, victim.getUniqueId(),
                 killerType, damageCause, nbt));
 
-        // Per-item drop records so loot tables are searchable/rollbackable like
-        // v1. Source is the dead entity (CREEPER, ARMADILLO, ...); origin is
-        // whoever triggered the death (player, or environment/mob). Skip for
-        // players -- their drops are attributed to PlayerDropItemEvent instead
-        // when they toss items, and death-drops of player inventory are noisy.
+        // Per-item drop records so loot tables are searchable like v1. Source is
+        // the dead entity (CREEPER, ARMADILLO, ...); origin is whoever triggered
+        // the death (player, or environment/mob). Skip for players -- their
+        // drops are attributed to PlayerDropItemEvent instead when they toss
+        // items, and death-drops of player inventory are noisy.
         if (victim instanceof Player) {
             return;
         }
         Source dropSource = support.entitySource(victim.getUniqueId(), entityType);
         for (ItemStack drop : event.getDrops()) {
-            StoredItem stored = ItemSerialization.storedItem(0, drop);
+            // Projection (no base64 blob): ItemDropRecord is forensic-only and
+            // never rolled back or salvaged, so the blob is dead weight and the
+            // serializeAsBytes() it skips is the dominant per-drop main-thread
+            // cost on a mob farm (#129, matching ItemDropListener / #103).
+            StoredItem stored = ItemSerialization.storedItemProjection(0, drop);
             if (stored == null) {
                 continue;
             }

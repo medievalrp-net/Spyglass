@@ -335,6 +335,45 @@ class ResultRendererTest {
         assertThat(hover).contains("(+8 more)");
     }
 
+    @Test
+    void hoverShowsCustomDataTags() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("deposit")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("deposit", "deposited"));
+
+        // An item carrying ONLY custom_data (no name/lore/enchants) still
+        // surfaces a Tags line (#140).
+        net.medievalrp.spyglass.api.event.StoredItem item =
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "PAPER", null, null, List.of(), List.of(),
+                        "{quest:\"deliver_letter\"}");
+
+        String hover = hoverPlain(renderer.renderSingle(
+                depositRecord(item), EnumSet.noneOf(Flag.class), true));
+
+        assertThat(hover).contains("Tags").contains("deliver_letter");
+    }
+
+    @Test
+    void hoverCapsLongTags() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("deposit")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("deposit", "deposited"));
+
+        String big = "{data:\"" + "x".repeat(400) + "\"}";
+        net.medievalrp.spyglass.api.event.StoredItem item =
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "PAPER", null, null, List.of(), List.of(), big);
+
+        String hover = hoverPlain(renderer.renderSingle(
+                depositRecord(item), EnumSet.noneOf(Flag.class), true));
+
+        // The hover previews custom_data with an ellipsis; the full blob is
+        // only reachable via itags:, so it must not appear verbatim.
+        assertThat(hover).contains("Tags").contains("…");
+        assertThat(hover).doesNotContain(big);
+    }
+
     private static String findRunCommand(Component component) {
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null
