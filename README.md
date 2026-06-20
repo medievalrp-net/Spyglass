@@ -14,7 +14,7 @@ Proudly sponsored by and running on:
 <tr>
 <td align="center">
 <a href="https://crusalis.net"><img src=".github/assets/crusalis.webp" width="220" alt="Crusalis: Glory of Rome"></a><br>
-<a href="https://crusalis.net"><b>crusalis.net</b></a> · 1,000+ players
+<a href="https://crusalis.net"><b>crusalis.net</b></a> · 1,500+ players
 </td>
 <td align="center">
 <a href="https://apply.istoria.events/"><img src=".github/assets/istoria.jpg" width="130" alt="Istoria"></a><br>
