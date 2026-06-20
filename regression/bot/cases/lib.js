@@ -34,7 +34,7 @@ function packet(id, t, body) {
 }
 export function rcon(cmd) {
     // Long responses (data get on a full chest) fragment across multiple
-    // RCON packets — collect until the wire goes quiet, then concatenate.
+    // RCON packets - collect until the wire goes quiet, then concatenate.
     return new Promise((res, rej) => {
         const s = net.createConnection({ host: HOST, port: RCON_PORT, timeout: 60000 });
         let st = 0; let buf = Buffer.alloc(0); const bodies = [];

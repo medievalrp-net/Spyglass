@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Guards the command feedback components. The static {@link Feedback#PREFIX}
  * initializer (and the per-message builders) build Adventure components via
- * {@code Component.text()...asComponent()} — {@code asComponent()} rather than
+ * {@code Component.text()...asComponent()} - {@code asComponent()} rather than
  * {@code build()} because Paper 26.2+ ships an Adventure whose
  * {@code TextComponent.Builder.build()} descriptor changed, which threw
  * {@code NoSuchMethodError} from every command. {@code ComponentLike.asComponent()}
