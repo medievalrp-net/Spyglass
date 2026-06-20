@@ -6,19 +6,19 @@ Forensic logging and rollback plugin for Paper 1.21.x (Java 21). Records 40+ eve
 
 | Module | Role | Depends on (internal) |
 |--------|------|-----------|
-| `spyglass-api/` | Public contract — sealed `EventRecord` / `RollbackEffect`, query DSL, extension interfaces. Third-party plugins depend on this **only**. | nothing |
-| `spyglass-core/` | Shared internals — storage codecs, `RecordStore` backends (Mongo + ClickHouse). | `spyglass-api` |
-| `spyglass/` | The Paper plugin — listeners, ingest pipeline, rollback engine, commands. | `spyglass-api`, `spyglass-core` |
+| `spyglass-api/` | Public contract - sealed `EventRecord` / `RollbackEffect`, query DSL, extension interfaces. Third-party plugins depend on this **only**. | nothing |
+| `spyglass-core/` | Shared internals - storage codecs, `RecordStore` backends (Mongo + ClickHouse). | `spyglass-api` |
+| `spyglass/` | The Paper plugin - listeners, ingest pipeline, rollback engine, commands. | `spyglass-api`, `spyglass-core` |
 | `spyglass-velocity/` | Optional **read-only** Velocity proxy companion (cross-server search; never writes records, never rolls back). | `spyglass-api`, `spyglass-core` |
 
-Dependency arrows point inward. Nothing in `spyglass-api` may import a Bukkit implementation, Mongo, or ClickHouse type — keep the public surface clean and headless-testable.
+Dependency arrows point inward. Nothing in `spyglass-api` may import a Bukkit implementation, Mongo, or ClickHouse type - keep the public surface clean and headless-testable.
 
 ## Branch model
 
-- `main` — integration branch; releases are cut from here.
-- `feat/<issue-#>-<slug>` — feature branches off `main`; merge back via PR once self-reviewed and verified.
+- `dev` - integration branch. ALL development lands here: small doc/config touch-ups directly, anything carrying logic or tests via a `feat/<issue-#>-<slug>` branch off `dev`, merged back through a PR (self-reviewed and verified).
+- `main` - release branch. The ONLY thing that touches `main` is a deliberate `dev` -> `main` merge, which is what cuts a release (the release workflow fires on push to `main`). Never push feature work, fixes, or routine changes straight to `main`.
 
-**NEVER force-push `main` or any shared branch. NEVER rewrite published history.** Small doc/config touch-ups may land on `main` directly; anything carrying logic or tests goes through a `feat/` branch + PR.
+**Push to `dev`, never to `main` directly. NEVER force-push `main`, `dev`, or any shared branch. NEVER rewrite published history.**
 
 ## Issue-driven workflow
 
@@ -30,29 +30,30 @@ GitHub Issues live on `github.com/medievalrp-net/Spyglass`, driven through the `
 
 First-touch reads when starting in a new area:
 
-- [`spyglass-api/.../event/EventRecord.java`](spyglass-api/src/main/java/net/medievalrp/spyglass/api/event/EventRecord.java) — sealed record hierarchy (the data model)
-- [`spyglass-api/.../event/EventCatalog.java`](spyglass-api/src/main/java/net/medievalrp/spyglass/api/event/EventCatalog.java) — authoritative event-name → record-class map
-- [`spyglass/.../SpyglassPlugin.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/SpyglassPlugin.java) — bootstrap / composition root (all wiring lives here)
-- [`spyglass/.../pipeline/AsyncRecorder.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/pipeline/AsyncRecorder.java) — async ingest pipeline
-- [`spyglass-core/.../storage/RecordStore.java`](spyglass-core/src/main/java/net/medievalrp/spyglass/plugin/storage/RecordStore.java) — storage abstraction + both backends
-- [`spyglass/.../rollback/RollbackEngine.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/rollback/RollbackEngine.java) — rollback apply engine
-- [`spyglass/src/main/resources/config.conf`](spyglass/src/main/resources/config.conf) — annotated config reference
+- [`spyglass-api/.../event/EventRecord.java`](spyglass-api/src/main/java/net/medievalrp/spyglass/api/event/EventRecord.java) - sealed record hierarchy (the data model)
+- [`spyglass-api/.../event/EventCatalog.java`](spyglass-api/src/main/java/net/medievalrp/spyglass/api/event/EventCatalog.java) - authoritative event-name → record-class map
+- [`spyglass/.../SpyglassPlugin.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/SpyglassPlugin.java) - bootstrap / composition root (all wiring lives here)
+- [`spyglass/.../pipeline/AsyncRecorder.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/pipeline/AsyncRecorder.java) - async ingest pipeline
+- [`spyglass-core/.../storage/RecordStore.java`](spyglass-core/src/main/java/net/medievalrp/spyglass/plugin/storage/RecordStore.java) - storage abstraction + both backends
+- [`spyglass/.../rollback/RollbackEngine.java`](spyglass/src/main/java/net/medievalrp/spyglass/plugin/rollback/RollbackEngine.java) - rollback apply engine
+- [`spyglass/src/main/resources/config.conf`](spyglass/src/main/resources/config.conf) - annotated config reference
 
 Existing prose: `README.md` (architecture + ops), `API.md` (third-party integration surface), `commands.md` (command quick-reference).
 
 ## Hard rules
 
-- **Event-type parity:** adding or changing an event type means updating, in the same change: (1) the sealed `EventRecord` permits + record class, (2) `EventCatalog`, (3) the emitting listener, (4) **both** storage paths — the Mongo codec (`EventRecordCodec`) and ClickHouse (`ClickHouseSchema` columns + `ClickHouseFieldMapper`), and (5) the default under `events.<name>` in `config.conf`. Missing any one ships a half-wired event that records on one backend and vanishes on the other.
-- **Tests with code:** non-trivial changes ship a JUnit 5 test in the same commit. `./gradlew check` enforces per-module jacoco line floors (api 0.15, core 0.20, plugin 0.20). A change that drops a module below its floor fails the build — add the missing test, don't lower the floor.
+- **Event-type parity:** adding or changing an event type means updating, in the same change: (1) the sealed `EventRecord` permits + record class, (2) `EventCatalog`, (3) the emitting listener, (4) **both** storage paths - the Mongo codec (`EventRecordCodec`) and ClickHouse (`ClickHouseSchema` columns + `ClickHouseFieldMapper`), and (5) the default under `events.<name>` in `config.conf`. Missing any one ships a half-wired event that records on one backend and vanishes on the other.
+- **Tests with code:** non-trivial changes ship a JUnit 5 test in the same commit. `./gradlew check` enforces per-module jacoco line floors (api 0.15, core 0.20, plugin 0.20). A change that drops a module below its floor fails the build - add the missing test, don't lower the floor.
 - **Listeners:** record at `EventPriority.MONITOR, ignoreCancelled = true`, build an immutable record, hand it to `Recorder.record()`. Never do I/O or block on the main thread.
 - **Structured logging only:** use the plugin `Logger`. No `printStackTrace` / `System.out` / `System.err`.
 - **Don't break the API:** `spyglass-api` is the stable extension surface. Add capabilities; don't remove or repurpose them within a major version. Prefer `default` methods on extension interfaces.
+- **No em dashes or en dashes.** Never emit an em dash (U+2014) or en dash (U+2013) in any output: code, comments, docs, commit messages, PR text, release notes, or chat. Use a plain hyphen (`-`), or reword the sentence.
 
 ## Build & tooling
 
 - macOS host, `zsh`, Java 21. Gradle 9 + Shadow plugin.
-- `./gradlew :spyglass:shadowJar` — plugin jar → `spyglass/build/libs/Spyglass-<version>.jar`
-- `./gradlew build` — all modules: jars, tests, jacoco
-- `./gradlew deployToRpServer` — build + copy to `../RP_Server/plugins/Spyglass.jar`
-- `./gradlew regression` — regression harness (requires `../RP_Server` running)
-- `gh` CLI for all GitHub work. The repo is **private** under `medievalrp-net`, visible only to an authed account with access — the `itdontmata` account works (`gh auth switch -u itdontmata`). With any other account active, both `gh` and `git` return "repository not found".
+- `./gradlew :spyglass:shadowJar` - plugin jar → `spyglass/build/libs/Spyglass-<version>.jar`
+- `./gradlew build` - all modules: jars, tests, jacoco
+- `./gradlew deployToRpServer` - build + copy to `../RP_Server/plugins/Spyglass.jar`
+- `./gradlew regression` - regression harness (requires `../RP_Server` running)
+- `gh` CLI for all GitHub work. The repo is **private** under `medievalrp-net`, visible only to an authed account with access - the `itdontmata` account works (`gh auth switch -u itdontmata`). With any other account active, both `gh` and `git` return "repository not found".
