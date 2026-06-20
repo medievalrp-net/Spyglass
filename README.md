@@ -4,13 +4,24 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
-## Discord
+## Sponsors
 
-[discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
+Proudly sponsored by and running on:
 
-Proudly runs on and sponsored by [crusalis.net](https://crusalis.net) (1000+ players) and [apply.istoria.events](https://apply.istoria.events/) (500+ players).
+<table>
+<tr>
+<td align="center">
+<a href="https://crusalis.net"><img src=".github/assets/crusalis.webp" width="220" alt="Crusalis: Glory of Rome"></a><br>
+<a href="https://crusalis.net"><b>crusalis.net</b></a> · 1,000+ players
+</td>
+<td align="center">
+<a href="https://apply.istoria.events/"><img src=".github/assets/istoria.jpg" width="130" alt="Istoria"></a><br>
+<a href="https://apply.istoria.events/"><b>apply.istoria.events</b></a> · 500+ players
+</td>
+</tr>
+</table>
 
-<a href="https://crusalis.net"><img src=".github/assets/crusalis.webp" height="80" alt="Crusalis: Glory of Rome"></a>&nbsp;&nbsp;<a href="https://apply.istoria.events/"><img src=".github/assets/istoria.jpg" height="80" alt="Istoria"></a>
+Discord: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
 ## Performance
 
