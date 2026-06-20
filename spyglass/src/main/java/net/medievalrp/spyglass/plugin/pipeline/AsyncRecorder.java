@@ -44,23 +44,33 @@ import org.jetbrains.annotations.ApiStatus;
  * fire at the first crossing and at doubling intervals thereafter, so a
  * genuine outage surfaces its growth shape in the log without flooding it.
  *
- * <h2>The only scenarios where records can be lost</h2>
+ * <h2>Overflow goes to disk, not the heap</h2>
  *
- * Under normal operation (server running, Mongo reachable) an event
- * that reaches {@link #record} always lands in the store. Two edge
- * cases still exist; both require spill-to-disk to eliminate, and v1
- * has the same exposure:
+ * Bounding the queue alone doesn't bound vanilla WorldEdit: its
+ * {@code setBlock} loop runs on the main thread, so overflow we refuse to
+ * block would pile up in the off-main build threads instead. When a
+ * {@link SpillBuffer} is wired, {@link #recordAll} writes the over-ceiling
+ * overflow to disk (fsynced) rather than RAM, and the drain replays those
+ * segments — so an uncappable paste stays heap-flat and loses nothing. The
+ * spilled segments also survive a hard crash and are replayed on next start.
+ *
+ * <h2>The scenarios where records can still be lost</h2>
+ *
+ * Under normal operation (server running, store reachable) an event that
+ * reaches {@link #record} always lands in the store. Two edge cases remain:
  *
  * <ol>
- *   <li><b>Hard JVM death</b> — server crash, SIGKILL, OOM, power loss.
- *       The queue is RAM-resident; anything not yet saved is lost with
- *       the process.</li>
+ *   <li><b>Hard JVM death</b> — server crash, SIGKILL, power loss. The
+ *       in-RAM queue (capped at {@code queueMax}) is lost with the process;
+ *       {@code wal-batched} durability closes that window, and spilled
+ *       overflow is already on disk and recovered on next start.</li>
  *   <li><b>Shutdown flush deadline exhaustion</b> —
  *       {@link #flushRemaining} retries with backoff for the full
- *       configured {@code flush-timeout}. If Mongo is still unreachable
- *       when the deadline expires, undrained records are counted into
- *       {@link ShutdownReport#dropped} and logged at SEVERE. Under
- *       normal Mongo availability this code path is unreachable.</li>
+ *       configured {@code flush-timeout}. If the store is still unreachable
+ *       when the deadline expires, undrained queue records are counted into
+ *       {@link ShutdownReport#dropped} and logged at SEVERE (spilled
+ *       segments stay on disk for next-start recovery). Under normal store
+ *       availability this code path is unreachable.</li>
  * </ol>
  *
  * <p>Aside from those, records are durable once {@link #record} returns.
@@ -78,6 +88,10 @@ public final class AsyncRecorder implements Recorder {
     private final BooleanSupplier primaryThread;
     private final RecordStore store;
     private final WalDurability wal;
+    // On-disk overflow buffer. When the queue is at queueMax, the uncappable
+    // vanilla-WorldEdit firehose (recordAll) spills here instead of holding
+    // overflow in RAM; the drain replays it. Disabled (no-op) by default.
+    private final SpillBuffer spill;
     private final Logger logger;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final CountDownLatch stopped = new CountDownLatch(1);
@@ -90,6 +104,11 @@ public final class AsyncRecorder implements Recorder {
     // whenever nobody is parked, which is the common case.
     private final Object spaceMonitor = new Object();
     private final AtomicLong backpressureWaiters = new AtomicLong();
+    // Count of spill-write failures (disk full / I/O), for rate-limited logging.
+    private final AtomicLong spillFailures = new AtomicLong();
+    // Consecutive store-save failures, for retry backoff. Touched only by the
+    // single drain thread, so it needs no synchronization.
+    private int consecutiveFailures = 0;
     private volatile Consumer<EventRecord> committedHook = r -> {};
     private volatile FlushBarrier flushBarrier = timeout -> true;
 
@@ -146,10 +165,25 @@ public final class AsyncRecorder implements Recorder {
      */
     public AsyncRecorder(long warnThreshold, long queueMax, RecordStore store,
                          WalDurability wal, BooleanSupplier primaryThread, Logger logger) {
+        this(warnThreshold, queueMax, store, wal,
+                new SpillBuffer(null, false, logger), primaryThread, logger);
+    }
+
+    /**
+     * Full constructor with on-disk overflow. {@code spill} absorbs the
+     * bulk-edit firehose's overflow when the queue hits {@code queueMax}, so a
+     * paste the operator can't cap stays heap-flat without dropping records.
+     * Pass a disabled {@link SpillBuffer} ({@code new SpillBuffer(null, false,
+     * logger)}) to keep everything in RAM — the shape headless tests want.
+     */
+    public AsyncRecorder(long warnThreshold, long queueMax, RecordStore store,
+                         WalDurability wal, SpillBuffer spill,
+                         BooleanSupplier primaryThread, Logger logger) {
         this.warnThreshold = warnThreshold;
         this.queueMax = queueMax;
         this.store = store;
         this.wal = wal;
+        this.spill = spill;
         this.primaryThread = primaryThread;
         this.logger = logger;
         // Dedicated platform thread, not a virtual thread. The drain is a
@@ -218,18 +252,39 @@ public final class AsyncRecorder implements Recorder {
             return;
         }
         // Bulk intake for the WorldEdit build stage and the rollback audit
-        // trail. The WorldEdit path is the firehose this whole ceiling
-        // exists for, and it runs off-main, so gate once before the batch:
-        // a parked producer here paces the paste to the drain. We admit the
-        // whole list once there is room, so the queue can transiently sit a
-        // little over the cap — bounded by one batch per builder that clears
-        // the gate, never the unbounded growth that caused the OOM.
+        // trail. The WorldEdit path is the firehose this whole ceiling exists
+        // for, and it runs off-main.
         //
-        // Deliberately skips the per-record committed hook: firing one
-        // Bukkit RecordCommittedEvent per rolled/edited block on the main
-        // thread would cost more than the op that produced them, and no
-        // reactive integration needs a per-block notification. The DB save
-        // path is identical — these records drain and persist like any other.
+        // When the queue is at the ceiling, spill this batch to disk instead
+        // of holding it in RAM. Vanilla WorldEdit's setBlock loop runs on the
+        // main thread (which we can't block), so parking the off-main build
+        // thread would just pile the overflow up in that thread's heap —
+        // O(paste size). Spilling keeps the heap flat (overflow lives on disk)
+        // and loses nothing: the drain replays spilled segments. The drain
+        // also frees queue space continuously, so as soon as it keeps up the
+        // batches flow back through the fast in-RAM path.
+        if (spill.enabled() && queueMax > 0 && !primaryThread.getAsBoolean()
+                && queue.size() >= queueMax) {
+            try {
+                spill.spill(records);
+                return;
+            } catch (java.io.IOException spillFailure) {
+                // Disk full / I/O error: fall back to in-RAM backpressure
+                // (park) rather than drop — no-loss is the chosen contract.
+                long n = spillFailures.incrementAndGet();
+                if (n == 1 || n % 1000 == 0) {
+                    logger.warning("Spyglass spill write failed (" + n + "x), falling back to"
+                            + " in-RAM backpressure: " + spillFailure.getMessage());
+                }
+            }
+        }
+        // No spill (disabled, unbounded, or below the ceiling): gate once
+        // before the batch — an off-main producer parks until there is room;
+        // the primary thread and an unbounded queue fall straight through.
+        // Deliberately skips the per-record committed hook: firing one Bukkit
+        // RecordCommittedEvent per rolled/edited block on the main thread would
+        // cost more than the op that produced them, and no reactive
+        // integration needs a per-block notification.
         awaitCapacityIfBlockable();
         for (EventRecord record : records) {
             queue.offer(record);
@@ -335,7 +390,10 @@ public final class AsyncRecorder implements Recorder {
         if (!flushBarrier.awaitQuiescent(timeout)) {
             return false;
         }
-        long highWaterMark = drained.get() + queue.size();
+        // Include spilled overflow in the mark: a rollback issued right after a
+        // paste must wait for records sitting in the disk spill too, not just
+        // the in-RAM queue, or it would read before they reach the store.
+        long highWaterMark = drained.get() + queue.size() + spill.pendingRecordCount();
         while (drained.get() < highWaterMark) {
             if (System.nanoTime() >= deadlineNanos) {
                 return false;
@@ -371,79 +429,127 @@ public final class AsyncRecorder implements Recorder {
     }
 
     private void drainLoop() {
-        int consecutiveFailures = 0;
         try {
-            while (running.get() || !queue.isEmpty()) {
-                EventRecord first = queue.poll(250, TimeUnit.MILLISECONDS);
-                if (first == null) {
+            while (running.get() || !queue.isEmpty() || spill.hasPending()) {
+                // Hot path first: drain the in-RAM queue non-blocking so, while
+                // a burst is live, batches keep cycling through RAM and the
+                // freed space lets producers stay off the (slower) spill path.
+                EventRecord first = queue.poll();
+                if (first != null) {
+                    if (!drainQueueBatch(first)) {
+                        return; // shutdown mid-retry; batch re-queued for the flush
+                    }
                     continue;
                 }
-                // Drain batch sized for ClickHouse's MergeTree, not Mongo.
-                // Mongo absorbs 512-doc batches in ~ms; ClickHouse pays the
-                // same fixed cost for any batch under ~10 k rows (one part
-                // per INSERT, then a merge), so small batches starve the
-                // ingest rate. With this larger batch, 1M-row WE bursts
-                // drain at ~50-100k records/sec instead of ~7k/sec, which
-                // is the difference between rollback waiting on a partial
-                // CH and rollback seeing the whole burst.
-                List<EventRecord> batch = new ArrayList<>();
-                batch.add(first);
-                queue.drainTo(batch, 9_999);
-                // Pulling the batch freed queue space; wake any producer
-                // parked on the backpressure gate before the (possibly slow)
-                // store.save() below, so it can refill while this batch ships.
-                wakeBackpressureWaiters();
-
-                // WAL durability: when enabled, fsync the batch to disk
-                // before the DB push so a hard crash leaves a recoverable
-                // file behind. write() is a no-op + null when WAL is
-                // disabled, which keeps the RAM-only path identical to v1.
-                java.nio.file.Path walFile = null;
-                try {
-                    walFile = wal.write(batch);
-                } catch (java.io.IOException walFailure) {
-                    logger.warning("Spyglass WAL write failed (" + walFailure.getMessage()
-                            + "); proceeding with DB save anyway. Records still durable iff DB save succeeds.");
-                }
-
-                // Persist with retry + exponential backoff. A transient store
-                // failure (Mongo hiccup, replica-set election, network blip)
-                // must not kill the drain thread and silently drop every
-                // subsequent record. We retry the same batch until either it
-                // succeeds or shutdown is requested, then loop back to polling.
-                while (true) {
-                    try {
-                        store.save(batch);
-                        wal.ack(walFile);
-                        drained.addAndGet(batch.size());
-                        consecutiveFailures = 0;
-                        break;
-                    } catch (RuntimeException saveFailure) {
-                        consecutiveFailures++;
-                        long backoffMs = Math.min(30_000L,
-                                250L << Math.min(consecutiveFailures - 1, 7));
-                        if (consecutiveFailures == 1 || consecutiveFailures % 10 == 0) {
-                            logger.warning("Spyglass recorder save failed ("
-                                    + consecutiveFailures + "x, retry in "
-                                    + backoffMs + "ms): " + saveFailure.getMessage());
-                        }
-                        if (!running.get()) {
-                            logger.warning("Recorder shutting down mid-retry; re-queueing "
-                                    + batch.size() + " records for final flush.");
-                            // Unbounded queue -> offerFirst always succeeds.
-                            for (int i = batch.size() - 1; i >= 0; i--) {
-                                queue.offerFirst(batch.get(i));
-                            }
+                // Queue empty: replay one spilled overflow segment (older than
+                // anything still arriving). Reclaims disk + honours the flush
+                // high-water mark. One segment in RAM at a time keeps heap flat.
+                if (spill.hasPending()) {
+                    SpillBuffer.Spilled spilled = spill.poll();
+                    if (spilled != null) {
+                        if (!persistWithRetry(spilled.records())) {
+                            // Shutdown mid-retry: leave the segment on disk; it
+                            // replays on next startup. Don't ack (delete) it.
                             return;
                         }
-                        Thread.sleep(backoffMs);
+                        spill.ack(spilled);
+                        wakeBackpressureWaiters();
+                        continue;
                     }
+                    // hasPending() but nothing polled (all-corrupt or a
+                    // counter/file skew): fall through to the blocking poll so
+                    // we throttle instead of busy-spinning.
+                }
+                // Nothing in queue or spill: block briefly for new queue work
+                // rather than spin.
+                EventRecord waited = queue.poll(250, TimeUnit.MILLISECONDS);
+                if (waited != null && !drainQueueBatch(waited)) {
+                    return;
                 }
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         } finally {
             stopped.countDown();
+        }
+    }
+
+    /**
+     * Pull a drain batch starting at {@code first}, persist it, and on a
+     * shutdown-mid-retry re-queue it for the final flush. Returns {@code false}
+     * only in that shutdown case (the caller must stop the drain loop).
+     */
+    private boolean drainQueueBatch(EventRecord first) {
+        // Drain batch sized for ClickHouse's MergeTree, not Mongo. Mongo
+        // absorbs 512-doc batches in ~ms; ClickHouse pays the same fixed cost
+        // for any batch under ~10 k rows (one part per INSERT, then a merge),
+        // so small batches starve the ingest rate. With this larger batch,
+        // 1M-row WE bursts drain at ~50-100k records/sec instead of ~7k/sec.
+        List<EventRecord> batch = new ArrayList<>();
+        batch.add(first);
+        queue.drainTo(batch, 9_999);
+        // Pulling the batch freed queue space; wake any producer parked on the
+        // backpressure gate before the (possibly slow) save below.
+        wakeBackpressureWaiters();
+        if (!persistWithRetry(batch)) {
+            logger.warning("Recorder shutting down mid-retry; re-queueing "
+                    + batch.size() + " records for final flush.");
+            for (int i = batch.size() - 1; i >= 0; i--) {
+                queue.offerFirst(batch.get(i));
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Persist one batch with WAL fsync + retry/backoff. Retries the same batch
+     * until it saves or shutdown is requested. Returns {@code true} once saved
+     * (and {@link #drained} is incremented); {@code false} if shutdown
+     * interrupts mid-retry, leaving it to the caller to re-queue (queue path)
+     * or leave on disk (spill path). Runs only on the single drain thread, so
+     * {@link #consecutiveFailures} needs no synchronization.
+     */
+    private boolean persistWithRetry(List<EventRecord> batch) {
+        // WAL durability: when enabled, fsync the batch to disk before the DB
+        // push so a hard crash leaves a recoverable file behind. write() is a
+        // no-op + null when WAL is disabled, keeping the RAM-only path as v1.
+        java.nio.file.Path walFile = null;
+        try {
+            walFile = wal.write(batch);
+        } catch (java.io.IOException walFailure) {
+            logger.warning("Spyglass WAL write failed (" + walFailure.getMessage()
+                    + "); proceeding with DB save anyway. Records still durable iff DB save succeeds.");
+        }
+        // A transient store failure (Mongo hiccup, replica-set election,
+        // network blip) must not kill the drain thread and silently drop every
+        // subsequent record. Retry the same batch until it succeeds or shutdown.
+        while (true) {
+            try {
+                store.save(batch);
+                wal.ack(walFile);
+                drained.addAndGet(batch.size());
+                consecutiveFailures = 0;
+                return true;
+            } catch (RuntimeException saveFailure) {
+                consecutiveFailures++;
+                long backoffMs = Math.min(30_000L,
+                        250L << Math.min(consecutiveFailures - 1, 7));
+                if (consecutiveFailures == 1 || consecutiveFailures % 10 == 0) {
+                    logger.warning("Spyglass recorder save failed ("
+                            + consecutiveFailures + "x, retry in "
+                            + backoffMs + "ms): " + saveFailure.getMessage());
+                }
+                if (!running.get()) {
+                    return false;
+                }
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
         }
     }
 
