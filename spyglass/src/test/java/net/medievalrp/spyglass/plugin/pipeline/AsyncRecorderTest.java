@@ -21,6 +21,7 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 class AsyncRecorderTest {
 
@@ -237,6 +238,135 @@ class AsyncRecorderTest {
                     .isTrue();
         } finally {
             recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void offMainProducerBackpressuresAtQueueMaxThenResumesLosslessly() throws Exception {
+        // #119: an off-main bulk-edit firehose (WorldEdit/FAWE) must not be
+        // able to grow the queue past queue-max into an OOM. With the store
+        // wedged, the producer fills to the ceiling then PARKS — admitted
+        // freezes well below the total — and resumes losslessly once the drain
+        // can move again. () -> false marks every caller as off-main.
+        long queueMax = 50L;
+        int total = 5_000;
+        GatedStore store = new GatedStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                () -> false, Logger.getLogger("test"));
+        AtomicInteger admitted = new AtomicInteger();
+        Thread producer = new Thread(() -> {
+            for (int i = 0; i < total; i++) {
+                recorder.record(sampleRecord());
+                admitted.incrementAndGet();
+            }
+        }, "test-producer");
+        try {
+            producer.start();
+            // The drain takes one batch and blocks in the wedged save(); no
+            // space frees after that, so the producer parks at the ceiling.
+            // Sample twice — a frozen count proves backpressure, not just slow.
+            Thread.sleep(500L);
+            int sample1 = admitted.get();
+            Thread.sleep(500L);
+            int sample2 = admitted.get();
+            assertThat(sample2)
+                    .as("off-main producer must park at the ceiling, not admit the whole burst")
+                    .isLessThan(total);
+            assertThat(sample2)
+                    .as("admitted must be frozen while the drain is wedged (backpressure, not slow)")
+                    .isEqualTo(sample1);
+
+            // Let the drain move; the parked producer must resume and finish.
+            store.open();
+            producer.join(10_000L);
+            assertThat(admitted.get())
+                    .as("every record is eventually admitted once the drain catches up")
+                    .isEqualTo(total);
+            long deadline = System.currentTimeMillis() + 10_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < total) {
+                Thread.sleep(25L);
+            }
+            assertThat(store.totalSaved())
+                    .as("no records lost: backpressure paces the firehose, it does not drop")
+                    .isEqualTo(total);
+        } finally {
+            store.open();
+            recorder.shutdown(Duration.parse("3s"));
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void mainThreadProducerIsNeverBlockedByTheCeiling() throws Exception {
+        // #119: the Bukkit primary thread must never park on the ceiling — its
+        // low-rate audit events are always admitted (a small overshoot), so a
+        // tick can't stall. () -> true marks the caller as primary; with the
+        // store wedged and a tiny ceiling, a blocking impl would deadlock this
+        // thread, so completing the loop at all is the proof.
+        GatedStore store = new GatedStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000L, 10L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                () -> true, Logger.getLogger("test"));
+        try {
+            for (int i = 0; i < 100; i++) {
+                recorder.record(sampleRecord());
+            }
+            // Reached here without hanging => the primary thread was never
+            // blocked even though the queue is far past its 10-record ceiling.
+            store.open();
+            long deadline = System.currentTimeMillis() + 10_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < 100) {
+                Thread.sleep(25L);
+            }
+            assertThat(store.totalSaved())
+                    .as("main-thread records are admitted and persist; none dropped")
+                    .isEqualTo(100);
+        } finally {
+            store.open();
+            AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("3s"));
+            assertThat(report.dropped())
+                    .as("main-thread admit path drops nothing")
+                    .isZero();
+        }
+    }
+
+    /**
+     * Store whose save() blocks until {@link #open()} is called — models a
+     * wedged drain so the backpressure ceiling engages deterministically. No
+     * internal timeout: the test controls exactly when the drain may move.
+     */
+    private static final class GatedStore implements RecordStore {
+        private final CountDownLatch gate = new CountDownLatch(1);
+        private final AtomicInteger saved = new AtomicInteger();
+
+        void open() {
+            gate.countDown();
+        }
+
+        int totalSaved() {
+            return saved.get();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            try {
+                gate.await();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            saved.addAndGet(records.size());
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
         }
     }
 

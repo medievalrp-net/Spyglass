@@ -7,6 +7,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -19,20 +20,29 @@ import org.jetbrains.annotations.ApiStatus;
  * out to the {@link RecordStore} with exponential-backoff retry on
  * transient failures.
  *
- * <h2>No-drop guarantee at intake</h2>
+ * <h2>Bounded queue with off-main backpressure</h2>
  *
- * The queue is <b>unbounded</b>. {@link #record} never rejects a record,
- * no matter how far behind the drain is. This matches the v1
- * v1 contract (every event that fires a listener reaches the persistence
- * pipeline) and is the behaviour operators expect from an
- * audit-logging plugin.
+ * The queue is bounded by {@code queueMax} (the {@code storage.queue-max}
+ * config). When an <b>off-main</b> producer — the WorldEdit build stage
+ * (via {@link #recordAll}) or FAWE (via {@link #record} on its own worker
+ * threads) — would enqueue while the queue is already at the ceiling, it
+ * <b>blocks</b> until the drain frees space. This paces the bulk-edit
+ * firehoses to the drain so a multi-million-block paste can never grow the
+ * queue past the cap into an {@link OutOfMemoryError}. Nothing is dropped
+ * at intake: a parked producer resumes the instant space opens.
  *
- * <p>The {@code warnThreshold} passed to the constructor is a soft
- * signal, <i>not</i> a ceiling: crossing it logs a warning to give the
- * operator an early heads-up that Mongo may be lagging, but the queue
- * keeps accepting records. Warnings fire at the first crossing and at
- * doubling intervals thereafter, so a genuine outage surfaces its
- * growth shape in the log without flooding it.
+ * <p>The Bukkit primary thread is <b>never</b> blocked. Its per-event
+ * listeners record at a low rate and must not stall a tick, so they are
+ * always admitted even at the ceiling — a small, bounded overshoot that
+ * keeps the v1 no-drop guarantee for the main-thread audit path. Set
+ * {@code queueMax <= 0} ({@code storage.queue-max = 0}) to restore the
+ * legacy fully-unbounded queue.
+ *
+ * <p>{@code warnThreshold} ({@code storage.queue-capacity}) is a softer,
+ * lower signal that sits below the ceiling: crossing it logs a warning so
+ * operators notice drain lag early, before backpressure engages. Warnings
+ * fire at the first crossing and at doubling intervals thereafter, so a
+ * genuine outage surfaces its growth shape in the log without flooding it.
  *
  * <h2>The only scenarios where records can be lost</h2>
  *
@@ -60,6 +70,12 @@ public final class AsyncRecorder implements Recorder {
 
     private final LinkedBlockingDeque<EventRecord> queue = new LinkedBlockingDeque<>();
     private final long warnThreshold;
+    // Hard queue ceiling that off-main producers backpressure against;
+    // <= 0 means unbounded (legacy behaviour). See awaitCapacityIfBlockable.
+    private final long queueMax;
+    // Reports whether the calling thread is the Bukkit server thread, which
+    // is never blocked by the ceiling. Bukkit::isPrimaryThread in production.
+    private final BooleanSupplier primaryThread;
     private final RecordStore store;
     private final WalDurability wal;
     private final Logger logger;
@@ -68,6 +84,12 @@ public final class AsyncRecorder implements Recorder {
     private final AtomicLong drained = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong lastWarnedDepth = new AtomicLong();
+    // Backpressure gate: off-main producers park on spaceMonitor when the
+    // queue is at queueMax; the drain notifies after it frees space. The
+    // waiter count keeps the drain's wake check lock-free (a plain read)
+    // whenever nobody is parked, which is the common case.
+    private final Object spaceMonitor = new Object();
+    private final AtomicLong backpressureWaiters = new AtomicLong();
     private volatile Consumer<EventRecord> committedHook = r -> {};
     private volatile FlushBarrier flushBarrier = timeout -> true;
 
@@ -97,7 +119,7 @@ public final class AsyncRecorder implements Recorder {
      * @param logger        plugin logger for warnings + retry diagnostics.
      */
     public AsyncRecorder(long warnThreshold, RecordStore store, Logger logger) {
-        this(warnThreshold, store, new WalDurability(null, false, logger), logger);
+        this(warnThreshold, 0L, store, new WalDurability(null, false, logger), () -> false, logger);
     }
 
     /**
@@ -106,11 +128,29 @@ public final class AsyncRecorder implements Recorder {
      * before pushing to the database, then deletes the file after a
      * successful save. Crash recovery on next startup replays any
      * leftover files via {@link WalDurability#recover()}.
+     *
+     * <p>Leaves the queue unbounded ({@code queueMax = 0}) and treats no
+     * thread as primary — the shape unit tests want headless.
      */
     public AsyncRecorder(long warnThreshold, RecordStore store, WalDurability wal, Logger logger) {
+        this(warnThreshold, 0L, store, wal, () -> false, logger);
+    }
+
+    /**
+     * Full constructor. {@code queueMax} is the hard queue ceiling that
+     * off-main producers backpressure against (≤ 0 = unbounded);
+     * {@code primaryThread} reports whether the calling thread is the
+     * Bukkit server thread, which is never blocked by the ceiling. The
+     * plugin passes {@code Bukkit::isPrimaryThread}; headless tests pass a
+     * controllable fake.
+     */
+    public AsyncRecorder(long warnThreshold, long queueMax, RecordStore store,
+                         WalDurability wal, BooleanSupplier primaryThread, Logger logger) {
         this.warnThreshold = warnThreshold;
+        this.queueMax = queueMax;
         this.store = store;
         this.wal = wal;
+        this.primaryThread = primaryThread;
         this.logger = logger;
         // Dedicated platform thread, not a virtual thread. The drain is a
         // single perpetual consumer loop that blocks on store.save() I/O;
@@ -157,11 +197,12 @@ public final class AsyncRecorder implements Recorder {
 
     @Override
     public void record(EventRecord record) {
-        // offer() on an unbounded LinkedBlockingDeque only returns false
-        // on OutOfMemoryError; we deliberately do not bound the queue.
-        // Losing an event at intake is the cost v2 explicitly refuses
-        // to pay — same contract as v1. Heap pressure becomes the
-        // operator's early-warning signal, surfaced via warnThreshold.
+        // Backpressure an off-main firehose (FAWE worker threads reach the
+        // pipeline here) when the queue is at the ceiling; the main thread
+        // and an unbounded queue both fall straight through. offer() on a
+        // LinkedBlockingDeque only returns false on OutOfMemoryError, so once
+        // the gate guarantees room the record always lands.
+        awaitCapacityIfBlockable();
         queue.offer(record);
         try {
             committedHook.accept(record);
@@ -176,13 +217,20 @@ public final class AsyncRecorder implements Recorder {
         if (records.isEmpty()) {
             return;
         }
-        // Bulk intake for synthesized records (the rollback audit
-        // trail). Deliberately skips the per-record committed hook:
-        // firing one Bukkit RecordCommittedEvent per rolled block on
-        // the main thread would cost more than the rollback that
-        // produced them, and no reactive integration needs a
-        // per-rolled-block notification. The DB save path is identical
-        // — these records drain and persist like any other.
+        // Bulk intake for the WorldEdit build stage and the rollback audit
+        // trail. The WorldEdit path is the firehose this whole ceiling
+        // exists for, and it runs off-main, so gate once before the batch:
+        // a parked producer here paces the paste to the drain. We admit the
+        // whole list once there is room, so the queue can transiently sit a
+        // little over the cap — bounded by one batch per builder that clears
+        // the gate, never the unbounded growth that caused the OOM.
+        //
+        // Deliberately skips the per-record committed hook: firing one
+        // Bukkit RecordCommittedEvent per rolled/edited block on the main
+        // thread would cost more than the op that produced them, and no
+        // reactive integration needs a per-block notification. The DB save
+        // path is identical — these records drain and persist like any other.
+        awaitCapacityIfBlockable();
         for (EventRecord record : records) {
             queue.offer(record);
         }
@@ -193,7 +241,7 @@ public final class AsyncRecorder implements Recorder {
     // depth doubling past that, so a sustained outage produces a
     // visible growth trail in the log without flooding it. atomic-CAS
     // on lastWarnedDepth so concurrent callers don't duplicate the same
-    // warning. Not a ceiling — the queue stays unbounded.
+    // warning. Soft signal below the ceiling, not the ceiling itself.
     private void warnIfQueueDeep() {
         int depth = queue.size();
         if (depth > warnThreshold) {
@@ -202,10 +250,65 @@ public final class AsyncRecorder implements Recorder {
             boolean doubledSinceLast = last > 0 && depth >= last * 2;
             if ((firstCrossing || doubledSinceLast)
                     && lastWarnedDepth.compareAndSet(last, depth)) {
+                String ceiling = queueMax > 0
+                        ? "; off-main edits backpressure at the queue-max ceiling of " + queueMax
+                        : ", and the queue is unbounded so heap pressure grows with depth";
                 logger.warning("Spyglass recorder queue depth " + depth
-                        + " (warn threshold " + warnThreshold + "). No records dropped"
-                        + " — queue is unbounded — but heap pressure grows with depth."
-                        + " Check Mongo reachability and drain latency.");
+                        + " (warn threshold " + warnThreshold + "). The drain is"
+                        + " falling behind" + ceiling + ". No records dropped — check the"
+                        + " storage backend's reachability and drain latency.");
+            }
+        }
+    }
+
+    /**
+     * Backpressure gate for the bulk-edit firehoses. When {@link #queueMax}
+     * is set and an <i>off-main</i> producer (the WorldEdit build stage via
+     * {@link #recordAll}, or FAWE via {@link #record} on its worker threads)
+     * is about to enqueue while the queue is already at the ceiling, it parks
+     * here until the drain frees space — so a multi-million-block paste can
+     * never grow the queue past the cap into an {@link OutOfMemoryError}.
+     * Nothing is dropped: the producer is paced, not rejected.
+     *
+     * <p>The Bukkit primary thread is never parked. Its per-event listeners
+     * are low-rate and must not stall a tick, so they are always admitted —
+     * a small bounded overshoot that preserves the no-drop guarantee for the
+     * main-thread audit path. With {@code queueMax <= 0} this is a no-op.
+     */
+    private void awaitCapacityIfBlockable() {
+        // Fast path: unbounded, room to spare, or the primary thread (never
+        // parked). queue.size() is an O(1) counter read on a deque.
+        if (queueMax <= 0 || queue.size() < queueMax || primaryThread.getAsBoolean()) {
+            return;
+        }
+        backpressureWaiters.incrementAndGet();
+        try {
+            synchronized (spaceMonitor) {
+                // Re-check under the monitor. The 50 ms timeout is a
+                // belt-and-suspenders backstop so a missed notify still
+                // resolves promptly; running == false (shutdown) releases the
+                // producer so the final flush isn't blocked behind it.
+                while (running.get() && queue.size() >= queueMax) {
+                    try {
+                        spaceMonitor.wait(50L);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        } finally {
+            backpressureWaiters.decrementAndGet();
+        }
+    }
+
+    // Wake any producers parked on the backpressure gate. Called after the
+    // drain frees space and at shutdown. The waiter-count guard keeps this a
+    // single volatile read (no monitor) whenever nobody is parked.
+    private void wakeBackpressureWaiters() {
+        if (backpressureWaiters.get() > 0) {
+            synchronized (spaceMonitor) {
+                spaceMonitor.notifyAll();
             }
         }
     }
@@ -251,6 +354,10 @@ public final class AsyncRecorder implements Recorder {
     public ShutdownReport shutdown(Duration timeout) {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeout.seconds());
         running.set(false);
+        // Release any producer parked on the backpressure gate so it admits
+        // its record and the final flush can account for it, instead of
+        // hanging behind a full queue while we tear down.
+        wakeBackpressureWaiters();
         try {
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos > 0) {
@@ -282,6 +389,10 @@ public final class AsyncRecorder implements Recorder {
                 List<EventRecord> batch = new ArrayList<>();
                 batch.add(first);
                 queue.drainTo(batch, 9_999);
+                // Pulling the batch freed queue space; wake any producer
+                // parked on the backpressure gate before the (possibly slow)
+                // store.save() below, so it can refill while this batch ships.
+                wakeBackpressureWaiters();
 
                 // WAL durability: when enabled, fsync the batch to disk
                 // before the DB push so a hard crash leaves a recoverable
