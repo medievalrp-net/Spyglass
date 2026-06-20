@@ -51,7 +51,7 @@ subprojects {
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         // The Testcontainers store ITs assume-skip when Docker is absent, so
-        // a green `check` without Docker is NOT full verification — a silence
+        // a green `check` without Docker is NOT full verification - a silence
         // that once masked real bugs (issue #15). Make it loud: if this
         // module has *IT tests and Docker isn't reachable, warn.
         doFirst {
@@ -59,7 +59,7 @@ subprojects {
                 !project.fileTree("src/test/java") { include("**/*IT.java") }.files.isEmpty()
             if (hasIntegrationTests && !dockerIsAvailable()) {
                 logger.warn(
-                    "WARNING: Docker not reachable — the Testcontainers store ITs in " +
+                    "WARNING: Docker not reachable - the Testcontainers store ITs in " +
                         "'${project.name}' will be SKIPPED. `check` passing is NOT full " +
                         "verification; start Docker to run them."
                 )

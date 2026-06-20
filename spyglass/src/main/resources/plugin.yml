@@ -30,7 +30,7 @@ permissions:
 # Externalized at runtime via Paper's library loader (Maven Central, cached
 # under <server>/libraries/); versions injected from Gradle at build time. The
 # shaded fallback jar (Spyglass-shaded.jar) strips this block and bundles these
-# instead — see README "Distribution". Keep `libraries:` the LAST block: the
+# instead - see README "Distribution". Keep `libraries:` the LAST block: the
 # shaded-jar build truncates the descriptor from this line down.
 libraries:
   - org.mongodb:mongodb-driver-sync:${mongoDriverVersion}

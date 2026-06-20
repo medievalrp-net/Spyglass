@@ -2,7 +2,7 @@
 # RCON-driven WorldEdit edit -> /spyglass rollback -> undo, for versions no
 # mineflayer build can reach (26.x). Spyglass logs console WorldEdit
 # EditSessions (#105), so a console //set is a real, rollbackable edit with no
-# player. Isolated ports (25599/25579) — never touches the live RP_Server.
+# player. Isolated ports (25599/25579) - never touches the live RP_Server.
 #
 # Usage: scripts/worldedit-rollback-test.sh <jar> <version> [sqlite|mongo|clickhouse]
 set -u
@@ -92,14 +92,14 @@ sg="$(SG_RCON_QUIET=4000 R "spyglass search t:180s -g")"
 echo "  search   -> $(echo "$sg" | tr '\n' ' ' | head -c 120)"
 if echo "$sg" | grep -qi 'internal error'; then ck 1 "/spyglass search executed"; else ck 0 "/spyglass search executed (no crash)"; fi
 
-# rollback: the functional proof — the WE-cleared region returns to stone.
+# rollback: the functional proof - the WE-cleared region returns to stone.
 echo "  rollback -> $(SG_RCON_QUIET=4000 R "spyglass rollback t:180s -g" | tr '\n' ' ' | head -c 120)"
 sleep 3
 isblk "$x0" "$y" "$z0" stone; ck $? "rollback restored the stone region (near corner)"
 isblk "$x1" "$y" "$z1" stone; ck $? "rollback restored the stone region (far corner)"
 
 # undo is player-scoped (pops the player's stack), so from console it must cleanly
-# report "must be a player" — which proves the command executes AND renders an
+# report "must be a player" - which proves the command executes AND renders an
 # Adventure component (the asComponent fix). Undo's world effect is covered by the
 # 1.21.x bot gameplay tests.
 un="$(SG_RCON_QUIET=2000 R "spyglass undo")"
