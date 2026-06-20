@@ -93,9 +93,20 @@ public final class BlockSnapshots {
                 potSherds);
     }
 
+    /**
+     * The "broken to air" after-snapshot is the same immutable value on
+     * every break, so it's a shared constant rather than a fresh allocation
+     * per record. {@link BlockSnapshot} is an immutable record and nothing
+     * identity-checks it, so sharing one instance is observably identical to
+     * constructing a new one each call — it just skips the per-break
+     * allocation (and the compact constructor's {@code List.copyOf} /
+     * {@code simple} recompute) across the ~12 break call sites.
+     */
+    private static final BlockSnapshot AIR = new BlockSnapshot(Material.AIR, "minecraft:air",
+            List.of(), List.of(), List.of(), List.of(), null);
+
     public static BlockSnapshot air() {
-        return new BlockSnapshot(Material.AIR, "minecraft:air",
-                List.of(), List.of(), List.of(), List.of(), null);
+        return AIR;
     }
 
     /**

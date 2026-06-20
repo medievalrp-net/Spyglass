@@ -35,7 +35,7 @@ public final class BlockBreakListener implements RecordingListener {
     public void onBlockBreak(BlockBreakEvent event) {
         BlockSnapshot original = BlockSnapshots.capture(event.getBlock().getState());
         BlockSnapshot after = BlockSnapshots.air();
-        BlockLocation location = BlockLocations.fromLocation(event.getBlock().getLocation());
+        BlockLocation location = BlockLocations.fromBlock(event.getBlock());
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
         recorder.record(BlockBreakRecord.of(ctx, "break", original.material().name(), original, after));
         // Cascade: if breaking this block knocks out the support of a
