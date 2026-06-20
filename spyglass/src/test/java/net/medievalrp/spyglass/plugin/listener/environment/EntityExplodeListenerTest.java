@@ -15,15 +15,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Attribution policy for explosion grief (#34): player-lit TNT carries
- * the igniter as the source — so {@code p:<griefer>} searches and
- * rollbacks cover the crater — while chained/dispenser TNT and mob
+ * the igniter as the source - so {@code p:<griefer>} searches and
+ * rollbacks cover the crater - while chained/dispenser TNT and mob
  * explosions stay entity-attributed for {@code c:} sweeps.
  */
 class EntityExplodeListenerTest {
 
     private final RecordingSupport support = new RecordingSupport(Duration.parse("4w"), "test");
     private final EntityExplodeListener listener = new EntityExplodeListener(
-            mock(net.medievalrp.spyglass.plugin.pipeline.Recorder.class), support);
+            mock(net.medievalrp.spyglass.plugin.pipeline.Recorder.class), support, Runnable::run);
 
     @Test
     void playerLitTntAttributesTheIgniter() {
