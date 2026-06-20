@@ -2,7 +2,11 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
     java
-    id("com.gradleup.shadow") version "8.3.6"
+    // 9.x required: the 8.3.6 Groovy ASM remapper throws on integer/Type
+    // constant fields under Gradle 9 the moment any relocate rule is active
+    // (we relocate org.bstats below, and SpyglassPlugin references it). 9.x
+    // rewrote the remapper and fixes it; the task package is unchanged.
+    id("com.gradleup.shadow") version "9.4.2"
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -19,6 +23,7 @@ val testcontainersVersion: String by rootProject.extra
 val jetbrainsAnnotationsVersion: String by rootProject.extra
 val faweVersion: String by rootProject.extra
 val worldeditVersion: String by rootProject.extra
+val bstatsVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -67,6 +72,12 @@ dependencies {
     implementation("org.incendo:cloud-paper:$cloudMinecraftVersion")
     implementation("org.incendo:cloud-annotations:$cloudCoreVersion")
     implementation("org.incendo:cloud-minecraft-extras:$cloudMinecraftVersion")
+    // bStats metrics. Shaded + relocated into BOTH shipped jars (see the
+    // ShadowJar relocate below) - deliberately NOT placed under plugin.yml
+    // `libraries:`, because Paper's library loader can't relocate and bStats
+    // requires relocation to avoid clashing with other plugins' copies. It is
+    // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
+    implementation("org.bstats:bstats-bukkit:$bstatsVersion")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -160,12 +171,23 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
     archiveClassifier.set("")
     from(sourceSets["main"].output)
     configurations = listOf(project.configurations.runtimeClasspath.get())
-    // Keep only our own modules (spyglass-api / -core). Everything else is
-    // declared under plugin.yml `libraries:` and resolved by Paper at runtime,
-    // so it must not be bundled here.
+    // Keep our own modules (spyglass-api / -core) AND bStats. Everything else is
+    // declared under plugin.yml `libraries:` and resolved by Paper at runtime, so
+    // it must not be bundled here. bStats is the one exception: it can't go
+    // through `libraries:` (the loader can't relocate it), so it travels bundled
+    // and relocated in the lean jar too - it's tiny.
     dependencies {
-        exclude { it.moduleGroup != "net.medievalrp" }
+        exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" }
     }
+}
+
+// bStats must be relocated out of `org.bstats` into our own namespace in EVERY
+// shaded artifact (the lean default jar and the fat fallback alike). bStats
+// refuses to run unrelocated, and an unrelocated copy would collide with any
+// other plugin that also bundles bStats. Applying it to all ShadowJar tasks
+// keeps the rule in one place.
+tasks.withType<ShadowJar>().configureEach {
+    relocate("org.bstats", "net.medievalrp.spyglass.libs.bstats")
 }
 
 tasks.build {
