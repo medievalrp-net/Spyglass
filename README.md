@@ -4,6 +4,25 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
+Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
+
+## Sponsors
+
+Proudly sponsored by and running on:
+
+<table>
+<tr>
+<td align="center">
+<a href="https://crusalis.net"><img src=".github/assets/crusalis.webp" width="220" alt="Crusalis: Glory of Rome"></a><br>
+<a href="https://crusalis.net"><b>crusalis.net</b></a> · 1,500+ players
+</td>
+<td align="center">
+<a href="https://apply.istoria.events/"><img src=".github/assets/istoria.jpg" width="130" alt="Istoria"></a><br>
+<a href="https://apply.istoria.events/"><b>apply.istoria.events</b></a> · 500+ players
+</td>
+</tr>
+</table>
+
 ## Performance
 
 A 2,000,376-block rollback, measured five ways: Spyglass on each of its three backends and CoreProtect on both of theirs, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
@@ -57,14 +76,14 @@ Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend nee
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
   - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
   - ClickHouse (set `database.backend = "clickhouse"`)
-- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded — `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike — for player and non-player (console/plugin) edits
+- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded - `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike - for player and non-player (console/plugin) edits
 
 ## Distribution
 
 Each [GitHub release](https://github.com/medievalrp-net/Spyglass/releases/latest) ships two jars:
 
-- **`Spyglass.jar`** (recommended) — lean build, ~0.7 MB. Its third-party libraries (the MongoDB / ClickHouse / SQLite drivers, the Cloud command framework, Configurate) are **not** bundled: Paper's library loader fetches them from Maven Central on first start and caches them under `<server>/libraries/`. This needs outbound internet the first time the plugin loads (and after a version bump).
-- **`Spyglass-shaded.jar`** — fat fallback, ~30 MB, with every dependency bundled and no library-loader requirement. Use it on hosts with no outbound network at boot, or if you hit a library-loader issue. Behavior is identical.
+- **`Spyglass.jar`** (recommended) - lean build, ~0.7 MB. Its third-party libraries (the MongoDB / ClickHouse / SQLite drivers, the Cloud command framework, Configurate) are **not** bundled: Paper's library loader fetches them from Maven Central on first start and caches them under `<server>/libraries/`. This needs outbound internet the first time the plugin loads (and after a version bump).
+- **`Spyglass-shaded.jar`** - fat fallback, ~30 MB, with every dependency bundled and no library-loader requirement. Use it on hosts with no outbound network at boot, or if you hit a library-loader issue. Behavior is identical.
 
 Both are built from one source: the lean jar's `plugin.yml` `libraries:` block and the shaded jar are produced by `./gradlew :spyglass:leanJar` and `:spyglass:shadowJar` respectively (`./gradlew build` makes both).
 
@@ -101,16 +120,19 @@ Search, rollback, and restore share one `key:value` query language. Combine as m
 
 #### Query keys
 
+Values are plain terms. Wrap in double quotes to search for a value that contains spaces or colons: `iname:"Storm Caller"`, `itags:"mmoitems:type"`.
+
 | Key | Aliases | Example | Notes |
 |---|---|---|---|
 | `p:` | `player:` | `p:Steve,Alex` · `p:!Steve` | Comma-separated for OR; `!name` excludes |
 | `a:` | `action:`, `event:` | `a:break,place` · `a:!place` | Event type. See `/sg events`; `!name` excludes |
 | `b:` | `block:` | `b:diamond_ore` · `b:!chest` | Target block material; `!material` excludes |
 | `i:` | `item:` | `i:netherite_sword` | Item material involved (drop, pickup, container, etc.) |
-| `iname:` | `itemname:` | `iname:Excalibur` | Item display name (substring). Works on both backends |
-| `ilore:` | `itemlore:`, `d:` | `ilore:cursed` | Item lore line (substring). Works on both backends |
-| `ench:` | `enchant:`, `enchantment:` | `ench:sharpness=5` | Item enchantment. Works on both backends |
-| `cu:` | `custom:` | `cu:my-custom-item` | Plugin custom-item id (via the API) |
+| `iname:` | `itemname:` | `iname:Excalibur` · `iname:"Storm Caller"` | Item display name (substring). Works on both backends |
+| `ilore:` | `itemlore:`, `d:` | `ilore:cursed` · `ilore:"for the worthy"` | Item lore line (substring). Works on both backends |
+| `itags:` | `itag:` | `itags:deliver_letter` · `itags:"mmoitems:type"` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Works on all backends |
+| `ench:` | `enchant:`, `enchantment:`, `ienchant:`, `ienchantments:` | `ench:sharpness=5` | Item enchantment. Works on both backends |
+| `cu:` | `custom:` | `cu:my-custom-item` | Item carries metadata: custom name, lore, enchants, or custom data |
 | `e:` | `entity:` | `e:creeper` | Entity type involved |
 | `c:` | `cause:` | `c:tnt,!creeper` | Change cause; `!cause` excludes |
 | `m:` | `message:` | `m:hello` | Chat, sign, or book text (substring) |
@@ -205,6 +227,12 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 # Track a specific enchanted item through drops and pickups.
 /sg search ench:sharpness=5 t:1d -g
+
+# Find items tagged by a plugin. Values that contain colons require quotes.
+/sg search a:deposit itags:"mmoitems:type" t:1d -g
+
+# Find an item by its full multi-word name. Values with spaces require quotes.
+/sg search iname:"Storm Caller" t:1w -g
 
 # Every command a specific IP ran today.
 /sg search ip:1.2.3.4 a:command t:1d -g

@@ -61,6 +61,7 @@ jobs:
           # link can point at /releases/latest/download/<name> permanently.
           cp "spyglass/build/libs/Spyglass-${v}.jar"        "dist/Spyglass.jar"
           cp "spyglass/build/libs/Spyglass-${v}-shaded.jar" "dist/Spyglass-shaded.jar"
+          cp "spyglass-velocity/build/libs/Spyglass-Velocity-${v}.jar" "dist/Spyglass-Velocity.jar"
           {
             echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
             echo
@@ -72,6 +73,10 @@ jobs:
             echo "- **\`Spyglass-shaded.jar\`** - fat fallback with every dependency bundled."
             echo "  Use it if your host blocks outbound network at boot, or you hit a"
             echo "  library-loader issue. Identical behavior, larger file."
+            echo "- **\`Spyglass-Velocity.jar\`** - optional Velocity proxy companion for"
+            echo "  cross-server search. Read-only: never writes records, never rolls back."
+            echo "  Install on the proxy only if you run a Velocity network; a standalone"
+            echo "  Paper server doesn't need it."
           } > dist/NOTES.md
 
       - name: Create release
@@ -80,6 +85,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v${{ steps.ver.outputs.version }}" \
-            dist/Spyglass.jar dist/Spyglass-shaded.jar \
+            dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
             --title "Spyglass ${{ steps.ver.outputs.version }}" \
             --notes-file dist/NOTES.md

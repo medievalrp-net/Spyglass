@@ -19,7 +19,8 @@ public record SpyglassConfig(
         Map<String, EventSettings> events,
         java.util.List<String> commandRedact,
         Tool tool,
-        Server server) {
+        Server server,
+        Metrics metrics) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -115,7 +116,8 @@ public record SpyglassConfig(
                 Map.copyOf(events),
                 commandRedact,
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
-                new Server(root.node("server", "name").getString("default")));
+                new Server(root.node("server", "name").getString("default")),
+                parseMetrics(root));
     }
 
     /**
@@ -133,6 +135,19 @@ public record SpyglassConfig(
         return redactNode.getList(String.class, java.util.List.of()).stream()
                 .filter(java.util.Objects::nonNull)
                 .toList();
+    }
+
+    /**
+     * bStats metrics opt-out. The key is absent on configs predating this
+     * option (and on a fresh default that leaves it on), so a missing value
+     * defaults to {@code true} - matching bStats' documented opt-out model.
+     * An explicit {@code metrics.enabled = false} disables Spyglass's own
+     * submission; the server-global {@code plugins/bStats/config.yml} the
+     * library writes is a second, server-wide switch. Static + package-visible
+     * so it's unit-testable headless, like {@link #parseCommandRedact}.
+     */
+    static Metrics parseMetrics(ConfigurationNode root) {
+        return new Metrics(root.node("metrics", "enabled").getBoolean(true));
     }
 
     public boolean enabled(String eventName) {
@@ -312,6 +327,14 @@ public record SpyglassConfig(
                 name = "default";
             }
         }
+    }
+
+    /**
+     * Anonymous usage metrics via bStats (https://bstats.org). {@code enabled}
+     * defaults to {@code true}; set {@code metrics.enabled = false} in
+     * {@code config.conf} to opt this server out of Spyglass's submission.
+     */
+    public record Metrics(boolean enabled) {
     }
 
     private static ConfigurationNode loadBundledDefaults(JavaPlugin plugin) throws IOException {

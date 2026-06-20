@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Embedded-SQLite store coverage (#106) — runs with no Docker, a CI win
+ * Embedded-SQLite store coverage (#106) - runs with no Docker, a CI win
  * over the Testcontainers Mongo / ClickHouse ITs. Exercises the hybrid
  * schema (simple block → columns, everything else → blob), the keyset
  * page, the lean rollback stream in both directions, predicate pushdown +
@@ -168,7 +168,7 @@ class SqliteRecordStoreTest {
 
         QueryResult result = store.query(request(List.of()));
         assertThat(result.records()).containsExactly(record);
-        // The whole record reduced to columns — no per-event blob row.
+        // The whole record reduced to columns - no per-event blob row.
         assertThat(rawBlob(EventIds.sequenceOf(record.id()))).isNull();
     }
 
@@ -258,7 +258,7 @@ class SqliteRecordStoreTest {
         } while (cursor != null);
 
         // Newest-first is by seq (the mint sequence == rowid), so paging
-        // walks every row exactly once in reverse save order — last-minted
+        // walks every row exactly once in reverse save order - last-minted
         // first. seq is co-monotonic with occurred for real records.
         List<UUID> newestFirst = new ArrayList<>(saved.stream().map(EventRecord::id).toList());
         java.util.Collections.reverse(newestFirst);
@@ -320,6 +320,32 @@ class SqliteRecordStoreTest {
     }
 
     @Test
+    void itemTagFilterFallsToPostFilter() {
+        // itags: lives inside the per-event blob (no column), so SQLite pushes
+        // what it can and matches custom_data in memory (#140), the same
+        // residual path as iname/ilore/ench.
+        Instant occurred = BASE.minusSeconds(1);
+        ContainerDepositRecord quested = new ContainerDepositRecord(
+                EventIds.newId(), "deposit", occurred, occurred.plusSeconds(3600),
+                Origin.player(), Source.player(UUID.randomUUID(), "Bob"),
+                new BlockLocation(WORLD, "world", 1, 70, 1), "srv", "CHEST", "CHEST", 0, 1,
+                new StoredItem(0, "PAPER", "blob", null, List.of(), List.of(),
+                        "{quest:\"deliver_letter\"}"),
+                null);
+        store.save(List.of(quested, deposit(2))); // deposit(2): plain diamond, no tags
+
+        QueryPredicate byTags = new QueryPredicate.Eq("beforeItem.tags",
+                Pattern.compile(Pattern.quote("deliver_letter"), Pattern.CASE_INSENSITIVE));
+        assertThat(store.query(request(List.of(byTags))).records())
+                .singleElement()
+                .satisfies(r -> assertThat(r.event()).isEqualTo("deposit"));
+
+        QueryPredicate miss = new QueryPredicate.Eq("beforeItem.tags",
+                Pattern.compile(Pattern.quote("nonexistent"), Pattern.CASE_INSENSITIVE));
+        assertThat(store.query(request(List.of(miss))).records()).isEmpty();
+    }
+
+    @Test
     void paletteInternsRepeatedValuesOnce() throws SQLException {
         UUID player = UUID.randomUUID();
         // Three breaks by one player in one world: world + player UUIDs and
@@ -334,7 +360,7 @@ class SqliteRecordStoreTest {
         // Exactly two UUIDs (world + player) despite three rows.
         assertThat(rawCount("uuids")).isEqualTo(2L);
         // event, world-name, target(STONE), player-name, STONE/AIR materials,
-        // stone/air block-data, server, origin/source kinds — a small fixed
+        // stone/air block-data, server, origin/source kinds - a small fixed
         // set, NOT three-per-row.
         assertThat(rawCount("dict")).isLessThan(12L);
     }

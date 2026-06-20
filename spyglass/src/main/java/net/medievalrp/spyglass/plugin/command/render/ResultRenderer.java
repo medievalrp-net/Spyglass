@@ -305,6 +305,10 @@ public final class ResultRenderer {
      *  produce a screen-filling tooltip. */
     private static final int MAX_LORE_LINES = 12;
 
+    /** Custom-data ({@code tags}) can run to kilobytes; the hover shows a
+     *  preview and trusts {@code itags:} for the full search. */
+    private static final int MAX_TAGS_HOVER = 128;
+
     /**
      * The item a record is "about", for hover detail: the deposited item
      * for a deposit, the withdrawn item for a withdraw, the dropped /
@@ -323,10 +327,10 @@ public final class ResultRenderer {
     }
 
     /**
-     * Append "Item Name" / "Enchants" / "Lore" hover lines for the record's
-     * subject item when it carries custom metadata. Plain-text projections
-     * only (colors were stripped at record time); a vanilla item with no
-     * name, lore, or enchants adds nothing.
+     * Append "Item Name" / "Enchants" / "Tags" / "Lore" hover lines for the
+     * record's subject item when it carries custom metadata. Plain-text
+     * projections only (colors were stripped at record time); a vanilla item
+     * with no name, lore, enchants, or custom data adds nothing.
      */
     private static void appendItemDetail(List<Component> lines, EventRecord record) {
         StoredItem item = subjectItem(record);
@@ -336,7 +340,8 @@ public final class ResultRenderer {
         boolean hasName = item.name() != null && !item.name().isBlank();
         boolean hasLore = !item.lore().isEmpty();
         boolean hasEnchants = !item.enchants().isEmpty();
-        if (!hasName && !hasLore && !hasEnchants) {
+        boolean hasTags = item.tags() != null && !item.tags().isBlank();
+        if (!hasName && !hasLore && !hasEnchants && !hasTags) {
             return;
         }
         if (hasName) {
@@ -344,6 +349,15 @@ public final class ResultRenderer {
         }
         if (hasEnchants) {
             lines.add(kv("Enchants", String.join(", ", item.enchants())));
+        }
+        if (hasTags) {
+            // The full custom_data is searchable via itags:; the hover only
+            // previews it so a kilobyte NBT blob can't blow up the tooltip.
+            String tags = item.tags();
+            String preview = tags.length() > MAX_TAGS_HOVER
+                    ? tags.substring(0, MAX_TAGS_HOVER) + "…"
+                    : tags;
+            lines.add(kv("Tags", preview));
         }
         if (hasLore) {
             lines.add(Component.text("Lore:", NamedTextColor.GRAY));

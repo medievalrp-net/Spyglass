@@ -200,6 +200,7 @@ final class PredicateEvaluator {
             case "slot" -> item.slot();
             case "lore" -> item.lore();
             case "enchants" -> item.enchants();
+            case "tags" -> item.tags();
             // hasMetadata() probes array non-emptiness via ".0".
             case "lore.0" -> item.lore().isEmpty() ? null : item.lore().get(0);
             case "enchants.0" -> item.enchants().isEmpty() ? null : item.enchants().get(0);
