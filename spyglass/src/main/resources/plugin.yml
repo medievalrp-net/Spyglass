@@ -26,3 +26,21 @@ permissions:
     default: op
   spyglass.tele:
     default: op
+
+# Externalized at runtime via Paper's library loader (Maven Central, cached
+# under <server>/libraries/); versions injected from Gradle at build time. The
+# shaded fallback jar (Spyglass-shaded.jar) strips this block and bundles these
+# instead — see README "Distribution". Keep `libraries:` the LAST block: the
+# shaded-jar build truncates the descriptor from this line down.
+libraries:
+  - org.mongodb:mongodb-driver-sync:${mongoDriverVersion}
+  - org.mongodb:bson-record-codec:${mongoDriverVersion}
+  - com.clickhouse:clickhouse-jdbc:${clickhouseClientVersion}
+  - com.clickhouse:client-v2:${clickhouseClientVersion}
+  - com.clickhouse:clickhouse-http-client:${clickhouseClientVersion}
+  - com.clickhouse:clickhouse-data:${clickhouseClientVersion}
+  - org.xerial:sqlite-jdbc:${sqliteJdbcVersion}
+  - org.spongepowered:configurate-hocon:${configurateVersion}
+  - org.incendo:cloud-paper:${cloudMinecraftVersion}
+  - org.incendo:cloud-annotations:${cloudCoreVersion}
+  - org.incendo:cloud-minecraft-extras:${cloudMinecraftVersion}

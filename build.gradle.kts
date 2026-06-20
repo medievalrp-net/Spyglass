@@ -126,8 +126,8 @@ tasks.register<Exec>("regression") {
 
 tasks.register("deployToRpServer") {
     group = "deployment"
-    description = "Shadow-builds the plugin jar and copies it to ../RP_Server/plugins/Spyglass.jar."
-    dependsOn(":spyglass:shadowJar")
+    description = "Builds the lean plugin jar and copies it to ../RP_Server/plugins/Spyglass.jar."
+    dependsOn(":spyglass:leanJar")
     doLast {
         val pluginProject = project(":spyglass")
         val candidate = pluginProject.layout.buildDirectory
