@@ -1,0 +1,169 @@
+[
+  {
+    "id": "break-global-ungrouped",
+    "description": "3 seeded break records; search with -g -ng returns 3 v2 lines",
+    "v2": "sg search a:break t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "v1": "sg search a:break t:1d -g -ng",
+    "v1_follow_up": "sg page 1",
+    "expected_count": 3,
+    "compare": "exact"
+  },
+  {
+    "id": "break-by-block-stone",
+    "description": "Only one seeded break targets STONE",
+    "v2": "sg search a:break b:stone t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "place-global",
+    "description": "1 seeded place record",
+    "v2": "sg search a:place t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "say-global",
+    "description": "1 seeded chat record",
+    "v2": "sg search a:say t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "break-grouped",
+    "description": "3 break records aggregate into 3 x1 buckets when grouped",
+    "v2": "sg search a:break t:1d -g",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 3,
+    "compare": "exact"
+  },
+  {
+    "id": "break-place-multi",
+    "description": "Multi-event In filter returns 3 break + 1 place = 4 without dedup bug",
+    "v2": "sg search a:break,place t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 4,
+    "compare": "exact"
+  },
+  {
+    "id": "help-loads",
+    "description": "sg help must print the title line",
+    "v2": "sg help",
+    "expected_output_contains": "Spyglass",
+    "compare": "contains"
+  },
+  {
+    "id": "events-lists-break",
+    "description": "sg events must include 'break'",
+    "v2": "sg events",
+    "expected_output_contains": "break",
+    "compare": "contains"
+  },
+  {
+    "id": "events-lists-decay",
+    "description": "Block 3.1 added decay — /sg events lists it",
+    "v2": "sg events",
+    "expected_output_contains": "decay",
+    "compare": "contains"
+  },
+  {
+    "id": "decay-count",
+    "description": "2 seeded decay records",
+    "v2": "sg search a:decay t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 2,
+    "compare": "exact"
+  },
+  {
+    "id": "grow-count",
+    "description": "1 seeded grow record",
+    "v2": "sg search a:grow t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "form-count",
+    "description": "1 seeded form record",
+    "v2": "sg search a:form t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "ignite-count",
+    "description": "1 seeded ignite record",
+    "v2": "sg search a:ignite t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "break-and-decay-share-type",
+    "description": "a:break,decay both map to BlockBreakRecord; must return 3 break + 2 decay = 5 records",
+    "v2": "sg search a:break,decay t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 5,
+    "compare": "exact"
+  },
+  {
+    "id": "drop-count",
+    "description": "Block 3.4 added ItemDropRecord",
+    "v2": "sg search a:drop t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "pickup-count",
+    "description": "Block 3.4 added ItemPickupRecord",
+    "v2": "sg search a:pickup t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "teleport-count",
+    "description": "Block 3.4 added TeleportRecord",
+    "v2": "sg search a:teleport t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "death-count",
+    "description": "Block 3.5 EntityDeathRecord",
+    "v2": "sg search a:death t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "hit-count",
+    "description": "Block 3.5 EntityHitRecord (melee)",
+    "v2": "sg search a:hit t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "shot-count",
+    "description": "Block 3.5 EntityHitRecord (projectile)",
+    "v2": "sg search a:shot t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  },
+  {
+    "id": "mount-count",
+    "description": "Block 3.5 EntityMountRecord",
+    "v2": "sg search a:mount t:1d -g -ng",
+    "v2_follow_up": "sg page 1",
+    "expected_count": 1,
+    "compare": "exact"
+  }
+]
