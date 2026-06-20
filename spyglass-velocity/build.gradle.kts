@@ -80,6 +80,10 @@ tasks.shadowJar {
 
 tasks.jar {
     archiveBaseName.set("Spyglass-Velocity")
+    // Classified so the plain module jar never shares a filename with the
+    // shipped shadowJar (Spyglass-Velocity-<version>.jar). Mirrors the spyglass
+    // module's `thin` jar. Not a published artifact.
+    archiveClassifier.set("thin")
 }
 
 tasks.build {
