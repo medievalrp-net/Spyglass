@@ -20,7 +20,7 @@ import net from 'net';
 const HOST = '127.0.0.1', PORT = 25566, RCON_PORT = 25576, PASS = 'test123';
 const FAWE = process.argv.includes('--fawe');
 const ORIGIN = FAWE ? 'fawe' : 'worldedit';
-const BOT = 'we105_' + Math.floor(1000 + Math.random() * 8999);
+const BOT = 'we113_' + Date.now().toString(36).slice(-6) + '_' + Math.floor(100 + Math.random() * 899);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('[' + new Date().toISOString().slice(11, 19) + ']', ...a);
@@ -63,8 +63,17 @@ const check = (name, ok, detail) => { if (ok) { pass++; log(`  PASS  ${name}`); 
 
 // One 5-wide lane per selection op; 5x5x5 region (125 cells).
 const BX = 17000, BY = 72, BZ = 17000, SZ = 5;
+const VOLUME = SZ * SZ * SZ;
+const WALL_VOLUME = (SZ * SZ - (SZ - 2) * (SZ - 2)) * SZ;
+const COLUMN_AREA = SZ * SZ;
 let laneN = 0;
 function lane() { const x0 = BX + (laneN++) * 12; return { x0, y0: BY, z0: BZ, x1: x0 + SZ - 1, y1: BY + SZ - 1, z1: BZ + SZ - 1 }; }
+function box(L) {
+  return `location_x BETWEEN ${L.x0} AND ${L.x1} AND location_y BETWEEN ${L.y0} AND ${L.y1} AND location_z BETWEEN ${L.z0} AND ${L.z1}`;
+}
+function shiftedBox(L, dx, dy = 0, dz = 0) {
+  return box({ x0: L.x0 + dx, y0: L.y0 + dy, z0: L.z0 + dz, x1: L.x1 + dx, y1: L.y1 + dy, z1: L.z1 + dz });
+}
 
 let bot = null;
 async function select(L) {
@@ -99,24 +108,35 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     return L;
   }
 
+  async function expectCount(name, extra, expected, timeoutMs = 20000) {
+    const got = await pollCnt(extra, expected, timeoutMs);
+    check(`${name} (${got}/${expected})`, got === expected, `expected ${expected}, got ${got}`);
+    return got;
+  }
+
+  async function expectDelta(name, extra, before, expected, timeoutMs = 20000) {
+    const got = await pollCnt(extra, before + expected, timeoutMs);
+    const delta = got - before;
+    check(`${name} (Δ=${delta}/${expected})`, delta === expected,
+      `before=${before} after=${got} expected Δ=${expected}`);
+    return got;
+  }
+
   // 1. //set — baseline (already proven in _worldedit-offmain-proof; included for completeness)
-  await selOp('set', 'stone', '//set glass', async () => {
-    const places = await pollCnt(`event='place' AND target='GLASS'`, 1);
-    const breaks = await pollCnt(`event='break' AND target='STONE'`, 1);
-    check(`//set logs place GLASS (${places})`, places >= 1, `got ${places}`);
-    check(`//set logs break STONE (${breaks})`, breaks >= 1, `got ${breaks}`);
+  await selOp('set', 'stone', '//set glass', async (L) => {
+    await expectCount('//set logs exact place GLASS', `event='place' AND target='GLASS' AND ${box(L)}`, VOLUME);
+    await expectCount('//set logs exact break STONE', `event='break' AND target='STONE' AND ${box(L)}`, VOLUME);
   });
 
   // 2. //replace
-  await selOp('replace', 'stone', '//replace stone sandstone', async () => {
-    const places = await pollCnt(`event='place' AND target='SANDSTONE'`, 1);
-    check(`//replace logs place SANDSTONE (${places})`, places >= 1, `got ${places}`);
+  await selOp('replace', 'cobblestone', '//replace cobblestone sandstone', async (L) => {
+    await expectCount('//replace logs exact place SANDSTONE', `event='place' AND target='SANDSTONE' AND ${box(L)}`, VOLUME);
+    await expectCount('//replace logs exact break COBBLESTONE', `event='break' AND target='COBBLESTONE' AND ${box(L)}`, VOLUME);
   });
 
   // 3. //walls
-  await selOp('walls', null, '//walls bricks', async () => {
-    const places = await pollCnt(`event='place' AND target='BRICKS'`, 1);
-    check(`//walls logs place BRICKS (${places})`, places >= 1, `got ${places}`);
+  await selOp('walls', null, '//walls bricks', async (L) => {
+    await expectCount('//walls logs exact place BRICKS', `event='place' AND target='BRICKS' AND ${box(L)}`, WALL_VOLUME);
   });
 
   // 4. //overlay — places the pattern above the highest block in each column.
@@ -130,9 +150,8 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     bot.chat('//sel cuboid'); await sleep(200);
     bot.chat(`//pos1 ${L.x0},${oy},${L.z0}`); await sleep(200);
     bot.chat(`//pos2 ${L.x1},${oy + 4},${L.z1}`); await sleep(200);
-    const done = waitChat(bot, /overlaid/i, 30000); bot.chat('//overlay red_wool'); await done; await sleep(500);
-    const places = await pollCnt(`event='place' AND target='RED_WOOL'`, 1);
-    check(`//overlay logs place RED_WOOL (${places})`, places >= 1, `got ${places}`);
+    const done = waitChat(bot, /overlaid/i, 30000); bot.chat('//overlay red_wool'); await done; await settle();
+    await expectCount('//overlay logs exact place RED_WOOL', `event='place' AND target='RED_WOOL' AND ${box({ ...L, y0: oy, y1: oy + 4 })}`, COLUMN_AREA);
   }
 
   // 5. //stack — copy the region one step east into a cleared dest (so the copy
@@ -143,8 +162,8 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     await rcon(`fill ${L.x1 + 1} ${L.y0} ${L.z0} ${L.x1 + SZ} ${L.y1} ${L.z1} air`); await sleep(250);
     await select(L);
     const done = waitChat(bot, DONE_RE, 30000); bot.chat('//stack 1 east'); await done; await settle();
-    const places = await pollCnt(`event='place' AND target='EMERALD_BLOCK'`, 1);
-    check(`//stack logs place EMERALD_BLOCK (${places})`, places >= 1, `got ${places}`);
+    await expectCount('//stack logs exact place EMERALD_BLOCK',
+      `event='place' AND target='EMERALD_BLOCK' AND ${shiftedBox(L, SZ)}`, VOLUME);
   }
 
   // 6. //move — break source, place into a cleared dest
@@ -154,9 +173,10 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     await rcon(`fill ${L.x0 + 6} ${L.y0} ${L.z0} ${L.x0 + 6 + SZ - 1} ${L.y1} ${L.z1} air`); await sleep(250);
     await select(L);
     const done = waitChat(bot, DONE_RE, 30000); bot.chat('//move 6 east'); await done; await settle();
-    const breaks = await pollCnt(`event='break' AND target='LAPIS_BLOCK'`, 1);
-    const places = await pollCnt(`event='place' AND target='LAPIS_BLOCK'`, 1);
-    check(`//move logs break+place LAPIS_BLOCK (b=${breaks} p=${places})`, breaks >= 1 && places >= 1, `b=${breaks} p=${places}`);
+    await expectCount('//move logs exact break LAPIS_BLOCK',
+      `event='break' AND target='LAPIS_BLOCK' AND ${box(L)}`, VOLUME);
+    await expectCount('//move logs exact place LAPIS_BLOCK',
+      `event='place' AND target='LAPIS_BLOCK' AND ${shiftedBox(L, 6)}`, VOLUME);
   }
 
   // 7. //copy + //paste — copy, clear the region, paste it back (a real change,
@@ -167,10 +187,10 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     await select(L);
     bot.chat('//copy'); await sleep(900);
     await rcon(`fill ${L.x0} ${L.y0} ${L.z0} ${L.x1} ${L.y1} ${L.z1} air`); await sleep(400);
-    const before = await cnt(`event='place' AND target='GOLD_BLOCK'`);
+    const before = await cnt(`event='place' AND target='GOLD_BLOCK' AND ${box(L)}`);
     const done = waitChat(bot, DONE_RE, 30000); bot.chat('//paste -o'); await done; await settle();
-    const after = await pollCnt(`event='place' AND target='GOLD_BLOCK'`, before + 1);
-    check(`//paste logs place GOLD_BLOCK (Δ=${after - before})`, after > before, `before=${before} after=${after}`);
+    await expectDelta('//paste logs exact place GOLD_BLOCK',
+      `event='place' AND target='GOLD_BLOCK' AND ${box(L)}`, before, VOLUME);
   }
 
   // 8. //schem save/load/paste — clear the region before pasting the loaded schem
@@ -182,10 +202,10 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     bot.chat('//schem save sg105test'); await sleep(1200);
     bot.chat('//schem load sg105test'); await sleep(1200);
     await rcon(`fill ${L.x0} ${L.y0} ${L.z0} ${L.x1} ${L.y1} ${L.z1} air`); await sleep(400);
-    const before = await cnt(`event='place' AND target='DIAMOND_BLOCK'`);
+    const before = await cnt(`event='place' AND target='DIAMOND_BLOCK' AND ${box(L)}`);
     const done = waitChat(bot, DONE_RE, 30000); bot.chat('//paste -o'); await done; await settle();
-    const after = await pollCnt(`event='place' AND target='DIAMOND_BLOCK'`, before + 1);
-    check(`schematic //paste logs place DIAMOND_BLOCK (Δ=${after - before})`, after > before, `before=${before} after=${after}`);
+    await expectDelta('schematic //paste logs exact place DIAMOND_BLOCK',
+      `event='place' AND target='DIAMOND_BLOCK' AND ${box(L)}`, before, VOLUME);
     bot.chat('//schem delete sg105test'); await sleep(400);
   }
 
@@ -194,24 +214,30 @@ const DONE_RE = /have been changed|operation completed|blocks? affected|pasted|s
     const L = lane(); log('--- undo ---');
     await rcon(`fill ${L.x0} ${L.y0} ${L.z0} ${L.x1} ${L.y1} ${L.z1} stone`); await sleep(300);
     await select(L);
-    let done = waitChat(bot, DONE_RE, 30000); bot.chat('//set obsidian'); await done; await sleep(800);
-    await pollCnt(`event='place' AND target='OBSIDIAN'`, 1);
-    const before = await cnt();
-    done = waitChat(bot, /Undid|undone/i, 30000); bot.chat('//undo'); await done; await sleep(800);
+    const placeObsidianBeforeSet = await cnt(`event='place' AND target='OBSIDIAN' AND ${box(L)}`);
+    let done = waitChat(bot, DONE_RE, 30000); bot.chat('//set obsidian'); await done; await settle();
+    await expectDelta('//set before undo logs exact place OBSIDIAN',
+      `event='place' AND target='OBSIDIAN' AND ${box(L)}`, placeObsidianBeforeSet, VOLUME);
+    const before = await cnt(box(L));
+    const breakObsidianBeforeUndo = await cnt(`event='break' AND target='OBSIDIAN' AND ${box(L)}`);
+    done = waitChat(bot, /Undid|undone/i, 30000); bot.chat('//undo'); await done; await settle();
     // undo restores stone over the obsidian: a fresh edit that breaks OBSIDIAN + places STONE
-    const total = await pollCnt('', before + 1);
-    const undoBreaksObsidian = await pollCnt(`event='break' AND target='OBSIDIAN'`, 1, 8000);
-    check(`//undo is itself logged (total Δ=${total - before})`, total > before, `before=${before} total=${total}`);
-    check(`//undo logs break OBSIDIAN (${undoBreaksObsidian})`, undoBreaksObsidian >= 1, `got ${undoBreaksObsidian}`);
+    const total = await cnt(box(L));
+    check(`//undo is itself logged exactly (total Δ=${total - before}/${VOLUME * 2})`,
+      total - before === VOLUME * 2, `before=${before} total=${total}`);
+    await expectDelta('//undo logs exact break OBSIDIAN',
+      `event='break' AND target='OBSIDIAN' AND ${box(L)}`, breakObsidianBeforeUndo, VOLUME, 8000);
   }
 
   // 10. //redo — re-applying the edit must be logged too
   {
     log('--- redo ---');
-    const before = await cnt();
-    const done = waitChat(bot, /Redid|redone/i, 30000); bot.chat('//redo'); await done; await sleep(800);
-    const total = await pollCnt('', before + 1);
-    check(`//redo is itself logged (total Δ=${total - before})`, total > before, `before=${before} total=${total}`);
+    const L = { x0: BX + 8 * 12, y0: BY, z0: BZ, x1: BX + 8 * 12 + SZ - 1, y1: BY + SZ - 1, z1: BZ + SZ - 1 };
+    const before = await cnt(box(L));
+    const done = waitChat(bot, /Redid|redone/i, 30000); bot.chat('//redo'); await done; await settle();
+    const total = await cnt(box(L));
+    check(`//redo is itself logged exactly (total Δ=${total - before}/${VOLUME * 2})`,
+      total - before === VOLUME * 2, `before=${before} total=${total}`);
   }
 
   // 11. generation (player-centered) — sphere/cyl/pyramid on a platform
