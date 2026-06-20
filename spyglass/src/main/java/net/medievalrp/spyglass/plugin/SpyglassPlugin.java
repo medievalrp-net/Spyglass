@@ -249,7 +249,8 @@ public final class SpyglassPlugin extends JavaPlugin {
         }
 
         recorder = new AsyncRecorder(
-                config.storage().queueCapacity(), recordStore, wal, getLogger());
+                config.storage().queueCapacity(), config.storage().queueMax(),
+                recordStore, wal, Bukkit::isPrimaryThread, getLogger());
         // Publish RecordCommittedEvent to Bukkit listeners on every
         // intake. Done via a hook (rather than a direct Bukkit call
         // inside AsyncRecorder) so the recorder stays unit-testable
