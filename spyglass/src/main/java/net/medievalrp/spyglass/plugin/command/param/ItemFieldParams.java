@@ -75,16 +75,19 @@ final class ItemFieldParams {
     /**
      * Build a predicate that matches whenever any of the item-bearing record
      * paths has at least one populated meta field — non-null custom name,
-     * non-empty lore, or non-empty enchants. Mirrors v1's
-     * {@code cu:y} semantic ("item has metadata") without depending on a
-     * single boolean flag, since v2 always serializes the full {@code
-     * StoredItem} record.
+     * non-empty lore, non-empty enchants, or non-null custom data
+     * ({@code tags}). Mirrors v1's {@code cu:y} semantic ("item has metadata")
+     * without depending on a single boolean flag, since v2 always serializes
+     * the full {@code StoredItem} record. Custom data counts because an item
+     * carrying only {@code minecraft:custom_data} (a plugin/quest item with no
+     * display name or lore) is still a custom item.
      */
     static QueryPredicate hasMetadata() {
-        List<QueryPredicate> clauses = new java.util.ArrayList<>(ITEM_PATHS.size() * 3);
+        List<QueryPredicate> clauses = new java.util.ArrayList<>(ITEM_PATHS.size() * 4);
         for (String path : ITEM_PATHS) {
-            // name: non-null custom display name
+            // name / tags: non-null projected scalar
             clauses.add(new QueryPredicate.Not(new QueryPredicate.Eq(path + ".name", null)));
+            clauses.add(new QueryPredicate.Not(new QueryPredicate.Eq(path + ".tags", null)));
             // lore.0 / enchants.0 exist <=> the array is non-empty
             clauses.add(new QueryPredicate.Exists(path + ".lore.0", true));
             clauses.add(new QueryPredicate.Exists(path + ".enchants.0", true));

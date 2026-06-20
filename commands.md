@@ -46,8 +46,9 @@ Root: `/spyglass`. Short alias: `/sg`.
 | `i` | `item` | Item material |
 | `iname` | `itemname` | Item display name (substring) |
 | `ilore` | `itemlore`, `d` | Item lore (substring) |
-| `ench` | `enchant`, `enchantment` | Enchantment |
-| `cu` | `custom` | Plugin custom-item id |
+| `itags` | `itag` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values |
+| `ench` | `enchant`, `enchantment`, `ienchant`, `ienchantments` | Enchantment |
+| `cu` | `custom` | Item has metadata: custom name, lore, enchants, or custom data |
 | `e` | `entity` | Entity type |
 | `c` | `cause` | Change cause |
 | `m` | `message` | Chat / sign / book text |
