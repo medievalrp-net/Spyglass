@@ -13,8 +13,11 @@ import mineflayer from 'mineflayer';
 import { Vec3 } from 'vec3';
 import net from 'net';
 
-export const HOST = '127.0.0.1', PORT = 25566;
-const RCON_PORT = 25576, RCON_PASS = 'test123';
+// Ports are env-overridable so a throwaway test server can run alongside the
+// live bench server without colliding (defaults match the bench setup).
+export const HOST = process.env.SG_HOST || '127.0.0.1';
+export const PORT = +(process.env.SG_PORT || 25566);
+const RCON_PORT = +(process.env.SG_RCON_PORT || 25576), RCON_PASS = process.env.SG_RCON_PASS || 'test123';
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ts = () => '[' + new Date().toISOString().slice(11, 19) + ']';

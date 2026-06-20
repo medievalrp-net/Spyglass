@@ -1,0 +1,85 @@
+name: Release
+
+# Cuts a GitHub release whenever `version` in gradle.properties names a tag that
+# doesn't exist yet. Bump the version and push to main to ship; pushes that
+# don't change the version no-op. Also runnable on demand via "Run workflow".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read project version
+        id: ver
+        run: echo "version=$(grep '^version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v${{ steps.ver.outputs.version }} already exists - nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 21
+        if: steps.exists.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        if: steps.exists.outputs.exists == 'false'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build (tests + both jars)
+        if: steps.exists.outputs.exists == 'false'
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Stage release assets
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p dist
+          # Stable, version-less asset names so the SpigotMC "external download"
+          # link can point at /releases/latest/download/<name> permanently.
+          cp "spyglass/build/libs/Spyglass-${v}.jar"        "dist/Spyglass.jar"
+          cp "spyglass/build/libs/Spyglass-${v}-shaded.jar" "dist/Spyglass-shaded.jar"
+          {
+            echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
+            echo
+            echo "### Downloads"
+            echo "- **\`Spyglass.jar\`** (recommended) - lean build. Paper's library loader"
+            echo "  downloads its database driver, command framework, and config libs from"
+            echo "  Maven Central on first start (needs outbound internet once; cached under"
+            echo "  \`<server>/libraries/\`)."
+            echo "- **\`Spyglass-shaded.jar\`** - fat fallback with every dependency bundled."
+            echo "  Use it if your host blocks outbound network at boot, or you hit a"
+            echo "  library-loader issue. Identical behavior, larger file."
+          } > dist/NOTES.md
+
+      - name: Create release
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.ver.outputs.version }}" \
+            dist/Spyglass.jar dist/Spyglass-shaded.jar \
+            --title "Spyglass ${{ steps.ver.outputs.version }}" \
+            --notes-file dist/NOTES.md
