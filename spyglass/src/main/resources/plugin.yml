@@ -3,7 +3,7 @@ version: ${version}
 main: net.medievalrp.spyglass.plugin.SpyglassPlugin
 api-version: "1.21"
 authors:
-  - MedievalRP
+  - itdontmatta
 softdepend:
   - WorldEdit
   - FastAsyncWorldEdit
