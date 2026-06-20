@@ -75,9 +75,17 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Internal
 public final class WorldEditSubscriber {
 
+    // Caps WorldEdit record-builds in flight; excess builds run inline on the
+    // editing thread as backpressure, so the records alive in the (otherwise
+    // unbounded) build stage stay bounded for an op of any size (#121). With the
+    // queue cap + spill this bounds Spyglass's own footprint; it does not bound
+    // Minecraft's per-block cost. (maxInFlight + 1) x DRAIN_THRESHOLD records is
+    // the in-flight bound — a few hundred MB.
+    private static final int MAX_INFLIGHT_BUILDS = 4;
+
     private final Recorder recorder;
     private final RecordingSupport support;
-    private final Executor asyncExecutor;
+    private final BoundedAsyncDispatcher buildDispatcher;
     private final Plugin plugin;
     private final Logger logger;
 
@@ -85,7 +93,7 @@ public final class WorldEditSubscriber {
                                Executor asyncExecutor, Plugin plugin, Logger logger) {
         this.recorder = recorder;
         this.support = support;
-        this.asyncExecutor = asyncExecutor;
+        this.buildDispatcher = new BoundedAsyncDispatcher(asyncExecutor, MAX_INFLIGHT_BUILDS);
         this.plugin = plugin;
         this.logger = logger;
     }
@@ -267,20 +275,18 @@ public final class WorldEditSubscriber {
             }
         }
 
-        /** Hand the current buffer to the async executor and start a fresh one.
-         *  If the executor has been shut down (server stopping), build inline so
-         *  no records are dropped. */
+        /** Hand the current buffer to the build dispatcher and start a fresh
+         *  one. The dispatcher builds off-thread while in-flight builds are
+         *  under the cap, and inline on this (editing) thread once they hit it —
+         *  bounding the records alive in the build stage, and never dropping a
+         *  batch (inline also covers executor shutdown). */
         private void drain() {
             if (buffer.isEmpty()) {
                 return;
             }
             List<Pending> batch = buffer;
             buffer = new ArrayList<>();
-            try {
-                asyncExecutor.execute(() -> build(batch));
-            } catch (RuntimeException rejected) {
-                build(batch);
-            }
+            buildDispatcher.dispatch(() -> build(batch));
         }
 
         /** Off-main: convert WorldEdit's captured block data into break / place
