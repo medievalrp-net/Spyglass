@@ -4,6 +4,12 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
+## Discord
+
+[discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
+
+Proudly runs on and sponsored by [crusalis.net](https://crusalis.net) (1000+ players) and [apply.istoria.events](https://apply.istoria.events/) (500+ players).
+
 ## Performance
 
 A 2,000,376-block rollback, measured five ways: Spyglass on each of its three backends and CoreProtect on both of theirs, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
