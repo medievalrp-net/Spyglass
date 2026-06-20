@@ -90,6 +90,7 @@ public record SpyglassConfig(
                         Duration.parse(root.node("storage", "retention").getString("4w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
                         root.node("storage", "queue-max").getInt(500_000),
+                        root.node("storage", "spill-to-disk").getBoolean(true),
                         Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
                         parseDurability(root.node("storage", "durability").getString("ram")),
                         "synthesized".equalsIgnoreCase(
@@ -223,6 +224,13 @@ public record SpyglassConfig(
      *                      main thread is never blocked. {@code 0} restores the
      *                      legacy unbounded queue. Must sit above
      *                      {@code queueCapacity} so the warning precedes it.
+     * @param spillToDisk   when {@code true} (default), the bulk-edit firehose
+     *                      writes its overflow to an on-disk spill buffer once
+     *                      the queue hits {@code queueMax}, instead of holding
+     *                      it in RAM. This is what keeps an uncappable vanilla
+     *                      WorldEdit paste heap-flat without dropping records:
+     *                      the drain replays spilled segments. Requires
+     *                      {@code queueMax > 0}; needs a fast local disk.
      * @param flushTimeout  upper bound on how long {@code onDisable} will
      *                      wait for the queue to drain before returning.
      * @param durability    how aggressive the write path is about
@@ -240,7 +248,7 @@ public record SpyglassConfig(
      *                      cheap; per-event overhead is negligible.
      */
     public record Storage(Duration retention, int queueCapacity, int queueMax,
-                          Duration flushTimeout,
+                          boolean spillToDisk, Duration flushTimeout,
                           Durability durability, boolean rolledAuditSynthesized) {
     }
 
