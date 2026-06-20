@@ -201,6 +201,45 @@ class AsyncRecorderTest {
         }
     }
 
+    @Test
+    void drainRunsOnANamedDaemonPlatformThread() throws Exception {
+        // #115: the drain is one perpetual blocking-I/O loop, so it runs on a
+        // dedicated platform thread, not a virtual thread — a virtual thread's
+        // per-record wakeup paid ForkJoinPool continuation-submission on the
+        // ingest hot path. A virtual thread does NOT appear in
+        // Thread.getAllStackTraces() (it's outside the thread-group
+        // enumeration); a platform thread does. So finding the named thread
+        // there at all is itself proof it's a platform thread; we also assert
+        // isVirtual() is false and it's a daemon (never holds JVM exit).
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            Thread drain = null;
+            long deadline = System.currentTimeMillis() + 2_000L;
+            while (System.currentTimeMillis() < deadline && drain == null) {
+                drain = Thread.getAllStackTraces().keySet().stream()
+                        .filter(t -> "spyglass-drain".equals(t.getName()))
+                        .findFirst()
+                        .orElse(null);
+                if (drain == null) {
+                    Thread.sleep(20L);
+                }
+            }
+            assertThat(drain)
+                    .as("drain must run on a platform thread (virtual threads are "
+                            + "absent from getAllStackTraces)")
+                    .isNotNull();
+            assertThat(drain.isVirtual())
+                    .as("drain must not be a virtual thread")
+                    .isFalse();
+            assertThat(drain.isDaemon())
+                    .as("drain must be a daemon so it never blocks JVM exit")
+                    .isTrue();
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
     private static final class CapturingStore implements RecordStore {
         private final CopyOnWriteArrayList<EventRecord> all = new CopyOnWriteArrayList<>();
 

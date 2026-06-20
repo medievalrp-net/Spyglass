@@ -112,7 +112,19 @@ public final class AsyncRecorder implements Recorder {
         this.store = store;
         this.wal = wal;
         this.logger = logger;
-        Thread.ofVirtual()
+        // Dedicated platform thread, not a virtual thread. The drain is a
+        // single perpetual consumer loop that blocks on store.save() I/O;
+        // virtual threads pay off for many short-lived blocking tasks, not
+        // one long-lived loop. As a virtual thread, every record's wakeup
+        // paid a ForkJoinPool continuation-submission (unpark ->
+        // submitRunContinuation -> FJP.execute) that showed up on the
+        // ingest hot path in the timings profile, with nothing to free the
+        // carrier for (there is only one drainer). A platform thread is
+        // unparked directly and also sidesteps carrier pinning if the DB
+        // driver synchronizes internally during save(). Daemon so it never
+        // holds JVM exit; shutdown() still drains/flushes via the latch.
+        Thread.ofPlatform()
+                .daemon(true)
                 .name("spyglass-drain")
                 .start(this::drainLoop);
     }
