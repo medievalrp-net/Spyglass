@@ -20,6 +20,7 @@ public final class HelpService {
             new Entry("page", "<Page #>", "Moves you to the specified page of results (cached 15 min)."),
             new Entry("tool", "", "Toggle the inspection wand."),
             new Entry("events", "", "List every event type currently being recorded."),
+            new Entry("version", "", "Show the Spyglass version."),
     };
 
     public void send(CommandSender sender) {

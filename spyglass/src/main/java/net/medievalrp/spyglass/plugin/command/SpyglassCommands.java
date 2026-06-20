@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.command;
 
 import java.util.List;
+import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import net.medievalrp.spyglass.plugin.command.service.HelpService;
@@ -81,6 +82,7 @@ public final class SpyglassCommands {
     private static final List<String> EVENTS_ALIASES = List.of("events", "e");
     private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
     private static final List<String> INVENTORY_ALIASES = List.of("inventory", "inv", "salvage");
+    private static final List<String> VERSION_ALIASES = List.of("version", "ver");
 
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
@@ -100,6 +102,12 @@ public final class SpyglassCommands {
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.use")
                         .handler(ctx -> sendEnabledEvents(ctx.sender())));
+            }
+
+            for (String name : VERSION_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.use")
+                        .handler(ctx -> sendVersion(ctx.sender())));
             }
 
             for (String name : SEARCH_ALIASES) {
@@ -180,5 +188,22 @@ public final class SpyglassCommands {
                 .orElse("(none)");
         sender.sendMessage(Feedback.success("Enabled Events: "));
         sender.sendMessage(Feedback.bonus(joined));
+    }
+
+    private void sendVersion(CommandSender sender) {
+        for (Component line : versionLines(plugin.getPluginMeta().getVersion(),
+                plugin.getPluginMeta().getAuthors(),
+                plugin.getServer().getMinecraftVersion())) {
+            sender.sendMessage(line);
+        }
+    }
+
+    // Package-private and pure so the formatting is unit-testable without a
+    // live server or command manager.
+    static List<Component> versionLines(String version, List<String> authors, String serverVersion) {
+        String by = authors.isEmpty() ? "" : "by " + String.join(", ", authors) + ", ";
+        return List.of(
+                Feedback.success("Spyglass v" + version),
+                Feedback.bonus(by + "on Paper " + serverVersion));
     }
 }
