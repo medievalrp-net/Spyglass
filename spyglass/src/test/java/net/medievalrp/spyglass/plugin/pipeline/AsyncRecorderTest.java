@@ -397,6 +397,58 @@ class AsyncRecorderTest {
         }
     }
 
+    private static List<EventRecord> sampleBatch(int n) {
+        List<EventRecord> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            out.add(sampleRecord());
+        }
+        return out;
+    }
+
+    @Test
+    @Timeout(15)
+    void recordAllSpillsOnTheMainThreadWhenTheQueueIsFull(@TempDir Path dataFolder) throws Exception {
+        // #121: when a huge WorldEdit op saturates the off-thread build pool it
+        // builds inline on the MAIN thread, and that inline recordAll must spill
+        // to disk — not fall through to the main-thread always-admit path, which
+        // would grow the queue unbounded again. So recordAll spills once the
+        // queue is at the ceiling regardless of thread.
+        SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
+        GatedStore store = new GatedStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000L, 10L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                spill, () -> true, Logger.getLogger("test")); // () -> true: every caller is "main"
+        try {
+            // Several main-thread batches: the first fills the queue past the
+            // ceiling, the rest must spill (the drain is wedged, so the queue
+            // can't drain below the ceiling). None may block the main thread — a
+            // blocking impl would deadlock against the wedged store.
+            int batches = 5;
+            int perBatch = 50;
+            for (int b = 0; b < batches; b++) {
+                recorder.recordAll(sampleBatch(perBatch));
+            }
+            assertThat(spill.hasPending())
+                    .as("main-thread recordAll must spill once the queue is at the ceiling")
+                    .isTrue();
+            assertThat(spill.pendingRecordCount()).isGreaterThan(0L);
+
+            store.open();
+            int total = batches * perBatch;
+            long deadline = System.currentTimeMillis() + 10_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < total) {
+                Thread.sleep(25L);
+            }
+            assertThat(store.totalSaved())
+                    .as("every record persists — queue + spill both replayed, nothing dropped")
+                    .isEqualTo(total);
+            assertThat(spill.hasPending()).isFalse();
+        } finally {
+            store.open();
+            assertThat(recorder.shutdown(Duration.parse("3s")).dropped()).isZero();
+        }
+    }
+
     /**
      * Store whose save() blocks until {@link #open()} is called — models a
      * wedged drain so the backpressure ceiling engages deterministically. No
