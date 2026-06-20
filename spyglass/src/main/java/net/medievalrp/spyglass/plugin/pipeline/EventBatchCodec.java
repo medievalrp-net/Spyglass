@@ -62,23 +62,30 @@ final class EventBatchCodec {
     private EventBatchCodec() {
     }
 
-    /** Encode a batch as a single BSON document. */
+    /**
+     * Encode a batch as a single BSON document {@code { r: [ <record>, ... ] }}.
+     *
+     * <p>Streams each record straight through the {@link BsonBinaryWriter} into
+     * the output buffer — it does NOT first build a {@code BsonArray} of
+     * {@code BsonDocument}s. The materialized-tree approach allocated ~3x the
+     * batch as a `LinkedHashMap`-backed BSON object graph, which dominated the
+     * heap while several batches spilled in parallel (#125); streaming drops the
+     * transient to roughly the serialized buffer. The bytes are identical, so
+     * {@link #decode} and on-disk WAL/spill segments are unchanged.
+     */
     static byte[] encode(List<EventRecord> batch) {
-        BsonArray array = new BsonArray();
-        for (EventRecord record : batch) {
-            BsonDocument wrapper = new BsonDocument();
-            try (org.bson.BsonDocumentWriter writer = new org.bson.BsonDocumentWriter(wrapper)) {
-                writer.writeStartDocument();
-                writer.writeName(VALUE_KEY);
-                EVENT_RECORD_CODEC.encode(writer, record, EncoderContext.builder().build());
-                writer.writeEndDocument();
-            }
-            array.add(wrapper.get(VALUE_KEY));
-        }
-        BsonDocument document = new BsonDocument().append(RECORDS_KEY, array);
+        EncoderContext ctx = EncoderContext.builder().build();
         BasicOutputBuffer buffer = new BasicOutputBuffer();
         try (BsonBinaryWriter writer = new BsonBinaryWriter(buffer)) {
-            REGISTRY.get(BsonDocument.class).encode(writer, document, EncoderContext.builder().build());
+            writer.writeStartDocument();
+            writer.writeStartArray(RECORDS_KEY);
+            for (EventRecord record : batch) {
+                // Codec writes a document per record directly as an array
+                // element — same shape the old wrap-then-unwrap produced.
+                EVENT_RECORD_CODEC.encode(writer, record, ctx);
+            }
+            writer.writeEndArray();
+            writer.writeEndDocument();
         }
         return buffer.toByteArray();
     }
