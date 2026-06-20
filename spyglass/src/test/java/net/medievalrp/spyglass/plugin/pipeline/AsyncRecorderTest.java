@@ -2,7 +2,9 @@ package net.medievalrp.spyglass.plugin.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -22,6 +24,7 @@ import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 class AsyncRecorderTest {
 
@@ -329,6 +332,68 @@ class AsyncRecorderTest {
             assertThat(report.dropped())
                     .as("main-thread admit path drops nothing")
                     .isZero();
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void recordAllSpillsToDiskAtCeilingThenDrainsLosslessly(@TempDir Path dataFolder) throws Exception {
+        // #122: the uncappable vanilla-WorldEdit firehose (recordAll) must spill
+        // its overflow to disk at the ceiling instead of holding it in RAM or
+        // blocking — so a giant paste stays heap-flat and loses nothing. With
+        // the store wedged, the queue caps and the bulk lands on disk; once the
+        // store opens, the drain replays queue + spill and every record persists.
+        long queueMax = 200L;
+        int batchSize = 100;
+        int batches = 40; // 4000 records — 20x the ceiling
+        int total = batchSize * batches;
+        SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
+        GatedStore store = new GatedStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                spill, () -> false, Logger.getLogger("test"));
+        AtomicInteger submitted = new AtomicInteger();
+        Thread producer = new Thread(() -> {
+            for (int b = 0; b < batches; b++) {
+                List<EventRecord> batch = new ArrayList<>(batchSize);
+                for (int i = 0; i < batchSize; i++) {
+                    batch.add(sampleRecord());
+                }
+                recorder.recordAll(batch);
+                submitted.incrementAndGet();
+            }
+        }, "we-firehose");
+        try {
+            producer.start();
+            // recordAll spills instead of parking, so the producer finishes the
+            // whole burst even though the store is wedged the entire time.
+            producer.join(8_000L);
+            assertThat(submitted.get())
+                    .as("recordAll must not block at the ceiling — it spills overflow to disk")
+                    .isEqualTo(batches);
+            assertThat(spill.hasPending())
+                    .as("the over-ceiling overflow must have gone to disk, not RAM")
+                    .isTrue();
+            assertThat(spill.pendingRecordCount())
+                    .as("the bulk of the burst is on disk; only ~queue-max stays in RAM")
+                    .isGreaterThan(total / 2L);
+
+            // Open the store: the drain replays queue + spill, losslessly.
+            store.open();
+            long deadline = System.currentTimeMillis() + 12_000L;
+            while (System.currentTimeMillis() < deadline && store.totalSaved() < total) {
+                Thread.sleep(25L);
+            }
+            assertThat(store.totalSaved())
+                    .as("every record persists — spilled overflow is replayed, nothing dropped")
+                    .isEqualTo(total);
+            assertThat(spill.hasPending())
+                    .as("all spilled segments are acked (deleted) after replay")
+                    .isFalse();
+        } finally {
+            store.open();
+            AsyncRecorder.ShutdownReport report = recorder.shutdown(Duration.parse("3s"));
+            assertThat(report.dropped()).as("the spill path drops nothing").isZero();
         }
     }
 
