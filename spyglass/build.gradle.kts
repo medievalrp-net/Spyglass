@@ -44,7 +44,7 @@ configurations.all {
 dependencies {
     // spyglass-core re-exports spyglass-api, mongodb-driver-sync,
     // bson-record-codec, clickhouse-jdbc, client-v2,
-    // clickhouse-http-client, and clickhouse-data via `api(...)` —
+    // clickhouse-http-client, and clickhouse-data via `api(...)` -
     // anything that used to import them directly from this module still
     // works without the per-dep declaration.
     implementation(project(":spyglass-core"))
@@ -53,12 +53,12 @@ dependencies {
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     compileOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
     compileOnly("com.sk89q.worldedit:worldedit-bukkit:$worldeditVersion")
-    // FastAsyncWorldEdit API (Maven Central). compileOnly — the server
+    // FastAsyncWorldEdit API (Maven Central). compileOnly - the server
     // provides FAWE at runtime; this just makes FaweHook / FaweBatchLogger
     // compilable. Core-only: every FAWE import is com.fastasyncworldedit.core.*.
     // Pulled non-transitively: FAWE-Core's POM otherwise drags in a gson it
     // pins (strictly 2.11.0) that collides with Paper/adventure's gson, and
-    // we need none of its transitives — paper-api + worldedit already supply
+    // we need none of its transitives - paper-api + worldedit already supply
     // every other type these two classes touch.
     compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Core:$faweVersion") {
         isTransitive = false
@@ -106,10 +106,10 @@ tasks.processResources {
 }
 
 // === Distribution: two jars ===============================================
-// Spyglass.jar (leanJar) — only our modules; every third-party dep
+// Spyglass.jar (leanJar) - only our modules; every third-party dep
 // loads at runtime via plugin.yml
 // `libraries:`. This is the default download.
-// Spyglass-shaded.jar (shadowJar) — fat fallback: bundles everything and ships
+// Spyglass-shaded.jar (shadowJar) - fat fallback: bundles everything and ships
 // a plugin.yml with `libraries:` stripped,
 // for hosts that can't fetch libs at boot.
 
@@ -151,7 +151,7 @@ tasks.shadowJar {
     }
 }
 
-// Lean default jar: Spyglass-<version>.jar — only net.medievalrp modules.
+// Lean default jar: Spyglass-<version>.jar - only net.medievalrp modules.
 val leanJar = tasks.register<ShadowJar>("leanJar") {
     group = "build"
     description =
@@ -190,7 +190,7 @@ tasks.test {
 
 // Ingest throughput benchmark: v2 AsyncRecorder + MongoRecordStore vs a
 // synthetic v1-equivalent pipeline (unbounded queue + scheduled drain +
-// bulkWrite with v1 doc shape) — see IngestThroughputBench.java. Gated
+// bulkWrite with v1 doc shape) - see IngestThroughputBench.java. Gated
 // on Docker. Not part of `check`; run explicitly for metrics.
 tasks.register<Test>("ingestBench") {
     description = "Runs the Spyglass vs v1 ingest throughput benchmark (requires Docker)."
@@ -200,7 +200,7 @@ tasks.register<Test>("ingestBench") {
     useJUnitPlatform {
         includeTags("bench")
     }
-    // Don't run jacoco on the bench — instrumentation perturbs timing.
+    // Don't run jacoco on the bench - instrumentation perturbs timing.
     extensions.configure<JacocoTaskExtension> {
         isEnabled = false
     }

@@ -57,14 +57,14 @@ Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend nee
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
   - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
   - ClickHouse (set `database.backend = "clickhouse"`)
-- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded — `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike — for player and non-player (console/plugin) edits
+- Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded - `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike - for player and non-player (console/plugin) edits
 
 ## Distribution
 
 Each [GitHub release](https://github.com/medievalrp-net/Spyglass/releases/latest) ships two jars:
 
-- **`Spyglass.jar`** (recommended) — lean build, ~0.7 MB. Its third-party libraries (the MongoDB / ClickHouse / SQLite drivers, the Cloud command framework, Configurate) are **not** bundled: Paper's library loader fetches them from Maven Central on first start and caches them under `<server>/libraries/`. This needs outbound internet the first time the plugin loads (and after a version bump).
-- **`Spyglass-shaded.jar`** — fat fallback, ~30 MB, with every dependency bundled and no library-loader requirement. Use it on hosts with no outbound network at boot, or if you hit a library-loader issue. Behavior is identical.
+- **`Spyglass.jar`** (recommended) - lean build, ~0.7 MB. Its third-party libraries (the MongoDB / ClickHouse / SQLite drivers, the Cloud command framework, Configurate) are **not** bundled: Paper's library loader fetches them from Maven Central on first start and caches them under `<server>/libraries/`. This needs outbound internet the first time the plugin loads (and after a version bump).
+- **`Spyglass-shaded.jar`** - fat fallback, ~30 MB, with every dependency bundled and no library-loader requirement. Use it on hosts with no outbound network at boot, or if you hit a library-loader issue. Behavior is identical.
 
 Both are built from one source: the lean jar's `plugin.yml` `libraries:` block and the shaded jar are produced by `./gradlew :spyglass:leanJar` and `:spyglass:shadowJar` respectively (`./gradlew build` makes both).
 
