@@ -256,15 +256,19 @@ public final class AsyncRecorder implements Recorder {
         // for, and it runs off-main.
         //
         // When the queue is at the ceiling, spill this batch to disk instead
-        // of holding it in RAM. Vanilla WorldEdit's setBlock loop runs on the
-        // main thread (which we can't block), so parking the off-main build
-        // thread would just pile the overflow up in that thread's heap —
-        // O(paste size). Spilling keeps the heap flat (overflow lives on disk)
-        // and loses nothing: the drain replays spilled segments. The drain
+        // of holding it in RAM. Spilling keeps the heap flat (overflow lives on
+        // disk) and loses nothing: the drain replays spilled segments. The drain
         // also frees queue space continuously, so as soon as it keeps up the
         // batches flow back through the fast in-RAM path.
-        if (spill.enabled() && queueMax > 0 && !primaryThread.getAsBoolean()
-                && queue.size() >= queueMax) {
+        //
+        // Spill on ANY thread, including the main thread: under #121 backpressure
+        // a huge WorldEdit op builds inline on the editing (main) thread once the
+        // off-thread build pool is saturated, and that inline build must spill to
+        // disk too — not fall through to the main-thread always-admit path, which
+        // would grow the queue unbounded again. The bulk recordAll callers are
+        // the WE firehose and the (tiny, synthesized) rollback audit, so spilling
+        // regardless of thread is correct for both.
+        if (spill.enabled() && queueMax > 0 && queue.size() >= queueMax) {
             try {
                 spill.spill(records);
                 return;
