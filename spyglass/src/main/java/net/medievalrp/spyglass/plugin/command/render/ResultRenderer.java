@@ -164,7 +164,7 @@ public final class ResultRenderer {
                             .hoverEvent(HoverEvent.showText(
                                     Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
-        return builder.build();
+        return builder.asComponent();
     }
 
     /**
@@ -218,7 +218,7 @@ public final class ResultRenderer {
             builder.append(Component.text(" ", NamedTextColor.WHITE))
                     .append(navButton("→", page + 1));
         }
-        return builder.build();
+        return builder.asComponent();
     }
 
     private static Component navButton(String arrow, int targetPage) {
@@ -226,7 +226,7 @@ public final class ResultRenderer {
                 .append(Component.text("[", NamedTextColor.RED))
                 .append(Component.text(arrow, NamedTextColor.RED))
                 .append(Component.text("]", NamedTextColor.RED))
-                .build();
+                .asComponent();
         return label
                 .clickEvent(ClickEvent.runCommand("/spyglass page " + targetPage))
                 .hoverEvent(HoverEvent.showText(
@@ -492,7 +492,7 @@ public final class ResultRenderer {
         return Component.text()
                 .append(Component.text(key + ": ", NamedTextColor.GRAY))
                 .append(Component.text(value, NamedTextColor.WHITE))
-                .build();
+                .asComponent();
     }
 
     private static String locationText(BlockLocation location) {

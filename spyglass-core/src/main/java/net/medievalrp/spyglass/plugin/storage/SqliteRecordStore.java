@@ -96,6 +96,24 @@ public final class SqliteRecordStore implements RecordStore {
 
     private static final Logger LOGGER = Logger.getLogger(SqliteRecordStore.class.getName());
 
+    // The SQLite JDBC driver self-registers with DriverManager only when its
+    // class is loaded. In the lean (library-loaded) jar the driver lives in
+    // Paper's isolated library classloader, which DriverManager's one-time
+    // system-classloader ServiceLoader scan never sees — so a bare
+    // getConnection() throws "No suitable driver found for jdbc:sqlite". Force
+    // the class load here, from a classloader this store can reach, so the
+    // driver registers. Harmless in the shaded/test jars (the driver is already
+    // on this classloader); this just makes the load order explicit.
+    static {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            throw new ExceptionInInitializerError(
+                    "SQLite JDBC driver (org.sqlite.JDBC) is not on the classpath; "
+                            + "the sqlite-jdbc library failed to load");
+        }
+    }
+
     private static final int DEFAULT_READ_POOL = 4;
     private static final long DEFAULT_RETENTION_SECONDS = 28L * 24 * 3600; // 4 weeks
     private static final long RETENTION_SWEEP_MINUTES = 60L;
