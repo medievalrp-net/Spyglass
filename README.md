@@ -4,6 +4,8 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
+Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
+
 ## Sponsors
 
 Proudly sponsored by and running on:
@@ -20,8 +22,6 @@ Proudly sponsored by and running on:
 </td>
 </tr>
 </table>
-
-Discord: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
 ## Performance
 
