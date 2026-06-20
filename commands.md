@@ -36,7 +36,7 @@ Root: `/spyglass`. Short alias: `/sg`.
 
 ## Query keys
 
-`key:value`. Combine freely; results match all keys. On `p:`, `a:`, `b:`, and `c:`, prefix a value with `!` to exclude it instead — `b:stone,!chest` matches stone but never chests; `a:!place` matches everything except placements.
+`key:value`. Combine freely; results match all keys. On `p:`, `a:`, `b:`, and `c:`, prefix a value with `!` to exclude it instead (`b:stone,!chest` matches stone but never chests; `a:!place` matches everything except placements). Wrap a value in double quotes when it contains spaces or colons: `iname:"Storm Caller"`, `itags:"mmoitems:type"`.
 
 | Key | Aliases | Notes |
 |---|---|---|
@@ -44,9 +44,9 @@ Root: `/spyglass`. Short alias: `/sg`.
 | `a` | `action`, `event` | Event type. See `/sg events`; `!name` excludes |
 | `b` | `block` | Target block material; `!material` excludes |
 | `i` | `item` | Item material |
-| `iname` | `itemname` | Item display name (substring) |
-| `ilore` | `itemlore`, `d` | Item lore (substring) |
-| `itags` | `itag` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values |
+| `iname` | `itemname` | Item display name (substring). Quote multi-word names: `iname:"Storm Caller"` |
+| `ilore` | `itemlore`, `d` | Item lore (substring). Quote multi-word phrases: `ilore:"for the worthy"` |
+| `itags` | `itag` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Quote plugin-namespaced keys: `itags:"mmoitems:type"` |
 | `ench` | `enchant`, `enchantment`, `ienchant`, `ienchantments` | Enchantment |
 | `cu` | `custom` | Item has metadata: custom name, lore, enchants, or custom data |
 | `e` | `entity` | Entity type |
