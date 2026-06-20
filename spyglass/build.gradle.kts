@@ -1,3 +1,5 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
     java
     id("com.gradleup.shadow") version "8.3.6"
@@ -6,6 +8,7 @@ plugins {
 val paperApiVersion: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
+val sqliteJdbcVersion: String by rootProject.extra
 val configurateVersion: String by rootProject.extra
 val cloudMinecraftVersion: String by rootProject.extra
 val cloudCoreVersion: String by rootProject.extra
@@ -87,21 +90,86 @@ dependencies {
 
 tasks.processResources {
     filesMatching("plugin.yml") {
-        expand("version" to project.version)
+        // Inject the version + externalized library versions into plugin.yml so
+        // the `libraries:` block tracks the root version catalog instead of
+        // drifting in a hand-edited descriptor.
+        expand(
+            "version" to project.version,
+            "mongoDriverVersion" to mongoDriverVersion,
+            "clickhouseClientVersion" to clickhouseClientVersion,
+            "sqliteJdbcVersion" to sqliteJdbcVersion,
+            "configurateVersion" to configurateVersion,
+            "cloudMinecraftVersion" to cloudMinecraftVersion,
+            "cloudCoreVersion" to cloudCoreVersion,
+        )
     }
 }
 
-tasks.shadowJar {
-    archiveBaseName.set("Spyglass")
-    archiveClassifier.set("")
+// === Distribution: two jars ===============================================
+// Spyglass.jar        (leanJar)   — only our modules; every third-party dep
+//                                   loads at runtime via plugin.yml
+//                                   `libraries:`. This is the default download.
+// Spyglass-shaded.jar (shadowJar) — fat fallback: bundles everything and ships
+//                                   a plugin.yml with `libraries:` stripped,
+//                                   for hosts that can't fetch libs at boot.
+
+// The fat jar must NOT carry the `libraries:` block (it bundles those classes
+// itself, and a present block would make Paper download them too). Regenerate
+// the processed plugin.yml with everything from the `libraries:` line removed.
+val shadedPluginYml = layout.buildDirectory.file("generated/shaded-plugin/plugin.shaded.yml")
+val generateShadedPluginYml = tasks.register("generateShadedPluginYml") {
+    dependsOn(tasks.processResources)
+    val source = tasks.processResources.map { it.destinationDir.resolve("plugin.yml") }
+    val output = shadedPluginYml
+    inputs.files(source)
+    outputs.file(output)
+    doLast {
+        val stripped = source.get().readText()
+            .lineSequence()
+            .takeWhile { !it.trimStart().startsWith("libraries:") }
+            .joinToString("\n")
+            .trimEnd() + "\n"
+        output.get().asFile.apply { parentFile.mkdirs() }.writeText(stripped)
+    }
 }
 
 tasks.jar {
     archiveBaseName.set("Spyglass")
+    // Plain module-only jar; classified so it never collides with leanJar's
+    // Spyglass-<version>.jar. Not a shipped artifact.
+    archiveClassifier.set("thin")
+}
+
+// Fat fallback jar: Spyglass-<version>-shaded.jar
+tasks.shadowJar {
+    archiveBaseName.set("Spyglass")
+    archiveClassifier.set("shaded")
+    dependsOn(generateShadedPluginYml)
+    exclude("plugin.yml")
+    from(shadedPluginYml) {
+        rename { "plugin.yml" }
+    }
+}
+
+// Lean default jar: Spyglass-<version>.jar — only net.medievalrp modules.
+val leanJar = tasks.register<ShadowJar>("leanJar") {
+    group = "build"
+    description =
+        "Lean plugin jar: only Spyglass modules; third-party deps load via plugin.yml libraries:."
+    archiveBaseName.set("Spyglass")
+    archiveClassifier.set("")
+    from(sourceSets["main"].output)
+    configurations = listOf(project.configurations.runtimeClasspath.get())
+    // Keep only our own modules (spyglass-api / -core). Everything else is
+    // declared under plugin.yml `libraries:` and resolved by Paper at runtime,
+    // so it must not be bundled here.
+    dependencies {
+        exclude { it.moduleGroup != "net.medievalrp" }
+    }
 }
 
 tasks.build {
-    dependsOn(tasks.shadowJar)
+    dependsOn(leanJar, tasks.shadowJar)
 }
 
 tasks.withType<JacocoReport>().configureEach {

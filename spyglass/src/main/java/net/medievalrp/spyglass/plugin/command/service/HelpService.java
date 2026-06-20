@@ -33,7 +33,7 @@ public final class HelpService {
                     .append(Component.text(entry.usage(), NamedTextColor.GREEN))
                     .append(Component.text(": ", NamedTextColor.AQUA))
                     .append(Component.text(entry.description(), NamedTextColor.GRAY))
-                    .build();
+                    .asComponent();
             sender.sendMessage(line);
         }
     }

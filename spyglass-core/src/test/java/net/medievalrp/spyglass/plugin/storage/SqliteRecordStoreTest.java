@@ -71,6 +71,20 @@ class SqliteRecordStoreTest {
         store.close();
     }
 
+    @Test
+    void registersSqliteDriverOnClassLoad() {
+        // The store's static initializer force-loads org.sqlite.JDBC so the
+        // driver is registered with DriverManager even when sqlite-jdbc lives
+        // in Paper's isolated library classloader (the lean jar). Constructing
+        // the store in @BeforeEach has already triggered the static init, so
+        // the driver must now be registered.
+        boolean registered = DriverManager.drivers()
+                .anyMatch(d -> d.getClass().getName().equals("org.sqlite.JDBC"));
+        assertThat(registered)
+                .as("SqliteRecordStore must self-register the org.sqlite.JDBC driver")
+                .isTrue();
+    }
+
     // ===== Builders ============================================
 
     private static BlockSnapshot simple(Material material, String data) {
