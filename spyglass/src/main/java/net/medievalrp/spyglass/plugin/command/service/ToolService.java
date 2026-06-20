@@ -98,7 +98,7 @@ public final class ToolService {
         player.sendMessage(Component.text()
                 .append(Component.text("Activated the Spyglass Data Tool ", NamedTextColor.GREEN))
                 .append(Component.text("(" + wandMaterial.name() + ")", NamedTextColor.GRAY))
-                .build());
+                .asComponent());
     }
 
     public boolean isActive(UUID playerId) {
