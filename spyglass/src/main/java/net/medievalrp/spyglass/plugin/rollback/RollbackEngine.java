@@ -246,6 +246,59 @@ public final class RollbackEngine {
         return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
     }
 
+    // --- Apply-phase fail-safe (#127) -----------------------------------
+    // The chunked apply drives world writes through a `done` future across
+    // many main-thread continuations (resolve chunk, finish chunk, salvage
+    // capture, advance batch). Each runs via scheduler.onMainThread/Later,
+    // whose Bukkit impl swallows-and-logs any throwable — so a throw from
+    // prepareChunk / finishChunk / a salvage capture / a worker palette write
+    // would leave `done` forever uncompleted. RollbackService.streamPagesAndApply
+    // joins on `done`, so that strands the rollback thread, wedges the whole
+    // job queue (finish() never runs, no other rollback can start), leaks the
+    // physics-blocker region (gravity blocks freeze in the bbox), and pins
+    // chunk tickets — until restart. Wrapping the scheduler funnels every
+    // continuation through guardApply: a throw now fails `done` instead, so
+    // the join throws, the job is marked FAILED, the queue advances, and the
+    // physics region is released (done.whenComplete(exit) fires on failure).
+
+    /** Decorate {@code delegate} so any throwable from a dispatched apply step
+     *  completes {@code done} exceptionally instead of vanishing. Identical
+     *  threading — it only adds a try/catch frame around each runnable. */
+    private static ServiceSupport failOnThrow(ServiceSupport delegate,
+                                              CompletableFuture<?> done) {
+        return new ServiceSupport() {
+            @Override
+            public void onMainThread(Runnable runnable) {
+                delegate.onMainThread(() -> guardApply(runnable, done));
+            }
+
+            @Override
+            public void onMainThreadLater(long delayTicks, Runnable runnable) {
+                delegate.onMainThreadLater(delayTicks, () -> guardApply(runnable, done));
+            }
+
+            @Override
+            public void onAsyncThread(Runnable runnable) {
+                delegate.onAsyncThread(() -> guardApply(runnable, done));
+            }
+        };
+    }
+
+    private static void guardApply(Runnable step, CompletableFuture<?> done) {
+        try {
+            step.run();
+        } catch (Throwable thrown) {
+            failApply(done, thrown);
+        }
+    }
+
+    private static void failApply(CompletableFuture<?> done, Throwable thrown) {
+        LOGGER.log(Level.SEVERE, "Spyglass rollback apply step threw; failing the job so the"
+                + " rollback queue, physics-blocker region, and chunk tickets are released (#127)",
+                thrown);
+        done.completeExceptionally(thrown);
+    }
+
     public CompletableFuture<List<RollbackResult>> applyAllChunked(
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize) {
@@ -294,6 +347,11 @@ public final class RollbackEngine {
 
         RollbackResult[] resultArray = new RollbackResult[effects.size()];
 
+        // Fail-safe scheduler: any throw from an apply continuation fails
+        // `done` instead of stranding the join (#127). Threaded through the
+        // whole chain so every onMainThread/Later hop is guarded.
+        ServiceSupport guarded = failOnThrow(scheduler, done);
+
         // Stage 1 is pure compute (filter, bbox, sort) and runs off
         // the main thread when an executor is wired. Stage 2 touches
         // Bukkit and hops back to the server thread.
@@ -326,15 +384,17 @@ public final class RollbackEngine {
 
             sortParallelByChunk(blockReplaceIndices, blockReplaceEffects);
 
-            scheduler.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
+            guarded.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
                     blockReplaceIndices, blockReplaceEffects,
- sender, scheduler, batchSize, done, cancelFlag));
+ sender, guarded, batchSize, done, cancelFlag));
         };
 
+        // Guard the off-main stage-1 work too: a throw on the executor thread
+        // (sort/bbox/enter) would otherwise leave `done` uncompleted.
         if (worldWriteExecutor != null) {
-            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(() -> guardApply(stageOne, done), worldWriteExecutor);
         } else {
-            stageOne.run();
+            guardApply(stageOne, done);
         }
         return done;
     }
@@ -703,6 +763,14 @@ public final class RollbackEngine {
 
         CompletableFuture.allOf(futures)
                 .whenComplete((v, throwable) -> {
+                    if (throwable != null) {
+                        // A worker palette write failed. The main-thread post
+                        // below still runs (finishChunk/tile-entities/ticket
+                        // release), but those cells may be left unrolled —
+                        // surface it rather than silently dropping it (#127).
+                        LOGGER.log(Level.WARNING, "Spyglass rollback: a parallel chunk"
+                                + " write failed; affected cells may be left unrolled", throwable);
+                    }
                     applyWriteNanos.addAndGet(System.nanoTime() - tDispatch);
                     applyBatchCount.incrementAndGet();
                     applyChunkApplies.addAndGet(batchChunks);
@@ -934,16 +1002,19 @@ public final class RollbackEngine {
                     cols.maxX(), cols.maxY(), cols.maxZ());
             done.whenComplete((r, t) -> physicsBlocker.exit(handle));
         }
+        // Fail-safe scheduler: any throw from an apply continuation fails
+        // `done` instead of stranding the join (#127).
+        ServiceSupport guarded = failOnThrow(scheduler, done);
         // Sort off-main (chunk-grouped, bottom-up Y), then apply on main.
         Runnable stageOne = () -> {
             int[] order = cols.chunkSortedOrder();
-            scheduler.onMainThread(() -> applyColumnBatch(
-                    world, cols, order, 0, counts, sender, scheduler, batchSize, done, cancelFlag));
+            guarded.onMainThread(() -> applyColumnBatch(
+                    world, cols, order, 0, counts, sender, guarded, batchSize, done, cancelFlag));
         };
         if (worldWriteExecutor != null) {
-            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(() -> guardApply(stageOne, done), worldWriteExecutor);
         } else {
-            stageOne.run();
+            guardApply(stageOne, done);
         }
         return done;
     }
