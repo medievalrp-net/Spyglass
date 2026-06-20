@@ -15,7 +15,11 @@ public final class EnchantParam implements QueryParamHandler {
 
     @Override
     public List<String> aliases() {
-        return List.of("ench", "enchant", "enchantment");
+        // {@code ienchant}/{@code ienchantments} mirror the {@code i}-prefixed
+        // item param family ({@code iname}/{@code ilore}/{@code itags}) for
+        // discoverability; {@code ench}/{@code enchant}/{@code enchantment}
+        // stay for existing operator macros.
+        return List.of("ench", "enchant", "enchantment", "ienchant", "ienchantments");
     }
 
     @Override

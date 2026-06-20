@@ -149,4 +149,121 @@ class ItemSerializationTest {
         assertThat(item.enchants()).isEmpty();
         verify(stack, never()).getItemMeta();
     }
+
+    // ── custom-data projection (#140): tags carry minecraft:custom_data ──
+
+    @Test
+    void capturesCustomDataFromComponentString() {
+        ItemStack stack = mock(ItemStack.class);
+        when(stack.getType()).thenReturn(Material.PAPER);
+        when(stack.serializeAsBytes()).thenReturn(new byte[]{1});
+        ItemMeta meta = mock(ItemMeta.class);
+        when(stack.hasItemMeta()).thenReturn(true);
+        when(stack.getItemMeta()).thenReturn(meta);
+        when(meta.hasDisplayName()).thenReturn(false);
+        when(meta.hasLore()).thenReturn(false);
+        when(meta.hasEnchants()).thenReturn(false);
+        when(meta.getAsComponentString()).thenReturn(
+                "[minecraft:max_stack_size=1,minecraft:custom_data={quest:\"deliver_letter\"}]");
+
+        StoredItem item = ItemSerialization.storedItem(0, stack);
+
+        assertThat(item).isNotNull();
+        assertThat(item.tags()).isEqualTo("{quest:\"deliver_letter\"}");
+    }
+
+    @Test
+    void tagsNullWhenItemHasNoCustomData() {
+        ItemStack stack = mock(ItemStack.class);
+        when(stack.getType()).thenReturn(Material.DIAMOND_SWORD);
+        when(stack.serializeAsBytes()).thenReturn(new byte[]{1});
+        ItemMeta meta = mock(ItemMeta.class);
+        when(stack.hasItemMeta()).thenReturn(true);
+        when(stack.getItemMeta()).thenReturn(meta);
+        when(meta.hasDisplayName()).thenReturn(false);
+        when(meta.hasLore()).thenReturn(false);
+        when(meta.hasEnchants()).thenReturn(false);
+        when(meta.getAsComponentString()).thenReturn("[minecraft:damage=42]");
+
+        StoredItem item = ItemSerialization.storedItem(0, stack);
+
+        assertThat(item).isNotNull();
+        assertThat(item.tags()).isNull();
+    }
+
+    // ── extractCustomData(): pure string parsing, no Bukkit needed ──
+
+    @Test
+    void extractCustomDataNullAndAbsent() {
+        assertThat(ItemSerialization.extractCustomData(null)).isNull();
+        assertThat(ItemSerialization.extractCustomData("[minecraft:damage=5]")).isNull();
+        assertThat(ItemSerialization.extractCustomData("[]")).isNull();
+    }
+
+    @Test
+    void extractCustomDataSimpleAndPositioned() {
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={quest:\"x\"}]"))
+                .isEqualTo("{quest:\"x\"}");
+        // custom_data need not be the first component
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:damage=1,minecraft:custom_data={k:1},minecraft:max_stack_size=1]"))
+                .isEqualTo("{k:1}");
+    }
+
+    @Test
+    void extractCustomDataEmptyCompoundIsNull() {
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={}]")).isNull();
+    }
+
+    @Test
+    void extractCustomDataHandlesNestedBraces() {
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={a:{b:1},c:2}]"))
+                .isEqualTo("{a:{b:1},c:2}");
+        // plugin PersistentDataContainer values live under PublicBukkitValues
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={PublicBukkitValues:{\"mmoitems:type\":\"SWORD\"}}]"))
+                .isEqualTo("{PublicBukkitValues:{\"mmoitems:type\":\"SWORD\"}}");
+    }
+
+    @Test
+    void extractCustomDataIgnoresBracesInsideQuotes() {
+        // a brace inside a double-quoted value must not unbalance the scan
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={msg:\"a}b{c\"},minecraft:damage=1]"))
+                .isEqualTo("{msg:\"a}b{c\"}");
+        // single-quoted strings count too
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={msg:'x}y'}]"))
+                .isEqualTo("{msg:'x}y'}");
+    }
+
+    @Test
+    void extractCustomDataHandlesEscapedQuote() {
+        // \" is an escaped quote, so the } that follows is still inside the
+        // string and must not close the compound early.
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={msg:\"a\\\"}b\"}]"))
+                .isEqualTo("{msg:\"a\\\"}b\"}");
+    }
+
+    @Test
+    void extractCustomDataToleratesWhitespaceBeforeCompound() {
+        // hedge against a renderer that pads the '=' with a space
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data= {k:1}]"))
+                .isEqualTo("{k:1}");
+    }
+
+    @Test
+    void extractCustomDataMalformedIsNull() {
+        // unbalanced compound
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data={oops:1")).isNull();
+        // marker present but the value isn't a compound
+        assertThat(ItemSerialization.extractCustomData(
+                "[minecraft:custom_data=5]")).isNull();
+    }
 }

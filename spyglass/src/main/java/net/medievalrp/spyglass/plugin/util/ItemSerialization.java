@@ -70,6 +70,7 @@ public final class ItemSerialization {
         String name = null;
         List<String> lore = List.of();
         List<String> enchants = List.of();
+        String tags = null;
         // hasItemMeta() short-circuits the common no-NBT item (cobblestone,
         // plain tools): getItemMeta() allocates a fresh ItemMeta snapshot
         // even when there's nothing to extract, so skip it entirely there
@@ -97,10 +98,102 @@ public final class ItemSerialization {
                 if (meta.hasEnchants()) {
                     enchants = enchantStrings(meta.getEnchants());
                 }
+                // Custom-data projection (#140). getAsComponentString() renders
+                // every set component; we lift just the minecraft:custom_data
+                // compound back out so itags: can substring-match it. Only
+                // reached for meta-bearing items, so the plain-item hot path
+                // (no NBT, short-circuited above) never pays for it.
+                tags = extractCustomData(meta.getAsComponentString());
             }
         }
         String data = includeData ? encode(itemStack) : null;
-        return new StoredItem(slot, itemStack.getType().name(), data, name, lore, enchants);
+        return new StoredItem(slot, itemStack.getType().name(), data, name, lore, enchants, tags);
+    }
+
+    /**
+     * Marker that opens the {@code minecraft:custom_data} component inside an
+     * {@link ItemMeta#getAsComponentString()} rendering.
+     */
+    private static final String CUSTOM_DATA_MARKER = "minecraft:custom_data=";
+
+    /**
+     * Pull the {@code minecraft:custom_data} compound out of an item's
+     * {@link ItemMeta#getAsComponentString()} rendering as a searchable
+     * string, e.g. {@code {quest:"deliver_letter",PublicBukkitValues:{...}}}.
+     *
+     * <p>Custom data is where vanilla {@code /give ...[custom_data={...}]},
+     * datapacks, and Bukkit {@code PersistentDataContainer}s all park their
+     * payloads, so one substring-searchable projection ({@code itags:}) covers
+     * every custom-item source without decoding NBT per row. Returns
+     * {@code null} when the item has no custom data, or an empty {@code {}}
+     * compound (nothing worth indexing).
+     *
+     * <p>The scan is brace-balanced and quote-aware so a string value
+     * containing a stray {@code {}/}} can't truncate or over-run the captured
+     * compound. Output is length-capped via {@link RecordingSupport#safeText}
+     * to keep a pathological NBT blob from bloating a row. Package-private so
+     * it can be unit-tested without a live server.
+     */
+    static String extractCustomData(String componentString) {
+        if (componentString == null) {
+            return null;
+        }
+        int marker = componentString.indexOf(CUSTOM_DATA_MARKER);
+        if (marker < 0) {
+            return null;
+        }
+        int start = marker + CUSTOM_DATA_MARKER.length();
+        // Tolerate any whitespace the renderer might put between '=' and the
+        // compound; the canonical form is compact but we don't want a stray
+        // space to silently drop the capture.
+        while (start < componentString.length()
+                && Character.isWhitespace(componentString.charAt(start))) {
+            start++;
+        }
+        // custom_data always serializes as a compound; anything else is junk.
+        if (start >= componentString.length() || componentString.charAt(start) != '{') {
+            return null;
+        }
+        int depth = 0;
+        boolean inSingle = false;
+        boolean inDouble = false;
+        boolean escaped = false;
+        for (int i = start; i < componentString.length(); i++) {
+            char c = componentString.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (inSingle) {
+                inSingle = c != '\'';
+                continue;
+            }
+            if (inDouble) {
+                inDouble = c != '"';
+                continue;
+            }
+            switch (c) {
+                case '\'' -> inSingle = true;
+                case '"' -> inDouble = true;
+                case '{' -> depth++;
+                case '}' -> {
+                    if (--depth == 0) {
+                        String value = componentString.substring(start, i + 1);
+                        return "{}".equals(value) ? null : RecordingSupport.safeText(value);
+                    }
+                }
+                default -> {
+                    // ordinary character inside the compound
+                }
+            }
+        }
+        // Unbalanced braces: malformed component string; index nothing rather
+        // than capture a half-open compound.
+        return null;
     }
 
     /**
