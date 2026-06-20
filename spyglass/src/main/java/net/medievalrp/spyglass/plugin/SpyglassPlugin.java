@@ -248,9 +248,22 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass durability mode: WAL-batched (fsync per drain batch).");
         }
 
+        // On-disk overflow for the uncappable bulk-edit firehose: when the
+        // queue is at its ceiling, a vanilla-WorldEdit paste spills here
+        // instead of growing the heap. Only meaningful with a ceiling set.
+        boolean spillEnabled = config.storage().spillToDisk()
+                && config.storage().queueMax() > 0;
+        net.medievalrp.spyglass.plugin.pipeline.SpillBuffer spill =
+                new net.medievalrp.spyglass.plugin.pipeline.SpillBuffer(
+                        getDataFolder().toPath(), spillEnabled, getLogger());
+        if (spillEnabled) {
+            getLogger().info("Spyglass overflow spill: enabled (bulk-edit overflow spills to disk "
+                    + "at the queue-max ceiling).");
+        }
+
         recorder = new AsyncRecorder(
                 config.storage().queueCapacity(), config.storage().queueMax(),
-                recordStore, wal, Bukkit::isPrimaryThread, getLogger());
+                recordStore, wal, spill, Bukkit::isPrimaryThread, getLogger());
         // Publish RecordCommittedEvent to Bukkit listeners on every
         // intake. Done via a hook (rather than a direct Bukkit call
         // inside AsyncRecorder) so the recorder stays unit-testable
