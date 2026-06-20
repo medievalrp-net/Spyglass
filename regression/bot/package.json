@@ -1,0 +1,9 @@
+{
+  "name": "spyglass-rollback-bot",
+  "version": "1.0.0",
+  "description": "Drives end-to-end rollback regression: connects, fills selection via WE, rolls back, verifies.",
+  "type": "module",
+  "dependencies": {
+    "mineflayer": "^4.20.0"
+  }
+}
