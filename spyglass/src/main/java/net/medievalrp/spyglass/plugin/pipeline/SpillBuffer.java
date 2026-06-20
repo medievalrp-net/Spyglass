@@ -28,10 +28,14 @@ import org.jetbrains.annotations.Nullable;
  * <h2>Why this exists</h2>
  *
  * <p>Pure backpressure (#119) bounds the queue but not vanilla WorldEdit: its
- * {@code setBlock} loop runs on the main thread, which can't be blocked, so
- * the records that don't fit in the capped queue would otherwise pile up in
- * the off-main build threads. Spilling them to disk is the only way to bound
- * RAM for an op the operator can't cap without dropping records.
+ * {@code setBlock} loop runs on the main thread, which can't be blocked, so the
+ * records that don't fit in the capped queue would otherwise pile up in the
+ * off-main build threads. Spilling them to disk bounds the RAM of an op the
+ * operator can't cap, without dropping records. This works hand-in-hand with
+ * the bounded build stage (#121, {@code BoundedAsyncDispatcher}): the dispatcher
+ * caps how many record-builds are in flight, and the inline build it falls back
+ * to spills here — so Spyglass's own footprint stays bounded for an op of any
+ * size (Minecraft's per-block world-edit cost is separate and unbounded by us).
  *
  * <h2>Format &amp; crash-safety</h2>
  *
