@@ -52,6 +52,7 @@ import net.medievalrp.spyglass.plugin.listener.block.ContainerDropListener;
 import net.medievalrp.spyglass.plugin.listener.block.DependantBreakListener;
 import net.medievalrp.spyglass.plugin.listener.block.FallingBlockLandListener;
 import net.medievalrp.spyglass.plugin.listener.block.MultiBlockBreakListener;
+import net.medievalrp.spyglass.plugin.util.FallingBlockTracker;
 import net.medievalrp.spyglass.plugin.listener.chat.ChatListener;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandListener;
 import net.medievalrp.spyglass.plugin.listener.chat.CommandRedaction;
@@ -596,6 +597,15 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass: bStats metrics enabled (opt out with metrics.enabled=false).");
         }
 
+        // Bound FallingBlockTracker's memory. consume() only removes cells
+        // whose falling block lands at its origin; cells that shatter over
+        // water/lava, fall into the void, or are removed (/kill, anti-cheat)
+        // are reclaimed only by TTL eviction. track() self-purges amortized,
+        // and this timer covers the idle-after-burst case. Async is safe:
+        // removeIf on the ConcurrentMap never touches the world (#128).
+        getServer().getScheduler().runTaskTimerAsynchronously(
+                this, FallingBlockTracker::purgeExpired, 600L, 600L);
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
     }
 
@@ -676,6 +686,9 @@ public final class SpyglassPlugin extends JavaPlugin {
             }
             worldWriteExecutor = null;
         }
+        // Drop any falling-block attribution so a /reload doesn't carry stale
+        // cells across into the next plugin instance (the map is static).
+        FallingBlockTracker.clear();
         Bukkit.getServicesManager().unregisterAll(this);
     }
 }
