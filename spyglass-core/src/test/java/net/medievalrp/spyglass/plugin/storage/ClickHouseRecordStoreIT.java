@@ -547,7 +547,8 @@ class ClickHouseRecordStoreIT {
         StoredItem excaliblur = new StoredItem(0, "DIAMOND_SWORD", "AAAA",
                 "Excaliblur",
                 List.of("Forged in primordial fire"),
-                List.of("sharpness=5"));
+                List.of("sharpness=5"),
+                "{quest:\"primordial_rite\"}");
         StoredItem mundane = new StoredItem(0, "IRON_SWORD", "BBBB",
                 null, List.of(), List.of());
         store.save(List.of(
@@ -585,6 +586,13 @@ class ClickHouseRecordStoreIT {
                 .hasSize(1);
         assertThat(store.query(req.apply(anyItem.apply("enchants", "sharpness"))).records())
                 .hasSize(1);
+        // itags: resolves from the decoded item blob via the in-memory
+        // post-filter, the same as iname/ilore/ench (#140).
+        assertThat(store.query(req.apply(anyItem.apply("tags", "primordial_rite"))).records())
+                .hasSize(1)
+                .allMatch(r -> "DIAMOND_SWORD".equals(r.target()));
+        assertThat(store.query(req.apply(anyItem.apply("tags", "nonexistent"))).records())
+                .isEmpty();
         assertThat(store.query(req.apply(anyItem.apply("name", "nonexistent"))).records())
                 .isEmpty();
         // Summary entry point must hydrate + filter identically.
