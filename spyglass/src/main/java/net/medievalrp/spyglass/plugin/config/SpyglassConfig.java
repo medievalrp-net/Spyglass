@@ -89,6 +89,7 @@ public record SpyglassConfig(
                 new Storage(
                         Duration.parse(root.node("storage", "retention").getString("4w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
+                        root.node("storage", "queue-max").getInt(500_000),
                         Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
                         parseDurability(root.node("storage", "durability").getString("ram")),
                         "synthesized".equalsIgnoreCase(
@@ -214,6 +215,14 @@ public record SpyglassConfig(
      *                      back-compat; semantically it's the
      *                      warn threshold passed to
      *                      {@link net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder}.
+     * @param queueMax      <b>Hard ceiling</b> on the ingest queue. When the
+     *                      queue reaches this depth the off-main bulk-edit
+     *                      firehoses (WorldEdit / FAWE) backpressure — they
+     *                      block until the drain frees space — so a huge paste
+     *                      can't grow the queue into an OutOfMemoryError. The
+     *                      main thread is never blocked. {@code 0} restores the
+     *                      legacy unbounded queue. Must sit above
+     *                      {@code queueCapacity} so the warning precedes it.
      * @param flushTimeout  upper bound on how long {@code onDisable} will
      *                      wait for the queue to drain before returning.
      * @param durability    how aggressive the write path is about
@@ -230,7 +239,8 @@ public record SpyglassConfig(
      *                      One fsync amortised over a 512-row batch is
      *                      cheap; per-event overhead is negligible.
      */
-    public record Storage(Duration retention, int queueCapacity, Duration flushTimeout,
+    public record Storage(Duration retention, int queueCapacity, int queueMax,
+                          Duration flushTimeout,
                           Durability durability, boolean rolledAuditSynthesized) {
     }
 
