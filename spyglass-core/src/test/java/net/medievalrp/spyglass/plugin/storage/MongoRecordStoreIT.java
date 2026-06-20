@@ -309,7 +309,8 @@ class MongoRecordStoreIT {
                 0, "DIAMOND_SWORD", null,
                 "Excaliblur",
                 List.of("Forged in primordial fire", "Blessed by saints"),
-                List.of("sharpness=5", "mending=1"));
+                List.of("sharpness=5", "mending=1"),
+                "{quest:\"primordial_rite\"}");
 
         // deposit carries the item as afterItem; drop carries it as item;
         // place carries it inside newBlock.containerItems[]. Save one of each
@@ -359,6 +360,12 @@ class MongoRecordStoreIT {
                 List.of(anyItemField("enchants", "sharpness=5")),
                 Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
         assertThat(store.query(byEnchLevel).records()).hasSize(3);
+
+        // itags:primordial_rite: custom_data substring, all three paths (#140).
+        QueryRequest byTags = new QueryRequest(
+                List.of(anyItemField("tags", "primordial_rite")),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byTags).records()).hasSize(3);
 
         // Missing name, no hits.
         QueryRequest missing = new QueryRequest(

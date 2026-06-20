@@ -109,8 +109,9 @@ Search, rollback, and restore share one `key:value` query language. Combine as m
 | `i:` | `item:` | `i:netherite_sword` | Item material involved (drop, pickup, container, etc.) |
 | `iname:` | `itemname:` | `iname:Excalibur` | Item display name (substring). Works on both backends |
 | `ilore:` | `itemlore:`, `d:` | `ilore:cursed` | Item lore line (substring). Works on both backends |
-| `ench:` | `enchant:`, `enchantment:` | `ench:sharpness=5` | Item enchantment. Works on both backends |
-| `cu:` | `custom:` | `cu:my-custom-item` | Plugin custom-item id (via the API) |
+| `itags:` | `itag:` | `itags:deliver_letter` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Works on all backends |
+| `ench:` | `enchant:`, `enchantment:`, `ienchant:`, `ienchantments:` | `ench:sharpness=5` | Item enchantment. Works on both backends |
+| `cu:` | `custom:` | `cu:my-custom-item` | Item carries metadata: custom name, lore, enchants, or custom data |
 | `e:` | `entity:` | `e:creeper` | Entity type involved |
 | `c:` | `cause:` | `c:tnt,!creeper` | Change cause; `!cause` excludes |
 | `m:` | `message:` | `m:hello` | Chat, sign, or book text (substring) |

@@ -320,6 +320,32 @@ class SqliteRecordStoreTest {
     }
 
     @Test
+    void itemTagFilterFallsToPostFilter() {
+        // itags: lives inside the per-event blob (no column), so SQLite pushes
+        // what it can and matches custom_data in memory (#140), the same
+        // residual path as iname/ilore/ench.
+        Instant occurred = BASE.minusSeconds(1);
+        ContainerDepositRecord quested = new ContainerDepositRecord(
+                EventIds.newId(), "deposit", occurred, occurred.plusSeconds(3600),
+                Origin.player(), Source.player(UUID.randomUUID(), "Bob"),
+                new BlockLocation(WORLD, "world", 1, 70, 1), "srv", "CHEST", "CHEST", 0, 1,
+                new StoredItem(0, "PAPER", "blob", null, List.of(), List.of(),
+                        "{quest:\"deliver_letter\"}"),
+                null);
+        store.save(List.of(quested, deposit(2))); // deposit(2): plain diamond, no tags
+
+        QueryPredicate byTags = new QueryPredicate.Eq("beforeItem.tags",
+                Pattern.compile(Pattern.quote("deliver_letter"), Pattern.CASE_INSENSITIVE));
+        assertThat(store.query(request(List.of(byTags))).records())
+                .singleElement()
+                .satisfies(r -> assertThat(r.event()).isEqualTo("deposit"));
+
+        QueryPredicate miss = new QueryPredicate.Eq("beforeItem.tags",
+                Pattern.compile(Pattern.quote("nonexistent"), Pattern.CASE_INSENSITIVE));
+        assertThat(store.query(request(List.of(miss))).records()).isEmpty();
+    }
+
+    @Test
     void paletteInternsRepeatedValuesOnce() throws SQLException {
         UUID player = UUID.randomUUID();
         // Three breaks by one player in one world: world + player UUIDs and
