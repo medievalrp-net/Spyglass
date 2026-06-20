@@ -51,7 +51,7 @@ import org.bukkit.Material;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * Embedded-SQLite {@link RecordStore} — the zero-ops third backend (#106).
+ * Embedded-SQLite {@link RecordStore} - the zero-ops third backend (#106).
  *
  * <h2>Why it can be small (the design that beats CoreProtect·SQLite)</h2>
  *
@@ -62,12 +62,12 @@ import org.jetbrains.annotations.ApiStatus;
  *
  * <ol>
  *   <li><b>Palette interning.</b> The repetitive-but-high-cardinality
- *       values — block-data strings, event / server names — live once in a
+ *       values - block-data strings, event / server names - live once in a
  *       {@code dict} table; world and player UUIDs (with their display
  *       names) live once in a {@code uuids} table. Each {@code records} row
  *       holds small integer references, not the strings/UUIDs.</li>
  *   <li><b>Hybrid schema.</b> A clean, player-sourced, no-tile-entity block
- *       edit lives entirely in columns — no blob. Everything else
+ *       edit lives entirely in columns - no blob. Everything else
  *       (containers, entities, chat, complex/non-player blocks) carries one
  *       {@code deflate(BSON(record))} blob ({@link BsonBlobs}), decoded only
  *       when that row is read. The lean rollback never touches it.</li>
@@ -79,7 +79,7 @@ import org.jetbrains.annotations.ApiStatus;
  *   <li><b>Derived/folded columns.</b> A simple block's {@code material} is
  *       recovered from its block-data string, player/world names from the
  *       {@code uuids} palette, {@code source.kind} is always {@code player}
- *       and {@code expiresAt} is {@code occurred + retention} — so none of
+ *       and {@code expiresAt} is {@code occurred + retention} - so none of
  *       them costs a column. Coordinates carry a chunk-bucket
  *       <em>expression</em> index ({@code x>>4, z>>4}), not stored columns.</li>
  * </ol>
@@ -99,7 +99,7 @@ public final class SqliteRecordStore implements RecordStore {
     // The SQLite JDBC driver self-registers with DriverManager only when its
     // class is loaded. In the lean (library-loaded) jar the driver lives in
     // Paper's isolated library classloader, which DriverManager's one-time
-    // system-classloader ServiceLoader scan never sees — so a bare
+    // system-classloader ServiceLoader scan never sees - so a bare
     // getConnection() throws "No suitable driver found for jdbc:sqlite". Force
     // the class load here, from a classloader this store can reach, so the
     // driver registers. Harmless in the shaded/test jars (the driver is already
@@ -144,12 +144,12 @@ public final class SqliteRecordStore implements RecordStore {
     private final BlockingQueue<Connection> readPool;
     private final List<Connection> allConnections = new ArrayList<>();
     // Dedicated connection for palette reverse-lookups on a cache miss (see
-    // the constructor) — separate from the query read pool so a miss inside
+    // the constructor) - separate from the query read pool so a miss inside
     // a decode loop that already holds a pooled connection can't deadlock it.
     private final Connection lookupConn;
     private final Object lookupLock = new Object();
 
-    // Palette caches — forward (intern) and reverse (resolve). Loaded whole
+    // Palette caches - forward (intern) and reverse (resolve). Loaded whole
     // on open; the single writer keeps them current.
     private final ConcurrentHashMap<String, Integer> dictForward = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, String> dictReverse = new ConcurrentHashMap<>();
@@ -248,7 +248,7 @@ public final class SqliteRecordStore implements RecordStore {
             st.execute("PRAGMA busy_timeout=30000");
             // 8 KiB pages (set before WAL / first write, a no-op on an existing
             // db): fewer page headers and tighter b-tree fill across millions
-            // of small rows than the 4 KiB default — a measured few-MiB win on
+            // of small rows than the 4 KiB default - a measured few-MiB win on
             // the 2M footprint at no cost.
             st.execute("PRAGMA page_size=8192");
             st.execute("PRAGMA journal_mode=WAL");
@@ -269,7 +269,7 @@ public final class SqliteRecordStore implements RecordStore {
             st.execute("CREATE TABLE IF NOT EXISTS dict ("
                     + "id INTEGER PRIMARY KEY, val TEXT NOT NULL UNIQUE)");
             // name rides on the uuid palette so a simple block needn't carry
-            // player_name / world_name columns — they fold to the ref.
+            // player_name / world_name columns - they fold to the ref.
             st.execute("CREATE TABLE IF NOT EXISTS uuids ("
                     + "id INTEGER PRIMARY KEY, hi INTEGER NOT NULL, lo INTEGER NOT NULL, "
                     + "name TEXT, UNIQUE(hi, lo))");
@@ -286,7 +286,7 @@ public final class SqliteRecordStore implements RecordStore {
                     + "blob BLOB)");                    // deflate(BSON(record)); NULL for simple blocks
             // Lean, occurred-free indexes (see the class doc). The region
             // index buckets coordinates with an EXPRESSION (x>>4, z>>4) so the
-            // chunk columns aren't stored on the row at all — the predicate
+            // chunk columns aren't stored on the row at all - the predicate
             // translator emits the same (x>>4)/(z>>4) expressions to seek it.
             st.execute("CREATE INDEX IF NOT EXISTS idx_player ON records(player)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_loc ON records(world, (x >> 4), (z >> 4))");
@@ -414,7 +414,7 @@ public final class SqliteRecordStore implements RecordStore {
     }
 
     /**
-     * {@code true} when a record reduces, losslessly, to columns alone — no
+     * {@code true} when a record reduces, losslessly, to columns alone - no
      * blob. That's a block break/place whose two snapshots are simple and
      * whose material is recoverable from the block-data string, with a plain
      * player source and a default origin. Anything the lean columns can't
@@ -562,7 +562,7 @@ public final class SqliteRecordStore implements RecordStore {
 
     @Override
     public QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
-        // Generic keyset page over seq — all event types, full decode. The
+        // Generic keyset page over seq - all event types, full decode. The
         // lean, rollbackable-filtered path is streamRollbackEffects below.
         boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
         String where = appendNoChat(predicateToSql.translate(new ArrayList<>(request.predicates())), request);
@@ -603,7 +603,7 @@ public final class SqliteRecordStore implements RecordStore {
                                                   RollbackEffectSink sink) {
         // Allocation-lean rollback read (#67/#83 mirror): a direction-specific,
         // rollbackable-only keyset scan that resolves the one block-data side
-        // the apply engine writes straight from the in-memory palette — the
+        // the apply engine writes straight from the in-memory palette - the
         // cached String is the SAME reference for every stone/air row, so the
         // simple-block hot path allocates nothing per row. Only a blob row
         // (container / entity / complex block) decodes.
@@ -648,7 +648,7 @@ public final class SqliteRecordStore implements RecordStore {
         byte[] blob = rs.getBytes("blob");
         if (blob == null) {
             // Simple-block fast path: resolve the one side's block-data from
-            // the palette and hand primitives straight to the sink — no
+            // the palette and hand primitives straight to the sink - no
             // record, snapshot, or effect object. expectedCurrent is unused
             // under force-overwrite (#69), so pass null.
             int blockRef = rs.getInt("blk");
@@ -1072,7 +1072,7 @@ public final class SqliteRecordStore implements RecordStore {
         }
     }
 
-    /** Total record rows — test / benchmark helper. */
+    /** Total record rows - test / benchmark helper. */
     public long count() {
         Connection conn = borrow();
         try (Statement st = conn.createStatement();

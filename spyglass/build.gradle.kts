@@ -2,7 +2,11 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
     java
-    id("com.gradleup.shadow") version "8.3.6"
+    // 9.x required: the 8.3.6 Groovy ASM remapper throws on integer/Type
+    // constant fields under Gradle 9 the moment any relocate rule is active
+    // (we relocate org.bstats below, and SpyglassPlugin references it). 9.x
+    // rewrote the remapper and fixes it; the task package is unchanged.
+    id("com.gradleup.shadow") version "9.4.2"
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -19,6 +23,7 @@ val testcontainersVersion: String by rootProject.extra
 val jetbrainsAnnotationsVersion: String by rootProject.extra
 val faweVersion: String by rootProject.extra
 val worldeditVersion: String by rootProject.extra
+val bstatsVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -44,7 +49,7 @@ configurations.all {
 dependencies {
     // spyglass-core re-exports spyglass-api, mongodb-driver-sync,
     // bson-record-codec, clickhouse-jdbc, client-v2,
-    // clickhouse-http-client, and clickhouse-data via `api(...)` —
+    // clickhouse-http-client, and clickhouse-data via `api(...)` -
     // anything that used to import them directly from this module still
     // works without the per-dep declaration.
     implementation(project(":spyglass-core"))
@@ -53,12 +58,12 @@ dependencies {
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     compileOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
     compileOnly("com.sk89q.worldedit:worldedit-bukkit:$worldeditVersion")
-    // FastAsyncWorldEdit API (Maven Central). compileOnly — the server
+    // FastAsyncWorldEdit API (Maven Central). compileOnly - the server
     // provides FAWE at runtime; this just makes FaweHook / FaweBatchLogger
     // compilable. Core-only: every FAWE import is com.fastasyncworldedit.core.*.
     // Pulled non-transitively: FAWE-Core's POM otherwise drags in a gson it
     // pins (strictly 2.11.0) that collides with Paper/adventure's gson, and
-    // we need none of its transitives — paper-api + worldedit already supply
+    // we need none of its transitives - paper-api + worldedit already supply
     // every other type these two classes touch.
     compileOnly("com.fastasyncworldedit:FastAsyncWorldEdit-Core:$faweVersion") {
         isTransitive = false
@@ -67,6 +72,12 @@ dependencies {
     implementation("org.incendo:cloud-paper:$cloudMinecraftVersion")
     implementation("org.incendo:cloud-annotations:$cloudCoreVersion")
     implementation("org.incendo:cloud-minecraft-extras:$cloudMinecraftVersion")
+    // bStats metrics. Shaded + relocated into BOTH shipped jars (see the
+    // ShadowJar relocate below) - deliberately NOT placed under plugin.yml
+    // `libraries:`, because Paper's library loader can't relocate and bStats
+    // requires relocation to avoid clashing with other plugins' copies. It is
+    // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
+    implementation("org.bstats:bstats-bukkit:$bstatsVersion")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -106,10 +117,10 @@ tasks.processResources {
 }
 
 // === Distribution: two jars ===============================================
-// Spyglass.jar (leanJar) — only our modules; every third-party dep
+// Spyglass.jar (leanJar) - only our modules; every third-party dep
 // loads at runtime via plugin.yml
 // `libraries:`. This is the default download.
-// Spyglass-shaded.jar (shadowJar) — fat fallback: bundles everything and ships
+// Spyglass-shaded.jar (shadowJar) - fat fallback: bundles everything and ships
 // a plugin.yml with `libraries:` stripped,
 // for hosts that can't fetch libs at boot.
 
@@ -151,7 +162,7 @@ tasks.shadowJar {
     }
 }
 
-// Lean default jar: Spyglass-<version>.jar — only net.medievalrp modules.
+// Lean default jar: Spyglass-<version>.jar - only net.medievalrp modules.
 val leanJar = tasks.register<ShadowJar>("leanJar") {
     group = "build"
     description =
@@ -160,12 +171,23 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
     archiveClassifier.set("")
     from(sourceSets["main"].output)
     configurations = listOf(project.configurations.runtimeClasspath.get())
-    // Keep only our own modules (spyglass-api / -core). Everything else is
-    // declared under plugin.yml `libraries:` and resolved by Paper at runtime,
-    // so it must not be bundled here.
+    // Keep our own modules (spyglass-api / -core) AND bStats. Everything else is
+    // declared under plugin.yml `libraries:` and resolved by Paper at runtime, so
+    // it must not be bundled here. bStats is the one exception: it can't go
+    // through `libraries:` (the loader can't relocate it), so it travels bundled
+    // and relocated in the lean jar too - it's tiny.
     dependencies {
-        exclude { it.moduleGroup != "net.medievalrp" }
+        exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" }
     }
+}
+
+// bStats must be relocated out of `org.bstats` into our own namespace in EVERY
+// shaded artifact (the lean default jar and the fat fallback alike). bStats
+// refuses to run unrelocated, and an unrelocated copy would collide with any
+// other plugin that also bundles bStats. Applying it to all ShadowJar tasks
+// keeps the rule in one place.
+tasks.withType<ShadowJar>().configureEach {
+    relocate("org.bstats", "net.medievalrp.spyglass.libs.bstats")
 }
 
 tasks.build {
@@ -190,7 +212,7 @@ tasks.test {
 
 // Ingest throughput benchmark: v2 AsyncRecorder + MongoRecordStore vs a
 // synthetic v1-equivalent pipeline (unbounded queue + scheduled drain +
-// bulkWrite with v1 doc shape) — see IngestThroughputBench.java. Gated
+// bulkWrite with v1 doc shape) - see IngestThroughputBench.java. Gated
 // on Docker. Not part of `check`; run explicitly for metrics.
 tasks.register<Test>("ingestBench") {
     description = "Runs the Spyglass vs v1 ingest throughput benchmark (requires Docker)."
@@ -200,7 +222,7 @@ tasks.register<Test>("ingestBench") {
     useJUnitPlatform {
         includeTags("bench")
     }
-    // Don't run jacoco on the bench — instrumentation perturbs timing.
+    // Don't run jacoco on the bench - instrumentation perturbs timing.
     extensions.configure<JacocoTaskExtension> {
         isEnabled = false
     }

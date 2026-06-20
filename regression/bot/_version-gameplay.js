@@ -1,15 +1,15 @@
 // Focused, SG-only gameplay + rollback proof for the cross-version matrix.
 //
 // Places a block and breaks a block as a real player (logged events), then:
-//   /spyglass search   — the two actions are recorded
-//   /spyglass rollback  — placed block reverts to air, broken block restored
-//   /spyglass undo      — the rollback is inverted (place back, break back)
+//   /spyglass search   - the two actions are recorded
+//   /spyglass rollback  - placed block reverts to air, broken block restored
+//   /spyglass undo      - the rollback is inverted (place back, break back)
 // World state is asserted via RCON `execute if block`, never a plugin summary
-// alone. No WorldEdit, no CoreProtect — just the core record→query→rollback→undo
+// alone. No WorldEdit, no CoreProtect - just the core record→query→rollback→undo
 // loop. Exits 0 on all-pass, 1 on a failed check, 2 on a harness error.
 //
 // Env: BOT_VERSION (e.g. 1.21.8), BOT_NAME. Server must be on 127.0.0.1:25566
-// with RCON on 25576 (pass test123) — see scripts/gameplay-test.sh.
+// with RCON on 25576 (pass test123) - see scripts/gameplay-test.sh.
 import mineflayer from 'mineflayer';
 import {
     HOST, PORT,
@@ -80,6 +80,6 @@ const ck = (ok, note) => { checks.push({ ok: !!ok, note }); console.log(`${ok ? 
     bot.quit();
     await sleep(1000);
     const failed = checks.filter(c => !c.ok).length;
-    console.log(`\nGAMEPLAY ${failed === 0 ? 'PASS' : 'FAIL'} — ${checks.length - failed}/${checks.length} checks (v=${VERSION})`);
+    console.log(`\nGAMEPLAY ${failed === 0 ? 'PASS' : 'FAIL'} - ${checks.length - failed}/${checks.length} checks (v=${VERSION})`);
     process.exit(failed === 0 ? 0 : 1);
 })().catch(e => { console.log('GAMEPLAY ERROR:', e?.message || e); process.exit(2); });

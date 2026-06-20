@@ -97,8 +97,22 @@ class EnchantParamTest {
     }
 
     @Test
-    void allThreeAliasesExposed() {
-        assertThat(new EnchantParam().aliases()).containsExactly("ench", "enchant", "enchantment");
+    void aliasesExposeShortAndIPrefixedForms() {
+        // ienchant/ienchantments join the i-prefixed item param family
+        // (iname/ilore/itags) for discoverability (#140).
+        assertThat(new EnchantParam().aliases())
+                .containsExactly("ench", "enchant", "enchantment", "ienchant", "ienchantments");
+    }
+
+    @Test
+    void iPrefixedAliasParsesIdentically() throws Exception {
+        // the new alias must resolve to the same predicate shape as ench:
+        QueryPredicate predicate = new EnchantParam().parse("ienchantments", "sharpness", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
+        List<String> fields = ((QueryPredicate.Or) predicate).predicates().stream()
+                .map(p -> ((QueryPredicate.Eq) p).field())
+                .toList();
+        assertThat(fields).containsExactlyElementsOf(EXPECTED_PATHS);
     }
 
     private static Pattern firstPattern(QueryPredicate predicate) {
