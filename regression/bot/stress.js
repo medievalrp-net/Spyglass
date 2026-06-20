@@ -33,7 +33,7 @@ const PORT = 25566;
 const RCON_PORT = 25576;
 const RCON_PASS = 'test123';
 const BOT_NAME = 'rolltest';
-const SERVER_LOG = '/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server/logs/latest.log';
+const SERVER_LOG = (process.env.RP_SERVER || new URL('../../../RP_Server', import.meta.url).pathname) + '/logs/latest.log';
 const CH_URL = 'http://localhost:8123/';
 
 // --- minimal RCON client ---

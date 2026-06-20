@@ -17,7 +17,7 @@ import path from 'path';
 import vec3pkg from 'vec3';
 const Vec3 = vec3pkg.Vec3 || vec3pkg.default || vec3pkg;
 
-const SERVER_LOG = '/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server/logs/latest.log';
+const SERVER_LOG = (process.env.RP_SERVER || new URL('../../../RP_Server', import.meta.url).pathname) + '/logs/latest.log';
 
 // Read the server log and check whether ChunkDirectWriter / ChunkResender
 // fell back to Bukkit. If yes, the rollback path is NOT exercising NMS

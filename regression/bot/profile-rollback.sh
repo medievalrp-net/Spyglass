@@ -8,9 +8,9 @@
 # during these profiling rollbacks — never during the compare.js timing
 # run, where it would bias SG's MSPT via forced safepoints.
 TAG="$1"
-RP=/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server
+RP="${RP_SERVER:-$(cd "$(dirname "$0")/../../../RP_Server" 2>/dev/null && pwd)}"
 LOG="$RP/logs/latest.log"
-cd /Volumes/External-NVME/Documents/GitHub/MedievalRP/Spyglass/regression/bot || exit 2
+cd "$(dirname "$0")" || exit 2
 
 profile_one () {
   MODE="$1"

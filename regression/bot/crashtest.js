@@ -21,7 +21,7 @@ const PORT = 25566;
 const RCON_PORT = 25576;
 const RCON_PASS = 'test123';
 const BOT_NAME = 'rolltest';
-const SERVER_DIR = '/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server';
+const SERVER_DIR = process.env.RP_SERVER || new URL('../../../RP_Server', import.meta.url).pathname;
 
 function rcon(cmd) {
     return new Promise((resolve, reject) => {

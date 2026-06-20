@@ -8,7 +8,8 @@ import fs from 'fs';
 
 const HOST = '127.0.0.1', PORT = 25566;
 const RCON_PORT = 25576, PASS = 'test123';
-const CP_DB_PATH = '/Volumes/External-NVME/Documents/GitHub/MedievalRP/RP_Server/plugins/CoreProtect/database.db';
+const RP_SERVER = process.env.RP_SERVER || new URL('../../../RP_Server', import.meta.url).pathname;
+const CP_DB_PATH = RP_SERVER + '/plugins/CoreProtect/database.db';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('[' + new Date().toISOString().slice(11, 19) + ']', ...a);
