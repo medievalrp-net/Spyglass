@@ -10,6 +10,8 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 Proudly runs on and sponsored by [crusalis.net](https://crusalis.net) (1000+ players) and [apply.istoria.events](https://apply.istoria.events/) (500+ players).
 
+<a href="https://crusalis.net"><img src=".github/assets/crusalis.webp" height="80" alt="Crusalis: Glory of Rome"></a>&nbsp;&nbsp;<a href="https://apply.istoria.events/"><img src=".github/assets/istoria.jpg" height="80" alt="Istoria"></a>
+
 ## Performance
 
 A 2,000,376-block rollback, measured five ways: Spyglass on each of its three backends and CoreProtect on both of theirs, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
