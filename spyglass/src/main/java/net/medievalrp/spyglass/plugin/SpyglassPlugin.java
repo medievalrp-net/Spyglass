@@ -122,11 +122,20 @@ import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.WandInteractListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditLifecycleListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditSubscriber;
+import org.bstats.bukkit.Metrics;
+import org.bstats.charts.SimplePie;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class SpyglassPlugin extends JavaPlugin {
+
+    /**
+     * bStats service id for Spyglass, assigned at https://bstats.org when the
+     * plugin was registered. Submission is gated on {@code metrics.enabled} in
+     * config.conf (and on the server-wide bStats opt-out the library writes).
+     */
+    private static final int BSTATS_PLUGIN_ID = 32119;
 
     private AsyncRecorder recorder;
     private RecordStore recordStore;
@@ -154,6 +163,7 @@ public final class SpyglassPlugin extends JavaPlugin {
      */
     private DeferredSerializer deferredSerializer;
     private SpyglassConfig config;
+    private Metrics metrics;
     private WorldEditSubscriber worldEditSubscriber;
     private WorldEditLifecycleListener worldEditLifecycle;
 
@@ -572,6 +582,20 @@ public final class SpyglassPlugin extends JavaPlugin {
                 recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber);
         getServer().getPluginManager().registerEvents(worldEditLifecycle, this);
 
+        // bStats anonymous usage metrics. The org.bstats package is relocated
+        // into net.medievalrp.spyglass.libs.bstats at shade time, so this can't
+        // clash with another plugin's bundled bStats. Opt-out is either
+        // metrics.enabled = false here or the server-wide bStats config the
+        // library writes. One custom chart reports the storage backend in use
+        // (sqlite / mongo / clickhouse); the rest is bStats' default,
+        // non-identifying platform data (server software, player count, Java).
+        if (config.metrics().enabled()) {
+            this.metrics = new Metrics(this, BSTATS_PLUGIN_ID);
+            this.metrics.addCustomChart(new SimplePie("storage_backend",
+                    () -> config.database().backend().name().toLowerCase(java.util.Locale.ROOT)));
+            getLogger().info("Spyglass: bStats metrics enabled (opt out with metrics.enabled=false).");
+        }
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
     }
 
@@ -592,7 +616,12 @@ public final class SpyglassPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        // Prefer the lifecycle-tracked subscriber — if WE was hot-
+        // Stop the bStats submit scheduler first so it can't fire mid-teardown.
+        if (metrics != null) {
+            metrics.shutdown();
+            metrics = null;
+        }
+        // Prefer the lifecycle-tracked subscriber - if WE was hot-
         // loaded/unloaded during the session, the initial field may be
         // stale.
         WorldEditSubscriber active = worldEditLifecycle != null
