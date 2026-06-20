@@ -41,7 +41,7 @@ public final class QueryStringParser {
         ParseState state = new ParseState();
 
         if (raw != null && !raw.isBlank()) {
-            for (String token : raw.trim().split("\\s+")) {
+            for (String token : tokenize(raw.trim())) {
                 if (token.isEmpty()) {
                     continue;
                 }
@@ -133,6 +133,54 @@ public final class QueryStringParser {
         int limit = overrideLimit > 0 ? overrideLimit : config.limits().searchResult();
         boolean grouping = !flags.contains(Flag.NO_GROUP);
         return new QueryRequest(predicates, sort, limit, flags, grouping);
+    }
+
+    /**
+     * Split a raw query into tokens on whitespace, but keep a double-quoted
+     * span as a single token so multi-word values survive: {@code iname:"flaming
+     * sword"} becomes the one token {@code iname:flaming sword}. The quote
+     * characters themselves are stripped; whitespace inside the quotes is kept.
+     *
+     * <p>Only the double quote {@code "} is a delimiter. The apostrophe is left
+     * literal on purpose - fantasy item names routinely contain one (Maker's
+     * Blade, Dragon's Breath), and an unquoted {@code iname:Maker's} must keep
+     * parsing as the literal value {@code Maker's} rather than opening a span.
+     *
+     * <p>Escaping a literal quote (e.g. an inch mark in a name) is not
+     * supported; an unbalanced quote is a user error and is reported as one.
+     */
+    static List<String> tokenize(String raw) throws ParamParseException {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inToken = false;
+        boolean inQuote = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '"') {
+                inQuote = !inQuote;
+                inToken = true; // a quoted span is a token even if empty ("")
+                continue;
+            }
+            if (!inQuote && Character.isWhitespace(c)) {
+                if (inToken) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                    inToken = false;
+                }
+                continue;
+            }
+            current.append(c);
+            inToken = true;
+        }
+        if (inQuote) {
+            throw new ParamParseException(
+                    "Unterminated quote in query - close the \" around a multi-word value"
+                            + " like iname:\"flaming sword\".");
+        }
+        if (inToken) {
+            tokens.add(current.toString());
+        }
+        return tokens;
     }
 
     private static boolean isFlagAlias(String alias) {
