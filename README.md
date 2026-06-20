@@ -120,15 +120,17 @@ Search, rollback, and restore share one `key:value` query language. Combine as m
 
 #### Query keys
 
+Values are plain terms. Wrap in double quotes to search for a value that contains spaces or colons: `iname:"Storm Caller"`, `itags:"mmoitems:type"`.
+
 | Key | Aliases | Example | Notes |
 |---|---|---|---|
 | `p:` | `player:` | `p:Steve,Alex` · `p:!Steve` | Comma-separated for OR; `!name` excludes |
 | `a:` | `action:`, `event:` | `a:break,place` · `a:!place` | Event type. See `/sg events`; `!name` excludes |
 | `b:` | `block:` | `b:diamond_ore` · `b:!chest` | Target block material; `!material` excludes |
 | `i:` | `item:` | `i:netherite_sword` | Item material involved (drop, pickup, container, etc.) |
-| `iname:` | `itemname:` | `iname:Excalibur` | Item display name (substring). Works on both backends |
-| `ilore:` | `itemlore:`, `d:` | `ilore:cursed` | Item lore line (substring). Works on both backends |
-| `itags:` | `itag:` | `itags:deliver_letter` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Works on all backends |
+| `iname:` | `itemname:` | `iname:Excalibur` · `iname:"Storm Caller"` | Item display name (substring). Works on both backends |
+| `ilore:` | `itemlore:`, `d:` | `ilore:cursed` · `ilore:"for the worthy"` | Item lore line (substring). Works on both backends |
+| `itags:` | `itag:` | `itags:deliver_letter` · `itags:"mmoitems:type"` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Works on all backends |
 | `ench:` | `enchant:`, `enchantment:`, `ienchant:`, `ienchantments:` | `ench:sharpness=5` | Item enchantment. Works on both backends |
 | `cu:` | `custom:` | `cu:my-custom-item` | Item carries metadata: custom name, lore, enchants, or custom data |
 | `e:` | `entity:` | `e:creeper` | Entity type involved |
@@ -225,6 +227,12 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 # Track a specific enchanted item through drops and pickups.
 /sg search ench:sharpness=5 t:1d -g
+
+# Find items tagged by a plugin. Values that contain colons require quotes.
+/sg search a:deposit itags:"mmoitems:type" t:1d -g
+
+# Find an item by its full multi-word name. Values with spaces require quotes.
+/sg search iname:"Storm Caller" t:1w -g
 
 # Every command a specific IP ran today.
 /sg search ip:1.2.3.4 a:command t:1d -g
