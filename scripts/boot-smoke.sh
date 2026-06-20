@@ -20,6 +20,11 @@ CACHE="$WORK/paper-cache"
 UA='spyglass-bootsmoke'
 mkdir -p "$CACHE"
 label="$(basename "$JAR")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Backend selection (optional). Empty -> let the plugin generate its default
+# SQLite config. Otherwise inject a config.conf pointing at the chosen store.
+CONFIG_SRC="${CONFIG_SRC:-$SCRIPT_DIR/../spyglass/src/main/resources/config.conf}"
+BACKEND="${BACKEND:-}"
 
 paper_jar() {  # version -> cached local paper jar path (download if needed)
   local v="$1" out="$CACHE/paper-$1.jar"
@@ -61,7 +66,24 @@ EOF
   rm -rf "$dir/plugins"/*.jar "$dir/plugins/Spyglass"
   cp "$JAR" "$dir/plugins/Spyglass.jar"
 
-  local log="$dir/boot-$label.log"; : > "$log"
+  # Optional: point the plugin at an external backend before first enable.
+  if [ -n "$BACKEND" ]; then
+    mkdir -p "$dir/plugins/Spyglass"
+    local cfg="$dir/plugins/Spyglass/config.conf"
+    cp "$CONFIG_SRC" "$cfg"
+    case "$BACKEND" in
+      mongo)
+        sed -i '' -e 's/^  backend = .*/  backend = "mongo"/' \
+                  -e 's#^  uri = .*#  uri = "'"${MONGO_URI:-mongodb://localhost:27017}"'"#' "$cfg" ;;
+      clickhouse)
+        sed -i '' -e 's/^  backend = .*/  backend = "clickhouse"/' \
+                  -e 's/port = 8123/port = '"${CH_PORT:-18123}"'/' \
+                  -e 's/password = ""/password = "'"${CH_PASS:-sgtest}"'"/' "$cfg" ;;
+      *) sed -i '' -e 's/^  backend = .*/  backend = "sqlite"/' "$cfg" ;;
+    esac
+  fi
+
+  local log="$dir/boot-$label${BACKEND:+-$BACKEND}.log"; : > "$log"
   ( cd "$dir" && exec java -Xms512M -Xmx1024M -jar "$pj" --nogui ) > "$log" 2>&1 &
   local pid=$!
 
@@ -79,13 +101,16 @@ EOF
   while kill -0 "$pid" 2>/dev/null && [ "$w" -lt 30 ]; do sleep 1; w=$((w+1)); done
   kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 
-  local enabling enableErr done_
+  local enabling enableErr done_ connErr backend
   enabling=$(grep -cE 'Enabling Spyglass' "$log")
   enableErr=$(grep -cE 'Error occurred while enabling Spyglass|Could not load .*Spyglass' "$log")
   done_=$(grep -cE 'Done \([0-9]' "$log")
-  if [ "$done_" -gt 0 ] && [ "$enabling" -gt 0 ] && [ "$enableErr" -eq 0 ]; then
-    echo "PASS  $v  enabled+done  $log"
+  connErr=$(grep -ciE 'connection refused|MongoTimeout|MongoSocket|ClickHouseException|failed to connect|could not connect|UnknownHost|No suitable driver' "$log")
+  backend=$(grep -oE 'backend = [A-Z]+' "$log" | head -1 | awk '{print $3}')
+  if [ "$done_" -gt 0 ] && [ "$enabling" -gt 0 ] && [ "$enableErr" -eq 0 ] && [ "$connErr" -eq 0 ]; then
+    echo "PASS  $v  ${backend:-enabled}+done  $log"
   else
+    [ "$connErr" -gt 0 ] && reason="conn-error"
     echo "FAIL  $v  $reason  $log"
   fi
 }
@@ -93,4 +118,4 @@ EOF
 {
   printf '%-6s %-9s %-18s %s\n' RESULT VERSION REASON LOG
   for v in "$@"; do boot_one "$v"; done
-} | tee "$WORK/results-$label.txt"
+} | tee "$WORK/results-$label${BACKEND:+-$BACKEND}.txt"
