@@ -18,7 +18,7 @@ public final class Feedback {
             .append(Component.text("«", NamedTextColor.GREEN))
             .append(Component.text("Spyglass", NamedTextColor.AQUA))
             .append(Component.text("»", NamedTextColor.GREEN))
-            .build();
+            .asComponent();
 
     private Feedback() {
     }
@@ -28,7 +28,7 @@ public final class Feedback {
                 .append(PREFIX)
                 .append(Component.text(" (Error) ", NamedTextColor.RED))
                 .append(Component.text(message, NamedTextColor.GRAY))
-                .build();
+                .asComponent();
     }
 
     public static Component info(String message) {
@@ -36,7 +36,7 @@ public final class Feedback {
                 .append(PREFIX)
                 .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(message, NamedTextColor.GRAY))
-                .build();
+                .asComponent();
     }
 
     public static Component warn(String message) {
@@ -44,7 +44,7 @@ public final class Feedback {
                 .append(PREFIX)
                 .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(message, NamedTextColor.YELLOW))
-                .build();
+                .asComponent();
     }
 
     /** `«Spyglass»<green>message</green>` — matches v1's Formatter.success. */
@@ -52,7 +52,7 @@ public final class Feedback {
         return Component.text()
                 .append(PREFIX)
                 .append(Component.text(message, NamedTextColor.GREEN))
-                .build();
+                .asComponent();
     }
 
     /** Plain gray, no prefix — matches v1's Formatter.bonus (skip reasons, etc). */
@@ -81,6 +81,6 @@ public final class Feedback {
                         location.x() + " " + location.y() + " " + location.z(),
                         NamedTextColor.GREEN))
                 .append(Component.text(" ---", NamedTextColor.GREEN))
-                .build();
+                .asComponent();
     }
 }
