@@ -4,9 +4,13 @@ import net.medievalrp.spyglass.plugin.command.render.Feedback;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
@@ -17,6 +21,7 @@ import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.UndoReferenceBson;
+import net.medievalrp.spyglass.plugin.util.ChunkRelighter;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.ApiStatus;
@@ -128,6 +133,10 @@ public final class UndoService {
         int skipped = 0;
         int errors = 0;
         java.util.HashSet<String> chunks = new java.util.HashSet<>();
+        // Touched chunks per world, packed for ChunkRelighter — the legacy
+        // replay writes blocks through the same section-palette path that
+        // skips the light engine, so it needs the same post-write relight.
+        Map<UUID, Set<Long>> touchedByWorld = new HashMap<>();
         try {
             int chunkNo = 0;
             Optional<List<RollbackEffect>> chunk;
@@ -156,6 +165,8 @@ public final class UndoService {
                         if (loc != null) {
                             chunks.add(loc.worldId() + ":"
                                     + (loc.x() >> 4) + ":" + (loc.z() >> 4));
+                            touchedByWorld.computeIfAbsent(loc.worldId(), k -> new java.util.HashSet<>())
+                                    .add(ChunkRelighter.packChunk(loc.x() >> 4, loc.z() >> 4));
                         }
                     } else if (result instanceof RollbackResult.Skipped sk) {
                         skipped++;
@@ -187,6 +198,12 @@ public final class UndoService {
             return;
         } finally {
             legacy.close();
+        }
+        // Restore lighting over the chunks this replay wrote (the engine's
+        // direct section write skips the light engine). Same off-main
+        // Starlight recompute the windowed path uses.
+        if (applied > 0) {
+            RollbackService.relightWrittenChunks(support, touchedByWorld);
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
         int finalApplied = applied;
