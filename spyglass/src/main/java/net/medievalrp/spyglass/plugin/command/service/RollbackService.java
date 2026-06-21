@@ -34,6 +34,8 @@ import net.medievalrp.spyglass.plugin.rollback.BlockColumns;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.UndoReferenceBson;
+import net.medievalrp.spyglass.plugin.util.ChunkRelighter;
+import net.medievalrp.spyglass.plugin.util.ChunkResender;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.ApiStatus;
@@ -45,6 +47,11 @@ public final class RollbackService {
     // limits.rollback-page-size knob; since #19 it has no heap/GC effect
     // and is a query-efficiency default operators never need to tune.
     private static final int STREAM_PAGE_SIZE = 500_000;
+
+    // Static so the stateless relight helper (shared with the legacy /undo
+    // path) can log without an instance — keeps that path from interacting
+    // with a RollbackService instance.
+    private static final Logger RELIGHT_LOGGER = Logger.getLogger(RollbackService.class.getName());
 
     private final SpyglassApi api;
     private final QueryStringParser parser;
@@ -604,6 +611,15 @@ public final class RollbackService {
         for (Set<Long> set : warmedChunks.values()) {
             chunkCount += set.size();
         }
+        // The engine restores blocks with a direct LevelChunkSection
+        // palette write that skips the light engine (ChunkDirectWriter), so
+        // the rolled region renders with stale, pre-rollback lighting until
+        // a natural relight. Recompute it now over exactly the chunks we
+        // wrote (Starlight, off-main; resend each chunk as it lands). Covers
+        // rollback, restore, and reference-based /undo (executeReplay).
+        if (totalApplied > 0) {
+            relightWrittenChunks(support, warmedChunks);
+        }
         logger.info(String.format(
                 "Spyglass %s %s timings: query=%dms collect=%dms prewarm=%dms apply=%dms"
                         + " | %d windows, %d chunks, %d applied, %dms total",
@@ -974,6 +990,38 @@ public final class RollbackService {
         flags.add(Flag.NO_GROUP);
         Sort sort = mode == RollbackMode.ROLLBACK ? Sort.NEWEST_FIRST : Sort.OLDEST_FIRST;
         return new QueryRequest(request.predicates(), sort, request.limit(), flags, false);
+    }
+
+    // Recompute + resend lighting for chunks a rollback/undo restored via
+    // the engine's direct section-palette write (which skips the light
+    // engine). Shared by the windowed apply path and the legacy /undo
+    // replay. Best-effort and fully off the hot path: the Starlight
+    // recompute runs off-main and each chunk is resent with fresh light as
+    // it lands. No-ops cleanly where the relight API is unavailable.
+    static void relightWrittenChunks(ServiceSupport support, Map<UUID, Set<Long>> chunksByWorld) {
+        try {
+            for (Map.Entry<UUID, Set<Long>> entry : chunksByWorld.entrySet()) {
+                World world = Bukkit.getWorld(entry.getKey());
+                Set<Long> chunks = entry.getValue();
+                if (world == null || chunks.isEmpty()) {
+                    continue;
+                }
+                long[] keys = new long[chunks.size()];
+                int i = 0;
+                for (Long key : chunks) {
+                    keys[i++] = key;
+                }
+                support.onMainThread(() -> ChunkRelighter.relight(world, keys,
+                        (cx, cz) -> support.onMainThread(() -> ChunkResender.resend(world, cx, cz))));
+            }
+        } catch (Throwable t) {
+            // Relight is best-effort: a lighting-refresh hiccup must never
+            // abort the rollback's completion path. ChunkRelighter logs its
+            // own NMS failures; this guards the surrounding scheduling (and
+            // keeps headless tests, where Bukkit has no server, green).
+            RELIGHT_LOGGER.log(java.util.logging.Level.FINE,
+                    "Spyglass post-rollback relight skipped", t);
+        }
     }
 
     public static Component summaryLine(Summary summary) {
