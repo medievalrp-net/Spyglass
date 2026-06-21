@@ -308,6 +308,66 @@ class ClickHouseRecordStoreIT {
                 store.querySummary(byEvent).records().get(0);
         assertThat(summary.message()).isEqualTo("hello there");
         assertThat(summary.extensions()).containsEntry("voice_session_id", "42");
+
+        // content:/regex/ on the message column pushes down to CH match()
+        // (server-side, no post-filter cap).
+        QueryRequest byRegex = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice"),
+                        new QueryPredicate.Eq("message",
+                                java.util.regex.Pattern.compile("hel+o",
+                                        java.util.regex.Pattern.CASE_INSENSITIVE))),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byRegex).records()).hasSize(1);
+
+        QueryRequest byRegexMiss = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice"),
+                        new QueryPredicate.Eq("message",
+                                java.util.regex.Pattern.compile("^goodbye$",
+                                        java.util.regex.Pattern.CASE_INSENSITIVE))),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byRegexMiss).records()).isEmpty();
+
+        // The exact predicate m: / message: / content: build: an OR across
+        // message + commandLine, each a quoted literal Pattern. commandLine
+        // must be a mapped column or the whole OR drops to the in-memory
+        // post-filter (where message read as null and never matched) — the
+        // regression this fixes.
+        java.util.regex.Pattern lit = java.util.regex.Pattern.compile(
+                java.util.regex.Pattern.quote("hello"), java.util.regex.Pattern.CASE_INSENSITIVE);
+        QueryRequest byContent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice"),
+                        new QueryPredicate.Or(List.of(
+                                new QueryPredicate.Eq("message", lit),
+                                new QueryPredicate.Eq("commandLine", lit)))),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byContent).records())
+                .as("m:/content: (OR message,commandLine) must match the message column")
+                .hasSize(1);
+    }
+
+    @Test
+    void recipientSearchPushesDownAndMatches() {
+        // rcp: queries the recipients Array(UUID). It must push down via
+        // has()/hasAny() — not drop to the post-filter where it matched nothing.
+        UUID bob = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        Instant now = Instant.now().minusSeconds(60);
+        store.save(List.of(new ChatRecord(
+                UUID.randomUUID(), "say", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 0, 64, 0), "test",
+                "hi", "hi", List.of(ALICE, bob), java.util.Map.of())));
+        flushAsyncInserts();
+
+        QueryRequest hit = new QueryRequest(
+                List.of(new QueryPredicate.Eq("recipients", bob)),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(hit).records()).hasSize(1);
+
+        QueryRequest miss = new QueryRequest(
+                List.of(new QueryPredicate.Eq("recipients",
+                        UUID.fromString("99999999-9999-9999-9999-999999999999"))),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(miss).records()).isEmpty();
     }
 
     @Test

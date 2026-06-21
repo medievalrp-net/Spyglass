@@ -31,6 +31,10 @@ final class PredicateToSql {
     private static final DateTimeFormatter CH_TIMESTAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
+    /** Columns that are ClickHouse arrays: membership uses has()/hasAny(),
+     *  not scalar {@code =}/{@code IN}. */
+    private static final java.util.Set<String> ARRAY_COLUMNS = java.util.Set.of("recipients");
+
     static final class UnsupportedPredicateException extends RuntimeException {
         UnsupportedPredicateException(String message) {
             super(message);
@@ -102,6 +106,9 @@ final class PredicateToSql {
             }
             return "match(toString(" + column + "), " + stringLiteral(rx) + ")";
         }
+        if (ARRAY_COLUMNS.contains(column)) {
+            return "has(" + column + ", " + literal(value) + ")";
+        }
         return column + " = " + literal(value);
     }
 
@@ -109,6 +116,17 @@ final class PredicateToSql {
         String column = column(field);
         if (values.isEmpty()) {
             return "1=0";
+        }
+        if (ARRAY_COLUMNS.contains(column)) {
+            StringBuilder arr = new StringBuilder("hasAny(").append(column).append(", [");
+            for (int i = 0; i < values.size(); i++) {
+                if (i > 0) {
+                    arr.append(", ");
+                }
+                arr.append(literal(values.get(i)));
+            }
+            arr.append("])");
+            return arr.toString();
         }
         StringBuilder sb = new StringBuilder(column).append(" IN (");
         for (int i = 0; i < values.size(); i++) {
