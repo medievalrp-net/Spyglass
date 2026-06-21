@@ -28,6 +28,11 @@ final class ClickHouseFieldMapper {
             Map.entry("expiresAt", "expires_at"),
             Map.entry("target", "target"),
             Map.entry("message", "message"),
+            // CommandRecord's line — a flat column. Without this mapping the
+            // message/content params (which OR message + commandLine) couldn't
+            // push the commandLine clause down, dropping the whole search to
+            // the in-memory post-filter where m:/content: silently missed.
+            Map.entry("commandLine", "command_line"),
             Map.entry("origin.kind", "origin_kind"),
             Map.entry("origin.detail", "origin_detail"),
             Map.entry("source.kind", "source_kind"),
@@ -43,6 +48,11 @@ final class ClickHouseFieldMapper {
             Map.entry("location.y", "location_y"),
             Map.entry("location.z", "location_z"),
             Map.entry("server", "server"),
+            // ChatRecord recipients — an Array(UUID) column. PredicateToSql
+            // translates membership against it with has()/hasAny() (see its
+            // ARRAY_COLUMNS); without this mapping rcp: dropped to the
+            // in-memory post-filter and silently matched nothing.
+            Map.entry("recipients", "recipients"),
             // JoinRecord IP — a flat column on the events table; previously
             // omitted so ip:1.2.3.4 raised UnsupportedPredicateException
             // with a misleading "BSON blob" message.

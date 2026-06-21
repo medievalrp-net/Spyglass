@@ -28,6 +28,7 @@ import net.medievalrp.spyglass.plugin.command.param.ItemLoreParam;
 import net.medievalrp.spyglass.plugin.command.param.ItemMaterialParam;
 import net.medievalrp.spyglass.plugin.command.param.ItemNameParam;
 import net.medievalrp.spyglass.plugin.command.param.ItemTagParam;
+import net.medievalrp.spyglass.plugin.command.param.ContentParam;
 import net.medievalrp.spyglass.plugin.command.param.MessageParam;
 import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
@@ -447,6 +448,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new ItemTagParam());
         apiImpl.registerQueryParamHandler(new EnchantParam());
         apiImpl.registerQueryParamHandler(new MessageParam());
+        apiImpl.registerQueryParamHandler(new ContentParam());
         apiImpl.registerQueryParamHandler(new CauseParam());
         apiImpl.registerQueryParamHandler(new ItemMaterialParam());
         apiImpl.registerQueryParamHandler(new CustomItemParam());
