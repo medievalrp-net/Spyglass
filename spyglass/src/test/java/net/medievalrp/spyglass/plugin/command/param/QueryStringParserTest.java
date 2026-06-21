@@ -107,6 +107,42 @@ class QueryStringParserTest {
         assertThat(request.predicates()).hasSize(2);
     }
 
+    // ---- #150: ip: pre-resolution off the main thread ----
+
+    @Test
+    void extractIpValuesFindsOnlyIpTokens() {
+        QueryStringParser parser = new QueryStringParser(mock(SpyglassApi.class), mock(SpyglassConfig.class));
+        assertThat(parser.extractIpValues("a:break ip:10.0.0.1 p:Steve")).containsExactly("10.0.0.1");
+        assertThat(parser.extractIpValues("ip:1.1.1.1 ip:2.2.2.2")).containsExactly("1.1.1.1", "2.2.2.2");
+        assertThat(parser.extractIpValues("a:break p:Steve")).isEmpty();
+        assertThat(parser.extractIpValues(null)).isEmpty();
+        assertThat(parser.extractIpValues("")).isEmpty();
+    }
+
+    @Test
+    void parsePassesPreResolvedIpsToIpParamInsteadOfQuerying() throws Exception {
+        UUID resolved = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        // Resolver throws: proves parse() used the pre-resolved map, NOT a
+        // (blocking) store query, when building the ip: predicate.
+        IpParam ipParam = new IpParam(ip -> {
+            throw new IllegalStateException("ip: must not query the store on the parse thread");
+        });
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.queryParam("ip")).thenReturn(Optional.of(ipParam));
+        org.bukkit.command.CommandSender sender = mock(org.bukkit.command.CommandSender.class);
+        when(sender.hasPermission("spyglass.search.ip")).thenReturn(true);
+
+        QueryRequest request = new QueryStringParser(api, configNoDefaults())
+                .parse(sender, "ip:10.0.0.1", 0, java.util.Map.of("10.0.0.1", java.util.List.of(resolved)));
+
+        assertThat(request.predicates()).hasSize(1);
+        QueryPredicate.Or or = (QueryPredicate.Or) request.predicates().get(0);
+        QueryPredicate.In in = (QueryPredicate.In) or.predicates().get(1);
+        assertThat(in.field()).isEqualTo("source.playerId");
+        assertThat(in.values()).hasSize(1);
+        assertThat(in.values().iterator().next()).isEqualTo(resolved);
+    }
+
     /**
      * Config with defaults disabled, so {@code parse()} adds no implicit
      * radius/time predicate and the assertions count only the user's params.

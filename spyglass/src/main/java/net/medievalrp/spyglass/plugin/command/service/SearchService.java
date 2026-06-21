@@ -28,6 +28,7 @@ public final class SearchService {
     private final ResultRenderer renderer;
     private final PageCache pageCache;
     private final ServiceSupport support;
+    private final IpQueryResolver ipResolver;
     private final Logger logger;
 
     public SearchService(SpyglassApi api,
@@ -35,24 +36,31 @@ public final class SearchService {
                          ResultRenderer renderer,
                          PageCache pageCache,
                          ServiceSupport support,
+                         IpQueryResolver ipResolver,
                          Logger logger) {
         this.api = api;
         this.parser = parser;
         this.renderer = renderer;
         this.pageCache = pageCache;
         this.support = support;
+        this.ipResolver = ipResolver;
         this.logger = logger;
     }
 
     public void execute(CommandSender sender, String raw) {
-        QueryRequest request;
-        try {
-            request = parser.parse(sender, raw, 0);
-        } catch (ParamParseException ex) {
-            sender.sendMessage(Feedback.error(ex.getMessage()));
-            return;
-        }
-        executeRequest(sender, request);
+        // Resolve any ip: addresses off-thread first (see IpQueryResolver); the
+        // continuation runs the parse on the main thread with the result in hand.
+        // No ip: -> the continuation runs inline, same as before.
+        ipResolver.resolve(raw, resolved -> {
+            QueryRequest request;
+            try {
+                request = parser.parse(sender, raw, 0, resolved);
+            } catch (ParamParseException ex) {
+                sender.sendMessage(Feedback.error(ex.getMessage()));
+                return;
+            }
+            executeRequest(sender, request);
+        });
     }
 
     public void executeRequest(CommandSender sender, QueryRequest request) {

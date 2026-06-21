@@ -60,9 +60,12 @@ class SearchServiceTest {
         final ResultRenderer renderer = mock(ResultRenderer.class);
         final PageCache pageCache = mock(PageCache.class);
         final CommandSender sender = mock(CommandSender.class);
+        final IpQueryResolver ipResolver = new IpQueryResolver(
+                parser, new net.medievalrp.spyglass.plugin.command.param.IpParam(ip -> java.util.List.of()),
+                ServiceSupport.synchronous(), Logger.getLogger("test"));
         final SearchService subject = new SearchService(
                 api, parser, renderer, pageCache,
-                ServiceSupport.synchronous(), Logger.getLogger("test"));
+                ServiceSupport.synchronous(), ipResolver, Logger.getLogger("test"));
 
         TestFixture() {
             when(renderer.renderSingle(any(EventRecord.class), any(), anyBoolean()))
@@ -75,7 +78,7 @@ class SearchServiceTest {
     @Test
     void reportsParamErrors() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenThrow(new ParamParseException("bad param"));
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
@@ -95,7 +98,7 @@ class SearchServiceTest {
                 100,
                 java.util.EnumSet.of(net.medievalrp.spyglass.api.query.Flag.NO_GROUP),
                 false);
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(request);
         QueryResult result = new QueryResult(List.of(record(), record()), List.of());
         when(fixture.api.query(request)).thenReturn(CompletableFuture.completedFuture(result));
@@ -124,7 +127,7 @@ class SearchServiceTest {
                 100,
                 java.util.EnumSet.of(net.medievalrp.spyglass.api.query.Flag.NO_GROUP),
                 false);
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(request);
         when(fixture.api.query(request))
                 .thenReturn(CompletableFuture.completedFuture(new QueryResult(List.of(), List.of())));
@@ -146,7 +149,7 @@ class SearchServiceTest {
                 100,
                 java.util.EnumSet.of(net.medievalrp.spyglass.api.query.Flag.NO_GROUP),
                 false);
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(request);
         CompletableFuture<QueryResult> failed = new CompletableFuture<>();
         failed.completeExceptionally(new RuntimeException("boom"));

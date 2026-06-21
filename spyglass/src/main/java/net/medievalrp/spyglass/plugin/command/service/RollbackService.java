@@ -64,6 +64,7 @@ public final class RollbackService {
     private final Logger logger;
     private final RollbackJobQueue jobQueue;
     private final RollbackResumeStore resumeStore;
+    private final IpQueryResolver ipResolver;
     // Parsed request for each queued job, popped when the job runs.
     private final Map<UUID, JobContext> pendingContexts = new ConcurrentHashMap<>();
 
@@ -77,7 +78,8 @@ public final class RollbackService {
                            net.medievalrp.spyglass.plugin.storage.RecordStore store,
                            Logger logger,
                            RollbackJobQueue jobQueue,
-                           RollbackResumeStore resumeStore) {
+                           RollbackResumeStore resumeStore,
+                           IpQueryResolver ipResolver) {
         this.api = api;
         this.parser = parser;
         this.config = config;
@@ -89,6 +91,7 @@ public final class RollbackService {
         this.logger = logger;
         this.jobQueue = jobQueue;
         this.resumeStore = resumeStore;
+        this.ipResolver = ipResolver;
     }
 
     public void wireQueue() {
@@ -201,6 +204,13 @@ public final class RollbackService {
     }
 
     public void execute(CommandSender sender, String raw, RollbackMode mode) {
+        // Resolve any ip: addresses off-thread first; the continuation runs the
+        // parse + queueing on the main thread. No ip: -> runs inline.
+        ipResolver.resolve(raw, resolved -> executeResolved(sender, raw, mode, resolved));
+    }
+
+    private void executeResolved(CommandSender sender, String raw, RollbackMode mode,
+                                 Map<String, List<UUID>> resolvedIps) {
         QueryRequest request;
         try {
             // No record cap: a rollback reverts everything its query matches,
@@ -208,7 +218,7 @@ public final class RollbackService {
             // engine keeps heap flat regardless of size (#19), so a cap would
             // only ever silently half-restore a grief and mark the rest rolled
             // back. MAX_VALUE => the store query and apply loop never truncate.
-            request = forceNoGroup(parser.parse(sender, raw, Integer.MAX_VALUE), mode);
+            request = forceNoGroup(parser.parse(sender, raw, Integer.MAX_VALUE, resolvedIps), mode);
         } catch (ParamParseException ex) {
             sender.sendMessage(Feedback.error(ex.getMessage()));
             return;

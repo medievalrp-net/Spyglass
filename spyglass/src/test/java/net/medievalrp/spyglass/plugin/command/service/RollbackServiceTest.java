@@ -117,10 +117,13 @@ class RollbackServiceTest {
             } catch (java.io.IOException ex) {
                 throw new RuntimeException(ex);
             }
+            IpQueryResolver ipResolver = new IpQueryResolver(
+                    parser, new net.medievalrp.spyglass.plugin.command.param.IpParam(ip -> java.util.List.of()),
+                    ServiceSupport.synchronous(), Logger.getLogger("test"));
             subject = new RollbackService(
                     api, parser, config, engine, undoStack,
                     ServiceSupport.synchronous(), recorder, store, Logger.getLogger("test"),
-                    queue, resumeStore);
+                    queue, resumeStore, ipResolver);
             subject.wireQueue();
         }
 
@@ -263,7 +266,7 @@ class RollbackServiceTest {
     @Test
     void reportsParamErrors() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenThrow(new ParamParseException("bad param"));
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
@@ -282,7 +285,7 @@ class RollbackServiceTest {
     @Test
     void rollbackRequestsAnUncappedParse() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
 
         fixture.subject.execute(fixture.sender, "p:Griefer t:1h", RollbackMode.ROLLBACK);
@@ -290,14 +293,15 @@ class RollbackServiceTest {
         verify(fixture.parser).parse(
                 ArgumentMatchers.eq(fixture.sender),
                 ArgumentMatchers.eq("p:Griefer t:1h"),
-                ArgumentMatchers.eq(Integer.MAX_VALUE));
+                ArgumentMatchers.eq(Integer.MAX_VALUE),
+                ArgumentMatchers.any());
     }
 
     @Test
     void applysRollbackable(){
         TestFixture fixture = new TestFixture();
         try {
-            when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+            when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                     .thenReturn(sampleRequest());
         } catch (ParamParseException unexpected) {
             throw new RuntimeException(unexpected);
@@ -320,7 +324,7 @@ class RollbackServiceTest {
     @Test
     void smallApplyWindowSplitsOnePageIntoMultipleApplies() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord a = record();
         BlockBreakRecord b = record();
@@ -355,7 +359,7 @@ class RollbackServiceTest {
     @Test
     void foldsRepeatedBlockDataIntoDedupedPalette() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         // Distinct records, identical block-data — the columnar fold (#67)
         // collapses both cells into one BlockColumns whose palette holds one
@@ -393,7 +397,7 @@ class RollbackServiceTest {
     @Test
     void warnsWhenNoRollbackables() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         // Default store mock already returns an empty page with null cursor.
         List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
@@ -407,7 +411,7 @@ class RollbackServiceTest {
     @Test
     void reportsSkippedEffects() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -427,7 +431,7 @@ class RollbackServiceTest {
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
         when(operator.getName()).thenReturn("Operator");
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -457,7 +461,7 @@ class RollbackServiceTest {
         TestFixture fixture = new TestFixture(false);
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -501,7 +505,7 @@ class RollbackServiceTest {
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         UUID operatorId = UUID.randomUUID();
         when(operator.getUniqueId()).thenReturn(operatorId);
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -530,7 +534,7 @@ class RollbackServiceTest {
         TestFixture fixture = new TestFixture();
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -550,7 +554,7 @@ class RollbackServiceTest {
     @Test
     void noUndoReferenceForConsoleSenders() throws Exception {
         TestFixture fixture = new TestFixture();
-        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt()))
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))

@@ -90,6 +90,38 @@ class IpParamTest {
                 .hasMessageContaining("spyglass.search.ip");
     }
 
+    @Test
+    void preResolvedMapSkipsTheBlockingResolver() throws Exception {
+        // #150: the resolver throws, so if parse() called it we'd get the
+        // address-only fallback. The pre-resolved map must be used instead,
+        // proving the blocking store query never ran at parse time.
+        IpParam param = new IpParam(ip -> {
+            throw new IllegalStateException("resolver must not be called when pre-resolved");
+        });
+        QueryPredicate predicate = param.parse("ip", "10.0.0.1", ctx(),
+                java.util.Map.of("10.0.0.1", List.of(PLAYER_A)));
+        assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
+        QueryPredicate.In in = (QueryPredicate.In) ((QueryPredicate.Or) predicate).predicates().get(1);
+        assertThat(in.field()).isEqualTo("source.playerId");
+        assertThat(in.values()).hasSize(1);
+        assertThat(in.values().iterator().next()).isEqualTo(PLAYER_A);
+    }
+
+    @Test
+    void preResolvedMapMissFallsBackToResolver() throws Exception {
+        // Map present but without this address -> resolve inline (safety net for
+        // any caller that didn't pre-resolve this particular IP).
+        IpParam param = new IpParam(ip -> List.of(PLAYER_B));
+        QueryPredicate predicate = param.parse("ip", "10.0.0.1", ctx(), java.util.Map.of());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
+    }
+
+    @Test
+    void resolveDelegatesToTheResolver() {
+        IpParam param = new IpParam(ip -> List.of(PLAYER_A));
+        assertThat(param.resolve("10.0.0.1")).containsExactly(PLAYER_A);
+    }
+
     /** Sender holding spyglass.search.ip — the param's happy path. */
     private static ParamContext ctx() {
         org.bukkit.command.CommandSender sender =

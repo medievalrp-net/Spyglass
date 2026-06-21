@@ -9,6 +9,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import net.kyori.adventure.text.Component;
@@ -119,26 +120,39 @@ public final class SpyglassCommand implements SimpleCommand {
         // One permission read per invocation: gates the ip: param at
         // parse time and decides whether join IPs render or mask (#48).
         boolean showIp = source.hasPermission("spyglass.search.ip");
-        QueryRequest request;
-        try {
-            request = parser.parse(raw, showIp);
-        } catch (ProxyQueryStringParser.ParseException ex) {
-            source.sendMessage(Component.text(ex.getMessage(), NamedTextColor.RED));
-            return;
-        }
-
         source.sendMessage(Component.text("Querying records...", NamedTextColor.DARK_AQUA));
         UUID key = sourceKey(source);
-        CompletableFuture.supplyAsync(() -> store.query(request))
-                .whenComplete((result, error) -> {
-                    if (error != null) {
-                        logger.error("Spyglass query failed", error);
-                        source.sendMessage(Component.text(
-                                "Query failed: " + error.getMessage(), NamedTextColor.RED));
-                        return;
-                    }
-                    deliver(source, key, result, request.flags(), showIp);
-                });
+        // Parse (including the blocking ip: -> player-UUID store lookup) AND the
+        // query both run on the async pool, never on the proxy command thread
+        // (#134). The proxy has no world / WorldEdit, so the whole parse is safe
+        // off-thread.
+        CompletableFuture.supplyAsync(() -> {
+            QueryRequest request;
+            try {
+                request = parser.parse(raw, showIp);
+            } catch (ProxyQueryStringParser.ParseException ex) {
+                throw new CompletionException(ex);
+            }
+            return new SearchOutcome(request, store.query(request));
+        }).whenComplete((outcome, error) -> {
+            if (error != null) {
+                Throwable cause = (error instanceof CompletionException && error.getCause() != null)
+                        ? error.getCause() : error;
+                if (cause instanceof ProxyQueryStringParser.ParseException) {
+                    // User error (bad syntax / missing ip permission) - show the message.
+                    source.sendMessage(Component.text(cause.getMessage(), NamedTextColor.RED));
+                } else {
+                    logger.error("Spyglass query failed", cause);
+                    source.sendMessage(Component.text(
+                            "Query failed: " + cause.getMessage(), NamedTextColor.RED));
+                }
+                return;
+            }
+            deliver(source, key, outcome.result(), outcome.request().flags(), showIp);
+        });
+    }
+
+    private record SearchOutcome(QueryRequest request, QueryResult result) {
     }
 
     private void deliver(CommandSource source, UUID key, QueryResult result, EnumSet<Flag> flags,

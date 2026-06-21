@@ -406,7 +406,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         // limit to bound the synchronous lookup.
         RecordStore ipResolverStore = recordStore;
         int ipResolverLimit = config.limits().searchResult();
-        apiImpl.registerQueryParamHandler(new IpParam(ip -> {
+        IpParam ipParam = new IpParam(ip -> {
             net.medievalrp.spyglass.api.query.QueryRequest joinReq =
                     new net.medievalrp.spyglass.api.query.QueryRequest(
                             java.util.List.of(
@@ -421,7 +421,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                     .filter(java.util.Objects::nonNull)
                     .distinct()
                     .toList();
-        }));
+        });
+        apiImpl.registerQueryParamHandler(ipParam);
         apiImpl.registerQueryParamHandler(new RecipientParam());
         apiImpl.registerQueryParamHandler(new ServerParam(config.server().name()));
 
@@ -485,18 +486,21 @@ public final class SpyglassPlugin extends JavaPlugin {
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
+        net.medievalrp.spyglass.plugin.command.service.IpQueryResolver ipQueryResolver =
+                new net.medievalrp.spyglass.plugin.command.service.IpQueryResolver(
+                        parser, ipParam, serviceSupport, getLogger());
         ResultRenderer renderer = new ResultRenderer(apiImpl, config);
         PageCache pageCache = new PageCache();
         getServer().getPluginManager().registerEvents(pageCache, this);
 
         HelpService helpService = new HelpService();
-        SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, getLogger());
+        SearchService searchService = new SearchService(apiImpl, parser, renderer, pageCache, serviceSupport, ipQueryResolver, getLogger());
         net.medievalrp.spyglass.plugin.command.service.RollbackJobQueue rollbackQueue =
                 new net.medievalrp.spyglass.plugin.command.service.RollbackJobQueue();
         net.medievalrp.spyglass.plugin.command.service.RollbackResumeStore resumeStore =
                 new net.medievalrp.spyglass.plugin.command.service.RollbackResumeStore(
                         getDataFolder().toPath(), getLogger());
-        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, recorder, recordStore, getLogger(), rollbackQueue, resumeStore);
+        RollbackService rollbackService = new RollbackService(apiImpl, parser, config, engine, undoStack, serviceSupport, recorder, recordStore, getLogger(), rollbackQueue, resumeStore, ipQueryResolver);
         rollbackService.wireQueue();
         // On startup, surface any rollback that was in flight when
         // the JVM previously died. Each leftover marker becomes a

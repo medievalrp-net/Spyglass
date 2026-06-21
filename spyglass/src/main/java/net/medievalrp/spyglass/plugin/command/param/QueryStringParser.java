@@ -5,8 +5,10 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.ParamParseException;
@@ -35,6 +37,50 @@ public final class QueryStringParser {
     }
 
     public QueryRequest parse(CommandSender sender, String raw, int overrideLimit) throws ParamParseException {
+        return parse(sender, raw, overrideLimit, null);
+    }
+
+    /**
+     * Scan a raw query for {@code ip:} values without running any resolution.
+     * The service layer calls this on the main thread, resolves the addresses
+     * off-thread, and hands the result back to {@link #parse(CommandSender,
+     * String, int, Map)} so the blocking store lookup never sits on the tick.
+     * Malformed input (e.g. an unterminated quote) yields an empty list; the
+     * real {@link #parse} reports the error.
+     */
+    public List<String> extractIpValues(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> ips = new ArrayList<>();
+        try {
+            for (String token : tokenize(raw.trim())) {
+                int colon = token.indexOf(':');
+                if (colon < 0) {
+                    continue;
+                }
+                String alias = token.substring(0, colon).toLowerCase(java.util.Locale.ROOT);
+                if (alias.equals("ip")) {
+                    String value = token.substring(colon + 1).trim();
+                    if (!value.isBlank()) {
+                        ips.add(value);
+                    }
+                }
+            }
+        } catch (ParamParseException ex) {
+            return List.of();
+        }
+        return ips;
+    }
+
+    /**
+     * @param resolvedIps IP -> player UUIDs pre-resolved off-thread (see
+     *     {@code IpQueryResolver}); passed through to {@link IpParam} so it
+     *     does not query the store on the command thread. Null when there is
+     *     nothing to pre-resolve.
+     */
+    public QueryRequest parse(CommandSender sender, String raw, int overrideLimit,
+                              Map<String, List<UUID>> resolvedIps) throws ParamParseException {
         BlockLocation senderLocation = senderLocation(sender);
         QueryParamHandler.ParamContext context = new QueryParamHandler.ParamContext(sender, senderLocation, config.limits().maxRadius());
 
@@ -84,7 +130,12 @@ public final class QueryStringParser {
                 if (state.usedHandlerAliases.contains(canonicalAlias(h))) {
                     throw new ParamParseException("Duplicate parameter: " + alias);
                 }
-                QueryPredicate predicate = h.parse(alias, value, context);
+                // IpParam resolves IP -> player UUIDs against the store. When the
+                // service pre-resolved off-thread, hand it the map so it doesn't
+                // query on the command thread; otherwise it falls back inline.
+                QueryPredicate predicate = (h instanceof IpParam ipHandler)
+                        ? ipHandler.parse(alias, value, context, resolvedIps)
+                        : h.parse(alias, value, context);
                 state.predicates.add(predicate);
                 state.usedHandlerAliases.add(canonicalAlias(h));
                 if (h.suppressesDefaultRadius(alias)) {
