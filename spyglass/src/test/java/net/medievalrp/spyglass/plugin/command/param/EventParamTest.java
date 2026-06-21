@@ -139,6 +139,24 @@ class EventParamTest {
                 .isInstanceOf(ParamParseException.class);
     }
 
+    @Test
+    void liveEnabledSetReflectsRuntimeRegistration() throws Exception {
+        // EventParam holds the enabled set by reference (not a copy), so a
+        // custom event registered at runtime via SpyglassApi#registerEvent
+        // (which adds to this same set) makes a:<name> parse without a restart.
+        Set<String> live = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        live.add("break");
+        EventParam param = new EventParam(live);
+
+        assertThatThrownBy(() -> param.parse("a", "voice", ctx()))
+                .isInstanceOf(ParamParseException.class);
+
+        live.add("voice"); // simulate registerEvent("voice", ...)
+
+        QueryPredicate predicate = param.parse("a", "voice", ctx());
+        assertThat(((QueryPredicate.Eq) predicate).value()).isEqualTo("voice");
+    }
+
     private static ParamContext ctx() {
         return new ParamContext(null, null, 100);
     }

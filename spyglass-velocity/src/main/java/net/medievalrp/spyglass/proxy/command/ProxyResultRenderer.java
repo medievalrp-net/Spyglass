@@ -20,6 +20,7 @@ import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
@@ -262,6 +263,7 @@ public final class ProxyResultRenderer {
             case BlockUseRecord r -> r.target();
             case RollbackOpRecord r -> r.mode() == null ? "" : r.mode().toUpperCase(java.util.Locale.ROOT);
             case ChatRecord r -> r.target();
+            case CustomRecord r -> customText(r);
             case CommandRecord r -> "/" + r.target();
             case JoinRecord r -> r.address() == null || r.address().isEmpty()
                     ? ""
@@ -280,6 +282,17 @@ public final class ProxyResultRenderer {
                 yield upperOrEmpty(r.target()) + " " + arrow;
             }
         };
+    }
+
+    /** Inline text for a custom integrator event: "target: message", or just
+     *  whichever is present. Mirrors the Paper renderer. */
+    private static String customText(CustomRecord custom) {
+        String message = custom.message() == null ? "" : custom.message();
+        String target = custom.target();
+        if (target != null && !target.isEmpty() && !target.equals(message)) {
+            return message.isEmpty() ? target : target + ": " + message;
+        }
+        return message;
     }
 
     private static int quantityOf(EventRecord record) {

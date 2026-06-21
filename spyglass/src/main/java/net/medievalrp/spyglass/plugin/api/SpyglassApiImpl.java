@@ -13,6 +13,7 @@ import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.SpyglassLimits;
+import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
@@ -49,7 +50,10 @@ public final class SpyglassApiImpl implements SpyglassApi {
         this.recorder = recorder;
         this.recordStore = recordStore;
         this.queryExecutor = queryExecutor;
-        this.enabledEvents = Set.copyOf(enabledEvents);
+        // Live reference, NOT a copy: registerEvent() adds custom names at
+        // runtime and EventParam (which shares this same set instance) must
+        // see them so a:<name> parses.
+        this.enabledEvents = enabledEvents;
         this.limits = limits;
         this.serverName = serverName;
         this.logger = logger;
@@ -58,6 +62,22 @@ public final class SpyglassApiImpl implements SpyglassApi {
     @Override
     public void record(EventRecord record) {
         recorder.record(record);
+    }
+
+    @Override
+    public void registerEvent(String name, String pastTense) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        // EventCatalog: makes the read path decode it as a CustomRecord and
+        // supplies the display verb. enabledEvents: makes a:<name> parse.
+        EventCatalog.register(name, pastTense);
+        enabledEvents.add(name.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    @Override
+    public boolean isEventRegistered(String name) {
+        return EventCatalog.isRegistered(name);
     }
 
     @Override
@@ -132,7 +152,7 @@ public final class SpyglassApiImpl implements SpyglassApi {
 
     @Override
     public Set<String> enabledEvents() {
-        return enabledEvents;
+        return Set.copyOf(enabledEvents);
     }
 
     @Override

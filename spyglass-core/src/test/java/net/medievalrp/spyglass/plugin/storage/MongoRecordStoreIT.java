@@ -375,6 +375,41 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void roundTripsRegisteredCustomEvent() {
+        net.medievalrp.spyglass.api.event.EventCatalog.register("voice", "spoke");
+        Instant now = Instant.now();
+        BlockLocation loc = new BlockLocation(WORLD, "world", 1, 64, 2);
+        net.medievalrp.spyglass.api.event.CustomRecord rec =
+                net.medievalrp.spyglass.api.event.CustomRecord.of(
+                        new net.medievalrp.spyglass.api.event.RecordContext(
+                                UUID.randomUUID(), now, now.plusSeconds(3600),
+                                Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                                java.util.Map.of()),
+                        "voice", "voice to 2 players", "hello there",
+                        java.util.Map.of("voice_session_id", "42"));
+        store.save(List.of(rec));
+
+        QueryRequest byEvent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        var back = (net.medievalrp.spyglass.api.event.CustomRecord)
+                store.query(byEvent).records().get(0);
+        assertThat(back.message()).isEqualTo("hello there");
+        assertThat(back.target()).isEqualTo("voice to 2 players");
+        assertThat(back.extensions()).containsEntry("voice_session_id", "42");
+
+        QueryRequest byExt = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice"),
+                        new QueryPredicate.Eq("extensions.voice_session_id", "42")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byExt).records()).hasSize(1);
+
+        var summary = (net.medievalrp.spyglass.api.event.CustomRecord)
+                store.querySummary(byEvent).records().get(0);
+        assertThat(summary.extensions()).containsEntry("voice_session_id", "42");
+    }
+
+    @Test
     void summaryQueryRetainsItemProjectionsForHover() {
         // The display path (querySummary) drops the bulky BlockSnapshot
         // payloads but must keep the item so the search hover can show its

@@ -269,6 +269,48 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void roundTripsRegisteredCustomEvent() {
+        // A registered custom event (e.g. voicechat's "voice") must persist
+        // and decode as a CustomRecord, searchable by a:, m:, and
+        // extensions.<key>, with the bag intact on the display path.
+        net.medievalrp.spyglass.api.event.EventCatalog.register("voice", "spoke");
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation loc = new BlockLocation(WORLD, "world", 1, 64, 2);
+        net.medievalrp.spyglass.api.event.CustomRecord rec =
+                net.medievalrp.spyglass.api.event.CustomRecord.of(
+                        new net.medievalrp.spyglass.api.event.RecordContext(
+                                UUID.randomUUID(), now, now.plusSeconds(3600),
+                                Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                                java.util.Map.of()),
+                        "voice", "voice to 2 players", "hello there",
+                        java.util.Map.of("voice_session_id", "42"));
+        store.save(List.of(rec));
+        flushAsyncInserts();
+
+        QueryRequest byEvent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        var back = (net.medievalrp.spyglass.api.event.CustomRecord)
+                store.query(byEvent).records().get(0);
+        assertThat(back.message()).isEqualTo("hello there");
+        assertThat(back.target()).isEqualTo("voice to 2 players");
+        assertThat(back.extensions()).containsEntry("voice_session_id", "42");
+
+        // extensions.<key> filtering and m: message search both hit.
+        QueryRequest byExt = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "voice"),
+                        new QueryPredicate.Eq("extensions.voice_session_id", "42")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byExt).records()).hasSize(1);
+
+        // Display path keeps the bag (no item predicate, no post-filter).
+        var summary = (net.medievalrp.spyglass.api.event.CustomRecord)
+                store.querySummary(byEvent).records().get(0);
+        assertThat(summary.message()).isEqualTo("hello there");
+        assertThat(summary.extensions()).containsEntry("voice_session_id", "42");
+    }
+
+    @Test
     void summaryQueryRetainsItemProjectionsForHover() {
         // Feature: the search hover shows an item's custom name / lore /
         // enchants. The display path (querySummary) must carry the item even
