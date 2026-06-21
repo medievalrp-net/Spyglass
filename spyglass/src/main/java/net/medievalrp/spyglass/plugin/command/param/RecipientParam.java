@@ -61,16 +61,22 @@ public final class RecipientParam implements QueryParamHandler {
                 .toList();
     }
 
-    @SuppressWarnings("deprecation")
     private static UUID resolve(String name) {
+        // Online exact match first, then the local user cache. Same hard rule
+        // as PlayerParam: never call Bukkit.getOfflinePlayer(String) - it does
+        // a BLOCKING Mojang HTTP lookup on a cache miss and this resolve() runs
+        // on the main thread during command parse. getOfflinePlayerIfCached is
+        // cache-only and returns null on a miss, which we surface as an
+        // "Unknown player" error (recipients are stored as bare UUIDs, so there
+        // is no name to fall back to). Anyone who has been on the server
+        // recently is in the cache; the discarded Mojang path would only have
+        // resolved players who never joined, who can't appear in a recipients
+        // list anyway.
         var online = Bukkit.getPlayerExact(name);
         if (online != null) {
             return online.getUniqueId();
         }
-        var offline = Bukkit.getOfflinePlayer(name);
-        if (offline != null && offline.hasPlayedBefore()) {
-            return offline.getUniqueId();
-        }
-        return null;
+        var cached = Bukkit.getOfflinePlayerIfCached(name);
+        return cached == null ? null : cached.getUniqueId();
     }
 }
