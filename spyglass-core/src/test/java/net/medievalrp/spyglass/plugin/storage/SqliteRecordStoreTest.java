@@ -162,6 +162,44 @@ class SqliteRecordStoreTest {
     // ===== Tests ===============================================
 
     @Test
+    void recipientSearchMatchesViaPostFilter() {
+        // recipients live in the blob on SQLite -> post-filter. The evaluator
+        // must resolve the list (membership) or rcp: silently matches nothing.
+        UUID alice = UUID.randomUUID();
+        UUID bob = UUID.randomUUID();
+        store.save(List.of(new ChatRecord(
+                EventIds.newId(), "say", BASE, BASE.plusSeconds(3600),
+                Origin.player(), Source.player(alice, "Alice"),
+                new BlockLocation(WORLD, "world", 0, 64, 0), "srv",
+                "hi", "hi", List.of(alice, bob), Map.of())));
+
+        assertThat(store.query(request(List.of(new QueryPredicate.Eq("recipients", bob))))
+                .records()).hasSize(1);
+        assertThat(store.query(request(List.of(new QueryPredicate.Eq("recipients", UUID.randomUUID()))))
+                .records()).isEmpty();
+    }
+
+    @Test
+    void contentSearchMatchesChatMessageViaPostFilter() {
+        // On SQLite the message lives in the blob, so m:/content: always runs
+        // as an in-memory post-filter. The evaluator must resolve `message`
+        // (and commandLine) or the OR never matches.
+        store.save(List.of(chat("hello there world")));
+        Pattern lit = Pattern.compile(Pattern.quote("there"), Pattern.CASE_INSENSITIVE);
+        var req = request(List.of(new QueryPredicate.Or(List.of(
+                new QueryPredicate.Eq("message", lit),
+                new QueryPredicate.Eq("commandLine", lit)))));
+        assertThat(store.query(req).records()).hasSize(1);
+
+        var miss = request(List.of(new QueryPredicate.Or(List.of(
+                new QueryPredicate.Eq("message",
+                        Pattern.compile(Pattern.quote("absent"), Pattern.CASE_INSENSITIVE)),
+                new QueryPredicate.Eq("commandLine",
+                        Pattern.compile(Pattern.quote("absent"), Pattern.CASE_INSENSITIVE))))));
+        assertThat(store.query(miss).records()).isEmpty();
+    }
+
+    @Test
     void roundTripsRegisteredCustomEvent() {
         net.medievalrp.spyglass.api.event.EventCatalog.register("voice", "spoke");
         Instant occurred = BASE.minusSeconds(5);
