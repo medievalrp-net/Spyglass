@@ -12,7 +12,9 @@ public final class EventParam implements QueryParamHandler {
     private final Set<String> enabledEvents;
 
     public EventParam(Set<String> enabledEvents) {
-        this.enabledEvents = Set.copyOf(enabledEvents);
+        // Live reference, NOT a copy: SpyglassApi#registerEvent adds custom
+        // event names to this same set at runtime so a:<name> parses for them.
+        this.enabledEvents = enabledEvents;
     }
 
     @Override

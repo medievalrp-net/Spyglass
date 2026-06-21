@@ -21,6 +21,15 @@ import java.util.Set;
  */
 public final class EventCatalog {
 
+    /**
+     * Runtime-registered custom event names → display verb (past tense). All
+     * custom events map to {@link CustomRecord}. Populated by {@link
+     * net.medievalrp.spyglass.api.SpyglassApi#registerEvent} at integrator
+     * startup; consulted by the storage layer's {@link #recordClassOf} on
+     * every read, so it must be thread-safe.
+     */
+    private static final Map<String, String> CUSTOM = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static final Map<String, Class<? extends EventRecord>> TYPES;
 
     static {
@@ -28,13 +37,6 @@ public final class EventCatalog {
         m.put("break", BlockBreakRecord.class);
         m.put("place", BlockPlaceRecord.class);
         m.put("say", ChatRecord.class);
-        // Spoken voice-chat transcripts pushed in by an external integration
-        // (e.g. voicechat) via SpyglassApi#record. Reuses the ChatRecord
-        // shape — message is the transcript, recipients are the listeners —
-        // so both storage backends persist and decode it with no extra
-        // wiring. Until a general custom-event registration API lands, new
-        // third-party event names are added here.
-        m.put("voice", ChatRecord.class);
         m.put("command", CommandRecord.class);
         m.put("join", JoinRecord.class);
         m.put("quit", QuitRecord.class);
@@ -101,14 +103,58 @@ public final class EventCatalog {
         return TYPES;
     }
 
-    /** Every registered event name, in the declared order. */
+    /** Every known event name — built-ins plus runtime-registered customs. */
     public static Set<String> eventNames() {
-        return TYPES.keySet();
+        if (CUSTOM.isEmpty()) {
+            return TYPES.keySet();
+        }
+        Set<String> names = new java.util.LinkedHashSet<>(TYPES.keySet());
+        names.addAll(CUSTOM.keySet());
+        return Set.copyOf(names);
     }
 
-    /** The record class that encodes the given event name, or null when unknown. */
+    /**
+     * The record class that encodes the given event name, or null when
+     * unknown. Built-ins resolve from the static map; a runtime-registered
+     * custom name resolves to {@link CustomRecord}.
+     */
     public static Class<? extends EventRecord> recordClassOf(String eventName) {
-        return eventName == null ? null : TYPES.get(eventName.toLowerCase(java.util.Locale.ROOT));
+        if (eventName == null) {
+            return null;
+        }
+        String key = eventName.toLowerCase(java.util.Locale.ROOT);
+        Class<? extends EventRecord> builtin = TYPES.get(key);
+        if (builtin != null) {
+            return builtin;
+        }
+        return CUSTOM.containsKey(key) ? CustomRecord.class : null;
+    }
+
+    /**
+     * Register a custom event name (idempotent, case-insensitive). All custom
+     * events are stored as {@link CustomRecord}. A name that collides with a
+     * built-in is ignored — built-ins can't be redefined.
+     */
+    public static void register(String eventName, String pastTense) {
+        if (eventName == null || eventName.isBlank()) {
+            return;
+        }
+        String key = eventName.toLowerCase(java.util.Locale.ROOT);
+        if (TYPES.containsKey(key)) {
+            return;
+        }
+        CUSTOM.put(key, pastTense == null || pastTense.isBlank() ? key : pastTense);
+    }
+
+    /** True when {@code eventName} is a known event — built-in or registered custom. */
+    public static boolean isRegistered(String eventName) {
+        return recordClassOf(eventName) != null;
+    }
+
+    /** The display verb for a registered custom event, or null for built-ins
+     *  / unknown names (built-in verbs come from config). */
+    public static String pastTenseOf(String eventName) {
+        return eventName == null ? null : CUSTOM.get(eventName.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** Every event name that's stored as the given record class. */
@@ -122,8 +168,14 @@ public final class EventCatalog {
         return Set.copyOf(out);
     }
 
-    /** Distinct record classes, preserving declaration order. */
+    /** Distinct record classes, preserving declaration order. Always includes
+     *  {@link CustomRecord} — the backing type for any runtime-registered
+     *  custom event — so storage codecs are built for it even before the first
+     *  custom event is registered. */
     public static Collection<Class<? extends EventRecord>> recordClasses() {
-        return new java.util.LinkedHashSet<>(TYPES.values());
+        java.util.LinkedHashSet<Class<? extends EventRecord>> classes =
+                new java.util.LinkedHashSet<>(TYPES.values());
+        classes.add(CustomRecord.class);
+        return classes;
     }
 }
