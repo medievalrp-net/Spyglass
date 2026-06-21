@@ -155,7 +155,14 @@ public record SpyglassConfig(
     }
 
     public String pastTense(String eventName) {
-        return events.getOrDefault(eventName, new EventSettings(false, eventName)).pastTense();
+        EventSettings settings = events.get(eventName);
+        if (settings != null) {
+            return settings.pastTense();
+        }
+        // Custom events registered at runtime via SpyglassApi#registerEvent
+        // aren't in config; their verb lives in the EventCatalog registry.
+        String custom = net.medievalrp.spyglass.api.event.EventCatalog.pastTenseOf(eventName);
+        return custom != null ? custom : eventName;
     }
 
     /**

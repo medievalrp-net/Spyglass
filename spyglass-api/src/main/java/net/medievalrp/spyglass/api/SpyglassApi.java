@@ -61,6 +61,26 @@ public interface SpyglassApi {
     void record(EventRecord record);
 
     /**
+     * Register a custom event name so an integrating plugin can log and
+     * search its own event types. Records the name as a {@link
+     * net.medievalrp.spyglass.api.event.CustomRecord} event with the given
+     * display verb ({@code pastTense}, e.g. {@code "spoke"} for
+     * {@code "Alice spoke ..."}), makes it enabled and searchable via
+     * {@code a:<name>}, and is idempotent and case-insensitive.
+     *
+     * <p>Build records with {@link
+     * net.medievalrp.spyglass.api.event.CustomRecord#of} and hand them to
+     * {@link #record}. A name that collides with a built-in event is ignored
+     * (built-ins can't be redefined). Call from {@code onEnable()} on the main
+     * thread, typically guarded by {@link #isEventRegistered}.
+     */
+    void registerEvent(String name, String pastTense);
+
+    /** True when {@code name} is a known event — a built-in or a custom name
+     *  already registered via {@link #registerEvent}. Case-insensitive. */
+    boolean isEventRegistered(String name);
+
+    /**
      * Run a query against the event log. The returned stage completes
      * on a worker thread; chain with {@code thenAcceptAsync} (or use
      * Bukkit's main-thread executor) before touching world state.

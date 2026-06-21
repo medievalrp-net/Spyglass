@@ -23,7 +23,8 @@ public sealed interface EventRecord permits
         EntityHitRecord,
         EntityMountRecord,
         EntityNameRecord,
-        RollbackOpRecord {
+        RollbackOpRecord,
+        CustomRecord {
 
     UUID id();
 

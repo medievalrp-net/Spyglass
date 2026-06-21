@@ -374,6 +374,31 @@ class ResultRendererTest {
         assertThat(hover).doesNotContain(big);
     }
 
+    @Test
+    void rendersCustomEventWithVerbTargetMessageAndBagInHover() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("voice")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("voice", "spoke"));
+
+        Instant now = Instant.now();
+        net.medievalrp.spyglass.api.event.CustomRecord record =
+                new net.medievalrp.spyglass.api.event.CustomRecord(
+                        UUID.randomUUID(), "voice", now, now.plusSeconds(60),
+                        Origin.player(), Source.player(PLAYER_ID, "Alice"),
+                        new BlockLocation(WORLD_ID, "world", 1, 64, 2), "srv",
+                        "voice to 2 players", "hello there",
+                        java.util.Map.of("voice_session_id", "42"));
+
+        Component rendered = renderer.renderSingle(record, EnumSet.noneOf(Flag.class), true);
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+
+        assertThat(plain).contains("Alice").contains("spoke")
+                .contains("voice to 2 players").contains("hello there");
+        // The bag rides into the hover as first-class key/value lines.
+        String hover = hoverPlain(rendered);
+        assertThat(hover).contains("session_id").contains("42");
+    }
+
     private static String findRunCommand(Component component) {
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null
