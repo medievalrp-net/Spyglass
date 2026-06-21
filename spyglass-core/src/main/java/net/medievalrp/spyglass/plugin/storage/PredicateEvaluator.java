@@ -6,11 +6,15 @@ import java.util.regex.Pattern;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
+import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.jetbrains.annotations.ApiStatus;
@@ -111,6 +115,21 @@ final class PredicateEvaluator {
             case "expiresAt" -> record.expiresAt();
             case "target" -> record.target();
             case "server" -> record.server();
+            // Content fields: needed so m:/message:/content: match on the
+            // in-memory post-filter path (SQLite always; CH/Mongo when a
+            // sibling clause can't push down). Without these the evaluator
+            // read message/commandLine as null and never matched.
+            case "message" -> messageOf(record);
+            case "commandLine" -> record instanceof CommandRecord command ? command.commandLine() : null;
+            case "address" -> record instanceof JoinRecord join ? join.address() : null;
+            // Chat recipients (rcp:) — a List, so equalsValue's any-element
+            // match handles membership. Unmapped on CH and blob-stored on
+            // SQLite, so this in-memory path is what makes rcp: work there.
+            case "recipients" -> record instanceof ChatRecord chat ? chat.recipients() : null;
+            // cause: pushes these down (both are mapped columns); resolve them
+            // here too so a cause: combined with a post-filtered sibling match.
+            case "source.entityType" -> record.source() == null ? null : record.source().entityType();
+            case "source.description" -> record.source() == null ? null : record.source().description();
             case "source.kind" -> record.source() == null ? null : record.source().kind();
             case "source.playerId" -> record.source() == null ? null : record.source().playerId();
             case "source.playerName" -> record.source() == null ? null : record.source().playerName();
@@ -129,6 +148,15 @@ final class PredicateEvaluator {
     // These live in opaque blobs on ClickHouse; the store's post-filter
     // fallback (and the synthesis parity filter) resolve them here from
     // the decoded records instead.
+
+    /** Freeform message text — chat and custom events both carry one. */
+    private static @Nullable String messageOf(EventRecord record) {
+        return switch (record) {
+            case ChatRecord chat -> chat.message();
+            case CustomRecord custom -> custom.message();
+            default -> null;
+        };
+    }
 
     private static @Nullable Object itemPathValue(EventRecord record, String field) {
         int dot = field.indexOf('.');
