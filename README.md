@@ -35,7 +35,7 @@ A 2,000,376-block rollback, measured five ways: Spyglass on each of its three ba
 | Worst single tick | ~50 ms | ~100 ms | **~37 ms** | ~670 ms | ~270 ms |
 | On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~156 MiB | ~160 MiB | ~180 MiB |
 
-A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in production on [Crusalis](https://crusalis.net) (1,500+ players).
+A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in production on [Crusalis](https://crusalis.net), with 1,000 players online at the time.
 
 > **Why MongoDB?** the60th asks me the same question. I really just like using MongoDB. Although we recommend servers utilize ClickHouse for performance and efficient disk space usage. MySQL will not come to Spyglass. 
 
