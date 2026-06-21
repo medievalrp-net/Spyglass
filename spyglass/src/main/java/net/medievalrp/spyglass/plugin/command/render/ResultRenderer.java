@@ -17,6 +17,7 @@ import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
@@ -423,6 +424,9 @@ public final class ResultRenderer {
             // mode rides in target. Renders "<operator> ran ROLLBACK".
             case RollbackOpRecord op -> upperOrEmpty(op.mode());
             case ChatRecord chat -> chatText(chat);
+            // Generic integrator event: render "target: message" (like chat),
+            // so a voice transcript reads "spoke voice to 3 players: <text>".
+            case CustomRecord custom -> customText(custom);
             case CommandRecord command -> "/" + command.target();
             // Join's "target" in the data model is the player's own
             // name, which duplicates the source — show the IP instead
@@ -473,6 +477,20 @@ public final class ResultRenderer {
      * Vanilla chat stores target == message (its aggregation key), so this just
      * yields the message.
      */
+    /**
+     * Inline text for a custom integrator event: the freeform message is the
+     * content; when {@code target} is a distinct summary it prefixes it
+     * ("voice to 3 players: hello there"). Mirrors {@link #chatText}.
+     */
+    private static String customText(CustomRecord custom) {
+        String message = custom.message() == null ? "" : custom.message();
+        String target = custom.target();
+        if (target != null && !target.isEmpty() && !target.equals(message)) {
+            return message.isEmpty() ? target : target + ": " + message;
+        }
+        return message;
+    }
+
     private static String chatText(ChatRecord chat) {
         String message = chat.message() == null ? "" : chat.message();
         String channel = chat.target();

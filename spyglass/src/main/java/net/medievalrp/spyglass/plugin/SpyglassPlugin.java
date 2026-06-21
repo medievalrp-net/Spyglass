@@ -346,10 +346,14 @@ public final class SpyglassPlugin extends JavaPlugin {
             recorder.setIngestStats(ingestStats);
         }
 
-        Set<String> enabledEvents = config.events().entrySet().stream()
+        // Mutable, thread-safe: SpyglassApi#registerEvent adds custom event
+        // names at runtime, and the same instance is shared with EventParam
+        // so a:<name> parses for them. Seeded from the enabled config events.
+        Set<String> enabledEvents = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        config.events().entrySet().stream()
                 .filter(entry -> entry.getValue().enabled())
                 .map(Map.Entry::getKey)
-                .collect(Collectors.toUnmodifiableSet());
+                .forEach(enabledEvents::add);
 
         // Bind the per-server id stream before any listener can mint a
         // record id (#44): instance bits keep sequences collision-free

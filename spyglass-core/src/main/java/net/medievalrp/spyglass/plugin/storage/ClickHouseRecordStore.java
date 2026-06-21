@@ -33,6 +33,7 @@ import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
@@ -442,6 +443,9 @@ public final class ClickHouseRecordStore implements RecordStore {
             recipients = c.recipients();
         } else if (record instanceof CommandRecord c) {
             commandLine = c.commandLine();
+        } else if (record instanceof CustomRecord custom) {
+            // Custom events reuse the message column for their freeform text.
+            message = custom.message();
         }
         writer.setValue("message", message);
         writer.setList("recipients", recipients);
@@ -933,6 +937,13 @@ public final class ClickHouseRecordStore implements RecordStore {
             return new CommandRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target,
                     row.getString("command_line"));
+        }
+        if (clazz == CustomRecord.class) {
+            // Registered custom event: reuses target + message + extensions.
+            return new CustomRecord(id, event, occurred, expiresAt,
+                    origin, source, location, server, target,
+                    row.getString("message"),
+                    readStringMap(row, "extensions"));
         }
         if (clazz == JoinRecord.class) {
             return new JoinRecord(id, event, occurred, expiresAt,

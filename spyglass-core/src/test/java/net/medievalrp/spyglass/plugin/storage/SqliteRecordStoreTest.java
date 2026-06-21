@@ -162,6 +162,34 @@ class SqliteRecordStoreTest {
     // ===== Tests ===============================================
 
     @Test
+    void roundTripsRegisteredCustomEvent() {
+        net.medievalrp.spyglass.api.event.EventCatalog.register("voice", "spoke");
+        Instant occurred = BASE.minusSeconds(5);
+        net.medievalrp.spyglass.api.event.CustomRecord rec =
+                net.medievalrp.spyglass.api.event.CustomRecord.of(
+                        new net.medievalrp.spyglass.api.event.RecordContext(
+                                EventIds.newId(), occurred, occurred.plusSeconds(RETENTION),
+                                Origin.player(), Source.player(UUID.randomUUID(), "Eve"),
+                                new BlockLocation(WORLD, "world", 1, 64, 2), "srv", Map.of()),
+                        "voice", "voice to 2 players", "hello there",
+                        Map.of("voice_session_id", "42"));
+        store.save(List.of(rec));
+
+        var back = (net.medievalrp.spyglass.api.event.CustomRecord) store
+                .query(request(List.of(new QueryPredicate.Eq("event", "voice"))))
+                .records().get(0);
+        assertThat(back.message()).isEqualTo("hello there");
+        assertThat(back.target()).isEqualTo("voice to 2 players");
+        assertThat(back.extensions()).containsEntry("voice_session_id", "42");
+
+        // extensions.<key> filtering (post-filter; extensions live in the blob).
+        var byExt = request(List.of(
+                new QueryPredicate.Eq("event", "voice"),
+                new QueryPredicate.Eq("extensions.voice_session_id", "42")));
+        assertThat(store.query(byExt).records()).hasSize(1);
+    }
+
+    @Test
     void simpleBlockRoundTripsThroughColumnsWithNoBlob() throws SQLException {
         BlockBreakRecord record = simpleBreak(10);
         store.save(List.of(record));
