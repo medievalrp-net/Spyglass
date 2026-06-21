@@ -21,13 +21,16 @@ public final class RbqueueService {
     private final RollbackJobQueue queue;
     private final RollbackResumeStore resumeStore;
     private final RollbackService rollbackService;
+    private final ServiceSupport support;
 
     public RbqueueService(RollbackJobQueue queue,
                           RollbackResumeStore resumeStore,
-                          RollbackService rollbackService) {
+                          RollbackService rollbackService,
+                          ServiceSupport support) {
         this.queue = queue;
         this.resumeStore = resumeStore;
         this.rollbackService = rollbackService;
+        this.support = support;
     }
 
     public void execute(CommandSender sender, String args) {
@@ -57,8 +60,19 @@ public final class RbqueueService {
     }
 
     private void list(CommandSender sender) {
+        // queue.snapshot() is in-memory (cheap, stays on the calling thread);
+        // resumeStore.listPending() enumerates + parses every .resume file on
+        // disk, so it must not sit on the tick. Read off-thread, render back
+        // on the main thread.
         RollbackJobQueue.Snapshot snap = queue.snapshot();
-        var resumePending = resumeStore.listPending();
+        support.onAsyncThread(() -> {
+            List<RollbackResumeStore.Saved> resumePending = resumeStore.listPending();
+            support.onMainThread(() -> renderList(sender, snap, resumePending));
+        });
+    }
+
+    private void renderList(CommandSender sender, RollbackJobQueue.Snapshot snap,
+                            List<RollbackResumeStore.Saved> resumePending) {
         if (snap.inFlight() == null && snap.pending().isEmpty()
                 && snap.recent().isEmpty() && resumePending.isEmpty()) {
             sender.sendMessage(Feedback.bonus("No rollbacks running, queued, recent, or resumable."));
@@ -128,10 +142,21 @@ public final class RbqueueService {
     }
 
     private void cancel(CommandSender sender, String idArg) {
+        // Only the resume-file enumeration is disk I/O; read it off-thread,
+        // then do the queue mutation (and the single small deleteFile/markFinish
+        // write) back on the main thread, where the rollback queue is driven.
+        support.onAsyncThread(() -> {
+            List<RollbackResumeStore.Saved> pending = resumeStore.listPending();
+            support.onMainThread(() -> cancelResolved(sender, idArg, pending));
+        });
+    }
+
+    private void cancelResolved(CommandSender sender, String idArg,
+                                List<RollbackResumeStore.Saved> pending) {
         UUID jobId = resolveShortId(idArg);
         // Resume entries first; cancel here means "discard".
         if (jobId != null) {
-            for (var saved : resumeStore.listPending()) {
+            for (var saved : pending) {
                 if (saved.id().equals(jobId)) {
                     resumeStore.deleteFile(saved.file());
                     sender.sendMessage(Component.text(
@@ -167,7 +192,17 @@ public final class RbqueueService {
     }
 
     private void resume(CommandSender sender, String idArg) {
-        for (var saved : resumeStore.listPending()) {
+        // Read the resume files off-thread; resumeFromSaved launches a rollback
+        // and must stay on the main thread, so bounce back before calling it.
+        support.onAsyncThread(() -> {
+            List<RollbackResumeStore.Saved> pending = resumeStore.listPending();
+            support.onMainThread(() -> resumeResolved(sender, idArg, pending));
+        });
+    }
+
+    private void resumeResolved(CommandSender sender, String idArg,
+                                List<RollbackResumeStore.Saved> pending) {
+        for (var saved : pending) {
             if (saved.id().toString().toLowerCase(java.util.Locale.ROOT).startsWith(idArg.toLowerCase(java.util.Locale.ROOT))
                     || saved.shortId().equalsIgnoreCase(idArg)) {
                 if (rollbackService.resumeFromSaved(saved, sender)) {

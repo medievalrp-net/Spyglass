@@ -33,4 +33,40 @@ final class ServiceTestSupport {
         }
         return out;
     }
+
+    /**
+     * A {@link ServiceSupport} that queues onAsyncThread / onMainThread
+     * runnables instead of running them, so a test can assert that a blocking
+     * call has NOT executed inline (it's still queued) and then {@link #drain}
+     * it to completion. async tasks run first (they may enqueue main tasks),
+     * then main tasks.
+     */
+    static final class RecordingSupport implements ServiceSupport {
+        final List<Runnable> async = new ArrayList<>();
+        final List<Runnable> main = new ArrayList<>();
+
+        @Override
+        public void onMainThread(Runnable runnable) {
+            main.add(runnable);
+        }
+
+        @Override
+        public void onMainThreadLater(long delayTicks, Runnable runnable) {
+            main.add(runnable);
+        }
+
+        @Override
+        public void onAsyncThread(Runnable runnable) {
+            async.add(runnable);
+        }
+
+        void drain() {
+            while (!async.isEmpty()) {
+                async.remove(0).run();
+            }
+            while (!main.isEmpty()) {
+                main.remove(0).run();
+            }
+        }
+    }
 }

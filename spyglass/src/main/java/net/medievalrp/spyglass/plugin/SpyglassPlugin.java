@@ -518,8 +518,9 @@ public final class SpyglassPlugin extends JavaPlugin {
                 rollbackService);
         net.medievalrp.spyglass.plugin.command.service.RbqueueService rbqueueService =
                 new net.medievalrp.spyglass.plugin.command.service.RbqueueService(
-                        rollbackQueue, resumeStore, rollbackService);
-        ToolService toolService = new ToolService(toolStateStore, config.tool().material());
+                        rollbackQueue, resumeStore, rollbackService, serviceSupport);
+        ToolService toolService = new ToolService(
+                toolStateStore, config.tool().material(), serviceSupport, getLogger());
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
         TeleportService teleportService = new TeleportService();
@@ -541,13 +542,13 @@ public final class SpyglassPlugin extends JavaPlugin {
                     snap.containerType(), 0, amount, salvageStored, null));
         };
         SalvageGui salvageGui = salvageStore == null ? null
-                : new SalvageGui(salvageStore, queryExecutor, salvageWithdrawLogger,
-                        config.limits().searchResult(), getLogger());
+                : new SalvageGui(salvageStore, queryExecutor, serviceSupport::onMainThread,
+                        salvageWithdrawLogger, config.limits().searchResult(), getLogger());
         if (salvageGui != null) {
             getServer().getPluginManager().registerEvents(salvageGui, this);
         }
         SalvageService salvageService = new SalvageService(
-                salvageStore, salvageGui, config.limits().searchResult());
+                salvageStore, salvageGui, config.limits().searchResult(), serviceSupport);
 
         SpyglassCommands commands = new SpyglassCommands(
                 this,

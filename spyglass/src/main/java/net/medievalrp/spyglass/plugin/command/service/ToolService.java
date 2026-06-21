@@ -8,6 +8,7 @@ import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -42,16 +43,28 @@ public final class ToolService {
     private final ToolStateStore store;
     private final Material wandMaterial;
     private final WandHandout handout;
+    private final ServiceSupport support;
+    private final Logger logger;
     private final Set<UUID> active = ConcurrentHashMap.newKeySet();
 
-    public ToolService(ToolStateStore store, Material wandMaterial) {
-        this(store, wandMaterial, WandHandout.bukkit());
+    /** Production entry: store writes are persisted off the main thread. */
+    public ToolService(ToolStateStore store, Material wandMaterial, ServiceSupport support, Logger logger) {
+        this(store, wandMaterial, WandHandout.bukkit(), support, logger);
     }
 
+    // Test convenience: persists synchronously so verify(store).enable(...)
+    // observes the write inline, no scheduler needed.
     public ToolService(ToolStateStore store, Material wandMaterial, WandHandout handout) {
+        this(store, wandMaterial, handout, ServiceSupport.synchronous(), Logger.getLogger("spyglass-tool-test"));
+    }
+
+    public ToolService(ToolStateStore store, Material wandMaterial, WandHandout handout,
+                       ServiceSupport support, Logger logger) {
         this.store = store;
         this.wandMaterial = wandMaterial;
         this.handout = handout;
+        this.support = support;
+        this.logger = logger;
         active.addAll(store.loadActive());
     }
 
@@ -77,7 +90,7 @@ public final class ToolService {
                 return;
             }
             active.remove(id);
-            store.disable(id);
+            persistAsync(() -> store.disable(id), "disable");
             player.sendMessage(Feedback.toolOk("Deactivated the Spyglass Data Tool"));
             return;
         }
@@ -86,7 +99,7 @@ public final class ToolService {
         // if it's present but not in hand, swap it in silently. Either way,
         // the chat message mirrors v1 exactly.
         active.add(id);
-        store.enable(id);
+        persistAsync(() -> store.enable(id), "enable");
         if (slot == -1) {
             handout.give(player, wandMaterial);
             player.sendMessage(Feedback.toolOk("Added the Spyglass data tool to your inventory."));
@@ -99,6 +112,22 @@ public final class ToolService {
                 .append(Component.text("Activated the Spyglass Data Tool ", NamedTextColor.GREEN))
                 .append(Component.text("(" + wandMaterial.name() + ")", NamedTextColor.GRAY))
                 .asComponent());
+    }
+
+    // Tool state is persisted off the main thread. The in-memory `active`
+    // set is the source of truth for behavior this session, so the toggle
+    // responds instantly; the store write (Mongo deleteOne/replaceOne, a
+    // SQLite write-lock, or a ClickHouse future the driver blocks on for up
+    // to 30s) must never sit on the tick. Fire-and-forget with structured
+    // logging on failure, per ServiceSupport.onAsyncThread's contract.
+    private void persistAsync(Runnable op, String what) {
+        support.onAsyncThread(() -> {
+            try {
+                op.run();
+            } catch (RuntimeException ex) {
+                logger.warning("Spyglass tool-state " + what + " persist failed: " + ex.getMessage());
+            }
+        });
     }
 
     public boolean isActive(UUID playerId) {

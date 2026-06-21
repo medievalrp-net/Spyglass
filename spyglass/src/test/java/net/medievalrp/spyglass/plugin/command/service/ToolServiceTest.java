@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import org.bukkit.Material;
@@ -87,6 +88,34 @@ class ToolServiceTest {
         verify(store, never()).disable(id);
         assertThat(ServiceTestSupport.plainTexts(captured))
                 .anyMatch(line -> line.contains("Added the Spyglass data tool"));
+    }
+
+    @Test
+    void storeWriteIsDeferredOffTheMainThread() {
+        // #151: store.enable/disable do blocking I/O (Mongo/SQLite/ClickHouse)
+        // and must not run on the command (main) thread. The in-memory toggle
+        // is instant; the persist is queued to the async pool.
+        UUID id = UUID.randomUUID();
+        ToolStateStore store = mock(ToolStateStore.class);
+        when(store.loadActive()).thenReturn(List.of());
+        ToolService.WandHandout handout = mock(ToolService.WandHandout.class);
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(id);
+        emptyInventory(player);
+        ServiceTestSupport.captureMessages(player);
+        ServiceTestSupport.RecordingSupport support = new ServiceTestSupport.RecordingSupport();
+
+        ToolService service = new ToolService(store, Material.REDSTONE_LAMP, handout, support,
+                Logger.getLogger("tool-test"));
+        service.toggle(player);
+
+        // Activation is reflected immediately, but the store write has NOT run
+        // yet - it is sitting on the async queue, off the main thread.
+        assertThat(service.isActive(id)).isTrue();
+        verify(store, never()).enable(any());
+
+        support.drain();
+        verify(store).enable(id);
     }
 
     @Test

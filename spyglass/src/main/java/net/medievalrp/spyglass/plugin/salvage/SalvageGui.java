@@ -45,14 +45,22 @@ public final class SalvageGui implements Listener {
 
     private final SalvageStore store;
     private final Executor storeExecutor;
+    private final Executor mainExecutor;
     private final SalvageWithdrawLogger withdrawLogger;
     private final int rollbackListLimit;
     private final Logger logger;
 
-    public SalvageGui(SalvageStore store, Executor storeExecutor,
+    /**
+     * @param storeExecutor async pool for blocking store reads/writes (never the main thread)
+     * @param mainExecutor  runs back on the Bukkit main thread; required because
+     *                      {@code Bukkit.createInventory} / {@code player.openInventory}
+     *                      must not be called off-thread
+     */
+    public SalvageGui(SalvageStore store, Executor storeExecutor, Executor mainExecutor,
                       SalvageWithdrawLogger withdrawLogger, int rollbackListLimit, Logger logger) {
         this.store = store;
         this.storeExecutor = storeExecutor;
+        this.mainExecutor = mainExecutor;
         this.withdrawLogger = withdrawLogger;
         this.rollbackListLimit = rollbackListLimit;
         this.logger = logger;
@@ -66,7 +74,17 @@ public final class SalvageGui implements Listener {
     }
 
     private void openRollbacks(Player player, int page) {
-        List<SalvageStore.RollbackGroup> groups = store.listRollbacks(rollbackListLimit);
+        // store.listRollbacks is a blocking DB query - read it off-thread, then
+        // build + open the inventory back on the main thread (Bukkit requires
+        // createInventory/openInventory to run there).
+        readThenOpen(() -> store.listRollbacks(rollbackListLimit),
+                groups -> showRollbacks(player, groups, page));
+    }
+
+    private void showRollbacks(Player player, List<SalvageStore.RollbackGroup> groups, int page) {
+        if (!player.isOnline()) {
+            return;
+        }
         if (groups.isEmpty()) {
             player.sendMessage(Component.text("No salvaged inventories.", NamedTextColor.GRAY));
             return;
@@ -86,7 +104,14 @@ public final class SalvageGui implements Listener {
     }
 
     private void openChests(Player player, UUID rollbackId, int page) {
-        List<SalvageSnapshot> snaps = store.listByRollback(rollbackId, FETCH_CAP);
+        readThenOpen(() -> store.listByRollback(rollbackId, FETCH_CAP),
+                snaps -> showChests(player, rollbackId, snaps, page));
+    }
+
+    private void showChests(Player player, UUID rollbackId, List<SalvageSnapshot> snaps, int page) {
+        if (!player.isOnline()) {
+            return;
+        }
         if (snaps.isEmpty()) {
             openRollbacks(player, 0); // this rollback was fully recovered
             return;
@@ -104,6 +129,25 @@ public final class SalvageGui implements Listener {
         }
         navBar(inv, true, page, pages);
         player.openInventory(inv);
+    }
+
+    /**
+     * Run a blocking store read on {@link #storeExecutor}, then hand the result
+     * to {@code open} on {@link #mainExecutor} (the Bukkit main thread). A read
+     * failure is logged and drops the open silently rather than stalling or
+     * throwing off-thread.
+     */
+    private <T> void readThenOpen(java.util.function.Supplier<T> read, java.util.function.Consumer<T> open) {
+        storeExecutor.execute(() -> {
+            T result;
+            try {
+                result = read.get();
+            } catch (RuntimeException ex) {
+                logger.warning("Spyglass salvage GUI read failed: " + ex.getMessage());
+                return;
+            }
+            mainExecutor.execute(() -> open.accept(result));
+        });
     }
 
     private void openItems(Player player, UUID rollbackId, SalvageSnapshot snap, int page) {

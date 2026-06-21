@@ -20,11 +20,13 @@ public final class SalvageService {
     private final SalvageStore store;
     private final SalvageGui gui;
     private final int listLimit;
+    private final ServiceSupport support;
 
-    public SalvageService(SalvageStore store, SalvageGui gui, int listLimit) {
+    public SalvageService(SalvageStore store, SalvageGui gui, int listLimit, ServiceSupport support) {
         this.store = store;
         this.gui = gui;
         this.listLimit = listLimit;
+        this.support = support;
     }
 
     public void execute(CommandSender sender) {
@@ -33,10 +35,19 @@ public final class SalvageService {
             return;
         }
         if (sender instanceof Player player) {
+            // The GUI reads the store off-thread internally and opens on main.
             gui.openRollbacks(player);
             return;
         }
-        List<SalvageSnapshot> snaps = store.list(listLimit);
+        // Console / RCON text listing: store.list() is a blocking DB query, so
+        // read off-thread and print back on the main thread.
+        support.onAsyncThread(() -> {
+            List<SalvageSnapshot> snaps = store.list(listLimit);
+            support.onMainThread(() -> renderListing(sender, snaps));
+        });
+    }
+
+    private void renderListing(CommandSender sender, List<SalvageSnapshot> snaps) {
         if (snaps.isEmpty()) {
             sender.sendMessage(Feedback.bonus("No salvaged inventories."));
             return;
