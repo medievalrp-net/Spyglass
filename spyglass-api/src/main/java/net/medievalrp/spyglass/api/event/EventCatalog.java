@@ -28,6 +28,13 @@ public final class EventCatalog {
         m.put("break", BlockBreakRecord.class);
         m.put("place", BlockPlaceRecord.class);
         m.put("say", ChatRecord.class);
+        // Spoken voice-chat transcripts pushed in by an external integration
+        // (e.g. voicechat) via SpyglassApi#record. Reuses the ChatRecord
+        // shape — message is the transcript, recipients are the listeners —
+        // so both storage backends persist and decode it with no extra
+        // wiring. Until a general custom-event registration API lands, new
+        // third-party event names are added here.
+        m.put("voice", ChatRecord.class);
         m.put("command", CommandRecord.class);
         m.put("join", JoinRecord.class);
         m.put("quit", QuitRecord.class);
