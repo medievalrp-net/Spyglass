@@ -131,13 +131,28 @@ public final class PlayerParam implements QueryParamHandler {
         return new QueryPredicate.In("source.playerName", names);
     }
 
-    @SuppressWarnings("deprecation")
     private static UUID resolveViaBukkit(String name) {
-        var offline = Bukkit.getOfflinePlayer(name);
-        if (offline == null || !offline.hasPlayedBefore() && Bukkit.getPlayerExact(name) == null) {
-            var online = Bukkit.getPlayerExact(name);
-            return online == null ? null : online.getUniqueId();
+        // Prefer an exact online match (the common case: staff investigating
+        // someone currently connected), then the local user cache.
+        //
+        // NEVER call Bukkit.getOfflinePlayer(String) here. That overload does
+        // a BLOCKING HTTP lookup to Mojang's profile API when the name isn't
+        // already cached, and commands run on the main server thread (the
+        // simple execution coordinator dispatches handlers inline), so a cache
+        // miss stalls the whole server for the round-trip - seconds, on a
+        // Mojang slowdown. Spark caught exactly this (PlayerParam.parse ->
+        // getOfflinePlayer -> HttpURLConnection on "Server thread").
+        //
+        // The Mojang round-trip also buys nothing for the query: source.playerId
+        // only ever holds UUIDs of players who acted on THIS server, so a name
+        // resolved for someone who never joined can't match a record. On a cache
+        // miss we return null and the caller falls back to a verbatim
+        // source.playerName match, which is exactly what we want.
+        var online = Bukkit.getPlayerExact(name);
+        if (online != null) {
+            return online.getUniqueId();
         }
-        return offline.getUniqueId();
+        var cached = Bukkit.getOfflinePlayerIfCached(name);
+        return cached == null ? null : cached.getUniqueId();
     }
 }
