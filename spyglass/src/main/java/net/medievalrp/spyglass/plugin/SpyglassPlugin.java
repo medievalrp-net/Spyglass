@@ -121,6 +121,7 @@ import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.SqliteToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.WandInteractListener;
+import net.medievalrp.spyglass.plugin.util.FallingBlockTracker;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditLifecycleListener;
 import net.medievalrp.spyglass.plugin.worldedit.WorldEditSubscriber;
 import org.bstats.bukkit.Metrics;
@@ -149,6 +150,14 @@ public final class SpyglassPlugin extends JavaPlugin {
      * server otherwise).
      */
     private java.util.concurrent.ExecutorService worldWriteExecutor;
+    /**
+     * Repeating async task that sweeps expired entries out of
+     * {@link net.medievalrp.spyglass.plugin.util.FallingBlockTracker}.
+     * Without this, cascade cells whose falling-block entities never
+     * cleanly land (shatter in water/lava, void, /kill, anti-cheat
+     * despawn) accumulate forever -- #128.
+     */
+    private org.bukkit.scheduler.BukkitTask fallingBlockPurgeTask;
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
     private SalvageStore salvageStore;
@@ -603,6 +612,17 @@ public final class SpyglassPlugin extends JavaPlugin {
             getLogger().info("Spyglass: bStats metrics enabled (opt out with metrics.enabled=false).");
         }
 
+        // #128: sweep expired FallingBlockTracker cells on a repeating async task.
+        // purgeExpired() only touches a ConcurrentHashMap -- no Bukkit world access --
+        // so running it off the main thread is safe. The period (1200 ticks = 60 s)
+        // is 2x the TTL (30 s), meaning every cohort of cascade cells is guaranteed
+        // at least one full sweep opportunity before a second TTL window elapses.
+        // Delay matches the period so the first pass is not immediately at boot.
+        final long PURGE_PERIOD_TICKS = 1200L; // 60 s at 20 TPS
+        this.fallingBlockPurgeTask = getServer().getScheduler()
+                .runTaskTimerAsynchronously(this, FallingBlockTracker::purgeExpired,
+                        PURGE_PERIOD_TICKS, PURGE_PERIOD_TICKS);
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
     }
 
@@ -623,6 +643,12 @@ public final class SpyglassPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // Cancel the FallingBlockTracker purge task before touching any other
+        // state so it cannot fire concurrently with teardown.
+        if (fallingBlockPurgeTask != null) {
+            fallingBlockPurgeTask.cancel();
+            fallingBlockPurgeTask = null;
+        }
         // Stop the bStats submit scheduler first so it can't fire mid-teardown.
         if (metrics != null) {
             metrics.shutdown();
