@@ -30,6 +30,11 @@ import org.bukkit.inventory.meta.ItemMeta;
  * the top 45 slots are content. Every click is cancelled and item movement is
  * performed manually for takes only, which blocks shift-insert, number-key
  * swaps, drags, double-click collect, and hopper pulls.
+ *
+ * <p>Dupe prevention: {@link #inFlight} tracks slots whose async store write
+ * has been dispatched but not yet acknowledged. A slot in that set is treated
+ * as already-taken in any re-read from the DB (the Back navigation path), and
+ * a second take() on the same slot is refused outright.
  */
 public final class SalvageGui implements Listener {
 
@@ -49,6 +54,8 @@ public final class SalvageGui implements Listener {
     private final SalvageWithdrawLogger withdrawLogger;
     private final int rollbackListLimit;
     private final Logger logger;
+    /** Tracks slots whose async store write is in progress but not yet acknowledged. */
+    final InFlightTracker inFlight = new InFlightTracker();
 
     /**
      * @param storeExecutor async pool for blocking store reads/writes (never the main thread)
@@ -112,20 +119,31 @@ public final class SalvageGui implements Listener {
         if (!player.isOnline()) {
             return;
         }
-        if (snaps.isEmpty()) {
+        // Filter in-flight slots from each re-read snapshot so a stale DB result
+        // cannot surface an already-taken item during the async-write window.
+        List<SalvageSnapshot> visible = new ArrayList<>(snaps.size());
+        for (SalvageSnapshot snap : snaps) {
+            List<StoredItem> visibleItems = snap.items().stream()
+                    .filter(item -> !inFlight.isInFlight(snap.id(), item.slot()))
+                    .toList();
+            if (!visibleItems.isEmpty()) {
+                visible.add(snap.withItems(visibleItems));
+            }
+        }
+        if (visible.isEmpty()) {
             openRollbacks(player, 0); // this rollback was fully recovered
             return;
         }
-        int pages = pageCount(snaps.size());
+        int pages = pageCount(visible.size());
         page = clamp(page, pages);
-        SalvageHolder holder = SalvageHolder.chests(rollbackId, snaps, page);
+        SalvageHolder holder = SalvageHolder.chests(rollbackId, visible, page);
         Inventory inv = Bukkit.createInventory(holder, SIZE,
-                Component.text(snaps.size() + " container(s) — by " + snaps.get(0).operatorName(),
+                Component.text(visible.size() + " container(s) - by " + visible.get(0).operatorName(),
                         NamedTextColor.GOLD));
         holder.setInventory(inv);
         int base = page * CONTENT;
-        for (int s = 0; s < CONTENT && base + s < snaps.size(); s++) {
-            inv.setItem(s, chestIcon(snaps.get(base + s)));
+        for (int s = 0; s < CONTENT && base + s < visible.size(); s++) {
+            inv.setItem(s, chestIcon(visible.get(base + s)));
         }
         navBar(inv, true, page, pages);
         player.openInventory(inv);
@@ -151,7 +169,13 @@ public final class SalvageGui implements Listener {
     }
 
     private void openItems(Player player, UUID rollbackId, SalvageSnapshot snap, int page) {
-        List<StoredItem> items = snap.items();
+        // Filter in-flight slots before rendering - defense-in-depth for the case
+        // where the caller passes a stale snap from a DB re-read.
+        UUID snapId = snap.id();
+        List<StoredItem> items = snap.items().stream()
+                .filter(item -> !inFlight.isInFlight(snapId, item.slot()))
+                .toList();
+        snap = snap.withItems(items);
         int pages = pageCount(Math.max(1, items.size()));
         page = clamp(page, pages);
         SalvageHolder holder = SalvageHolder.items(rollbackId, snap, page);
@@ -241,14 +265,28 @@ public final class SalvageGui implements Listener {
         if (index < 0 || index >= items.size()) {
             return;
         }
-        ItemStack stack = ItemSerialization.decode(items.get(index).data());
+        StoredItem storedItem = items.get(index);
+        int containerSlot = storedItem.slot();
+
+        // Defense-in-depth: refuse a take on a slot whose write is still in-flight.
+        // The primary protection is showChests/openItems filtering, but this blocks
+        // a race where two rapid clicks arrive before the first completes.
+        if (!inFlight.markInFlight(snap.id(), containerSlot)) {
+            logger.fine("Spyglass salvage take refused: slot " + containerSlot
+                    + " of snapshot " + snap.id() + " is already in-flight");
+            return;
+        }
+
+        ItemStack stack = ItemSerialization.decode(storedItem.data());
         if (stack == null || stack.getType() == Material.AIR) {
+            inFlight.clear(snap.id(), containerSlot);
             return;
         }
         Map<Integer, ItemStack> overflow = player.getInventory().addItem(stack.clone());
         ItemStack remaining = overflow.isEmpty() ? null : overflow.values().iterator().next();
         int taken = stack.getAmount() - (remaining == null ? 0 : remaining.getAmount());
         if (taken <= 0) {
+            inFlight.clear(snap.id(), containerSlot);
             player.sendMessage(Component.text("Your inventory is full.", NamedTextColor.RED));
             return;
         }
@@ -267,18 +305,22 @@ public final class SalvageGui implements Listener {
         if (remaining == null) {
             updated.remove(index);
         } else {
-            updated.set(index, ItemSerialization.storedItem(items.get(index).slot(), remaining));
+            updated.set(index, ItemSerialization.storedItem(containerSlot, remaining));
         }
         UUID id = snap.id();
         storeExecutor.execute(() -> {
             try {
                 if (updated.isEmpty()) {
                     store.delete(id);
+                    inFlight.clearAll(id);
                 } else {
                     store.replaceItems(id, updated);
+                    inFlight.clear(id, containerSlot);
                 }
             } catch (RuntimeException ex) {
                 logger.warning("Spyglass salvage persist failed: " + ex.getMessage());
+                // Clear on failure too so the slot does not stay locked forever.
+                inFlight.clear(id, containerSlot);
             }
         });
         if (updated.isEmpty()) {
