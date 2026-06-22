@@ -100,6 +100,7 @@ import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.pipeline.DeferredSerializer;
 import net.medievalrp.spyglass.plugin.pipeline.RecordCommittedPublisher;
 import net.medievalrp.spyglass.plugin.rollback.ClickHouseUndoStack;
+import net.medievalrp.spyglass.plugin.rollback.MariaDbUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.MongoUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.RollbackEngine;
 import net.medievalrp.spyglass.plugin.rollback.RollbackPhysicsBlocker;
@@ -107,11 +108,13 @@ import net.medievalrp.spyglass.plugin.rollback.SqliteUndoStack;
 import net.medievalrp.spyglass.plugin.rollback.UndoStack;
 import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
+import net.medievalrp.spyglass.plugin.storage.MariaDbRecordStore;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.storage.SqliteRecordStore;
 import net.medievalrp.spyglass.plugin.storage.SynthesizingRecordStore;
 import net.medievalrp.spyglass.plugin.salvage.ClickHouseSalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.MariaDbSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.MongoSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SqliteSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
@@ -120,6 +123,7 @@ import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
+import net.medievalrp.spyglass.plugin.command.service.tool.MariaDbToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.SqliteToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ToolStateStore;
@@ -237,6 +241,21 @@ public final class SpyglassPlugin extends JavaPlugin {
                     undoStack = new SqliteUndoStack(sqliteStore);
                     toolStateStore = new SqliteToolStateStore(sqliteStore);
                     salvageStore = new SqliteSalvageStore(sqliteStore, 30L);
+                }
+                case MARIADB -> {
+                    // Client-server SQL backend: records, undo ledger, wand
+                    // state, and salvage all live in the one MariaDB / MySQL
+                    // database. Retention drives the periodic TTL sweep and the
+                    // reconstructed expiry on column-stored rows.
+                    SpyglassConfig.MariaDb maria = config.database().mariadb();
+                    MariaDbRecordStore mariaStore = new MariaDbRecordStore(
+                            maria.host(), maria.port(), maria.database(),
+                            maria.user(), maria.password(), maria.ssl(),
+                            config.storage().retention().seconds());
+                    recordStore = mariaStore;
+                    undoStack = new MariaDbUndoStack(mariaStore);
+                    toolStateStore = new MariaDbToolStateStore(mariaStore);
+                    salvageStore = new MariaDbSalvageStore(mariaStore, 30L);
                 }
             }
             if (config.storage().rolledAuditSynthesized()) {
@@ -624,7 +643,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         // clash with another plugin's bundled bStats. Opt-out is either
         // metrics.enabled = false here or the server-wide bStats config the
         // library writes. One custom chart reports the storage backend in use
-        // (sqlite / mongo / clickhouse); the rest is bStats' default,
+        // (sqlite / mongo / clickhouse / mariadb); the rest is bStats' default,
         // non-identifying platform data (server software, player count, Java).
         if (config.metrics().enabled()) {
             this.metrics = new Metrics(this, BSTATS_PLUGIN_ID);

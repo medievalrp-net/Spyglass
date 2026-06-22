@@ -6,6 +6,7 @@ val paperApiVersion: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
 val sqliteJdbcVersion: String by rootProject.extra
+val mariaDbDriverVersion: String by rootProject.extra
 val junitVersion: String by rootProject.extra
 val assertjVersion: String by rootProject.extra
 val mockitoVersion: String by rootProject.extra
@@ -58,6 +59,13 @@ dependencies {
     // store directly, mirroring the Mongo / ClickHouse drivers above.
     api("org.xerial:sqlite-jdbc:$sqliteJdbcVersion")
 
+    // MariaDB / MySQL backend (#169): the client-server SQL store for
+    // operators who already run a MariaDB or MySQL server. MariaDB
+    // Connector/J speaks both wire protocols, so one driver serves
+    // backend = "mariadb" and "mysql". Exposed as `api` like the other
+    // drivers so the plugin + proxy construct the store directly.
+    api("org.mariadb.jdbc:mariadb-java-client:$mariaDbDriverVersion")
+
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
@@ -67,6 +75,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:$testcontainersVersion")
     testImplementation("org.testcontainers:mongodb:$testcontainersVersion")
     testImplementation("org.testcontainers:clickhouse:$testcontainersVersion")
+    testImplementation("org.testcontainers:mariadb:$testcontainersVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -80,7 +89,7 @@ tasks.test {
     // exercise. Run via `./gradlew :spyglass-core:clickhouseBench` /
     // `:spyglass-core:sqliteBench`.
     useJUnitPlatform {
-        excludeTags("bench", "ch-bench", "sqlite-bench")
+        excludeTags("bench", "ch-bench", "sqlite-bench", "mariadb-bench")
     }
     finalizedBy(tasks.named("jacocoTestReport"))
 }
@@ -103,6 +112,33 @@ tasks.register<Test>("sqliteBench") {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
     maxHeapSize = "4g"
+    for ((key, value) in System.getProperties()) {
+        val name = key.toString()
+        if (name.startsWith("SG_BENCH_")) {
+            systemProperty(name, value.toString())
+        }
+    }
+}
+
+tasks.register<Test>("mariadbBench") {
+    description = "Spyglass·MariaDB disk + rollback-read benchmark (#169; requires Docker)."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("mariadb-bench")
+    }
+    extensions.configure<JacocoTaskExtension> {
+        isEnabled = false
+    }
+    testLogging {
+        events("started", "passed", "failed", "standard_out")
+        showStandardStreams = true
+        showExceptions = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+    maxHeapSize = "4g"
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
     for ((key, value) in System.getProperties()) {
         val name = key.toString()
         if (name.startsWith("SG_BENCH_")) {
