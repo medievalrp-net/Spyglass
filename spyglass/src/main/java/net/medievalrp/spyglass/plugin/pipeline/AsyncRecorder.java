@@ -111,6 +111,10 @@ public final class AsyncRecorder implements Recorder {
     private int consecutiveFailures = 0;
     private volatile Consumer<EventRecord> committedHook = r -> {};
     private volatile FlushBarrier flushBarrier = timeout -> true;
+    // Opt-in analytics counter (#168). Null unless analytics.enabled, so the
+    // hot path is a single volatile read + null check when off - the same shape
+    // as committedHook above. Set once at startup via setIngestStats.
+    private volatile IngestStats ingestStats = null;
 
     /**
      * Pre-flush gate. {@link #flush} awaits this before snapshotting the
@@ -229,6 +233,31 @@ public final class AsyncRecorder implements Recorder {
         this.flushBarrier = barrier == null ? (timeout -> true) : barrier;
     }
 
+    /**
+     * Install the opt-in analytics counter (#168). When set, every intake is
+     * tallied by event type. Null (the default) leaves the hot path a single
+     * volatile read + null check. Set once at startup, after WAL replay so
+     * recovered records don't count as live ingest.
+     */
+    public void setIngestStats(IngestStats stats) {
+        this.ingestStats = stats;
+    }
+
+    /** Live recorder queue depth (analytics gauge, #168). O(1) counter read. */
+    public int queueDepth() {
+        return queue.size();
+    }
+
+    /** Cumulative records persisted to the store (analytics gauge, #168). */
+    public long drainedCount() {
+        return drained.get();
+    }
+
+    /** Cumulative records lost to shutdown-flush exhaustion (analytics gauge, #168). */
+    public long droppedCount() {
+        return dropped.get();
+    }
+
     @Override
     public void record(EventRecord record) {
         // Backpressure an off-main firehose (FAWE worker threads reach the
@@ -238,6 +267,11 @@ public final class AsyncRecorder implements Recorder {
         // the gate guarantees room the record always lands.
         awaitCapacityIfBlockable();
         queue.offer(record);
+        // Analytics intake count (#168): null unless analytics.enabled.
+        IngestStats stats = ingestStats;
+        if (stats != null) {
+            stats.onRecord(record.event());
+        }
         try {
             committedHook.accept(record);
         } catch (RuntimeException hookFailure) {
@@ -250,6 +284,15 @@ public final class AsyncRecorder implements Recorder {
     public void recordAll(List<EventRecord> records) {
         if (records.isEmpty()) {
             return;
+        }
+        // Analytics intake count (#168): tally every record in the bulk batch
+        // (WorldEdit/FAWE/rollback-audit) before it queues or spills, so the
+        // analytics view shows bulk-edit load too. Null unless analytics.enabled.
+        IngestStats stats = ingestStats;
+        if (stats != null) {
+            for (EventRecord record : records) {
+                stats.onRecord(record.event());
+            }
         }
         // Bulk intake for the WorldEdit build stage and the rollback audit
         // trail. The WorldEdit path is the firehose this whole ceiling exists

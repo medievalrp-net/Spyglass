@@ -66,4 +66,42 @@ class SpyglassConfigTest {
 
         assertThat(SpyglassConfig.parseMetrics(root).enabled()).isTrue();
     }
+
+    // #168: analytics is opt-in (default off), with a 60s default interval
+    // floored at 5s.
+    @Test
+    void absentAnalyticsDefaultsToDisabledWith60sInterval() {
+        BasicConfigurationNode root = BasicConfigurationNode.root();
+        SpyglassConfig.Analytics analytics = SpyglassConfig.parseAnalytics(root);
+        assertThat(analytics.enabled()).isFalse();
+        assertThat(analytics.interval().seconds()).isEqualTo(60L);
+    }
+
+    @Test
+    void explicitAnalyticsEnabledWithCustomInterval() throws SerializationException {
+        BasicConfigurationNode root = BasicConfigurationNode.root();
+        root.node("analytics", "enabled").set(true);
+        root.node("analytics", "interval").set("30s");
+        SpyglassConfig.Analytics analytics = SpyglassConfig.parseAnalytics(root);
+        assertThat(analytics.enabled()).isTrue();
+        assertThat(analytics.interval().seconds()).isEqualTo(30L);
+    }
+
+    @Test
+    void tinyAnalyticsIntervalIsFlooredAtFiveSeconds() throws SerializationException {
+        BasicConfigurationNode root = BasicConfigurationNode.root();
+        root.node("analytics", "enabled").set(true);
+        root.node("analytics", "interval").set("1s");
+        assertThat(SpyglassConfig.parseAnalytics(root).interval().seconds()).isEqualTo(5L);
+    }
+
+    @Test
+    void malformedAnalyticsIntervalFallsBackToSixtySeconds() throws SerializationException {
+        BasicConfigurationNode root = BasicConfigurationNode.root();
+        root.node("analytics", "enabled").set(true);
+        root.node("analytics", "interval").set("nonsense");
+        // A typo in the interval must degrade to the 60s default, not abort the
+        // whole config load.
+        assertThat(SpyglassConfig.parseAnalytics(root).interval().seconds()).isEqualTo(60L);
+    }
 }
