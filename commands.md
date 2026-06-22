@@ -54,7 +54,8 @@ Root: `/spyglass`. Short alias: `/sg`.
 | `m` | `message` | Chat / sign / book text |
 | `rcp` | `recipient` | Private-message recipient |
 | `r` | `radius` | Radius in blocks. Default applies if omitted |
-| `t` | `since` | Time window. Default 4h |
+| `t` | `since` | Lower time bound (how far back). Default 4h |
+| `before` | - | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago |
 | `w` | `world` | World name |
 | `srv` | `server` | Server name (multi-server) |
 | `trg` | `target` | Block coords `x,y,z` |

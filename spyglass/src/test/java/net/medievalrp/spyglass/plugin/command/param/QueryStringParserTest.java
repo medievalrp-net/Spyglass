@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -12,6 +13,7 @@ import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import net.medievalrp.spyglass.api.query.QueryRequest;
+import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import org.junit.jupiter.api.Test;
 
@@ -141,6 +143,89 @@ class QueryStringParserTest {
         assertThat(in.field()).isEqualTo("source.playerId");
         assertThat(in.values()).hasSize(1);
         assertThat(in.values().iterator().next()).isEqualTo(resolved);
+    }
+
+    // ---- before: upper time bound ----
+
+    /**
+     * {@code t:12h before:6h} - the two params AND together into a bounded
+     * window: lower from t: (12h ago) and upper from before: (6h ago).
+     * Both bounds must be non-null and lower must be earlier than upper.
+     */
+    @Test
+    void tAndBeforeTogetherProduceBoundedWindow() throws Exception {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.queryParam("t")).thenReturn(Optional.of(new TimeParam()));
+        when(api.queryParam("before")).thenReturn(Optional.of(new BeforeParam()));
+
+        Instant testStart = Instant.now();
+        QueryRequest request = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "t:12h before:6h", 0);
+
+        // Two explicit predicates (t: and before:); defaults disabled so nothing extra
+        assertThat(request.predicates()).hasSize(2);
+
+        QueryPredicate.Range lowerRange = request.predicates().stream()
+                .filter(p -> p instanceof QueryPredicate.Range r && r.lowerInclusive() != null)
+                .map(p -> (QueryPredicate.Range) p)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected a Range with non-null lower"));
+
+        QueryPredicate.Range upperRange = request.predicates().stream()
+                .filter(p -> p instanceof QueryPredicate.Range r && r.upperInclusive() != null)
+                .map(p -> (QueryPredicate.Range) p)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected a Range with non-null upper"));
+
+        Instant lower = (Instant) lowerRange.lowerInclusive();
+        Instant upper = (Instant) upperRange.upperInclusive();
+
+        assertThat(lower).isNotNull();
+        assertThat(upper).isNotNull();
+        // lower (12h ago) must be before upper (6h ago)
+        assertThat(lower).isBefore(upper);
+        // sanity: both are in the past
+        assertThat(lower).isBefore(testStart);
+        assertThat(upper).isBefore(testStart);
+    }
+
+    /**
+     * {@code before:6h} alone - sawTime must NOT be set by BeforeParam, so
+     * the default lower floor is applied by the parser (defaults.enabled=true).
+     * The result must have a non-null lower bound (the default) in addition
+     * to the non-null upper bound from before:.
+     */
+    @Test
+    void beforeAloneStillGetsDefaultLowerBound() throws Exception {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.queryParam("before")).thenReturn(Optional.of(new BeforeParam()));
+
+        // Defaults enabled with a 4h time floor
+        SpyglassConfig config = mock(SpyglassConfig.class);
+        when(config.defaults()).thenReturn(new SpyglassConfig.Defaults(true, 0, Duration.parse("4h")));
+        when(config.limits()).thenReturn(new SpyglassConfig.Limits(100, 50, 0, 0, null, 0));
+
+        QueryRequest request = new QueryStringParser(api, config)
+                .parse(null, "before:6h", 0);
+
+        // Two predicates: the explicit before: upper range + the injected default lower range
+        assertThat(request.predicates()).hasSize(2);
+
+        // The explicit before: predicate has null lower, non-null upper
+        QueryPredicate.Range beforeRange = request.predicates().stream()
+                .filter(p -> p instanceof QueryPredicate.Range r && r.upperInclusive() != null)
+                .map(p -> (QueryPredicate.Range) p)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected Range with non-null upper from before:"));
+        assertThat(beforeRange.lowerInclusive()).isNull();
+
+        // The injected default has non-null lower, null upper
+        QueryPredicate.Range defaultRange = request.predicates().stream()
+                .filter(p -> p instanceof QueryPredicate.Range r && r.lowerInclusive() != null)
+                .map(p -> (QueryPredicate.Range) p)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected default Range with non-null lower"));
+        assertThat(defaultRange.upperInclusive()).isNull();
     }
 
     /**

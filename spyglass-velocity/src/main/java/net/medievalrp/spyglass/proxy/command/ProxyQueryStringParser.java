@@ -105,6 +105,12 @@ public final class ProxyQueryStringParser {
                         predicates.add(new QueryPredicate.Range("occurred", lower, null));
                         sawTime = true;
                     }
+                    case "before" -> {
+                        // Upper bound only - does NOT set sawTime, so the default
+                        // lower floor is still applied when no t:/since: is present.
+                        Instant upper = parseDuration(value);
+                        predicates.add(new QueryPredicate.Range("occurred", null, upper));
+                    }
                     case "m", "message" -> predicates.add(
                             new QueryPredicate.Eq("message",
                                     java.util.regex.Pattern.compile(
