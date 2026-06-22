@@ -10,6 +10,7 @@ import net.medievalrp.spyglass.plugin.command.service.RollbackMode;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
+import net.medievalrp.spyglass.plugin.command.service.StatsService;
 import net.medievalrp.spyglass.plugin.command.service.TeleportService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.command.service.UndoService;
@@ -40,6 +41,7 @@ public final class SpyglassCommands {
     private final ToolService tool;
     private final TeleportService teleport;
     private final SalvageService salvage;
+    private final StatsService stats;
     private final SpyglassSuggestions suggestions;
 
     public SpyglassCommands(JavaPlugin plugin,
@@ -53,6 +55,7 @@ public final class SpyglassCommands {
                         ToolService tool,
                         TeleportService teleport,
                         SalvageService salvage,
+                        StatsService stats,
                         SpyglassSuggestions suggestions) {
         this.plugin = plugin;
         this.api = api;
@@ -65,6 +68,7 @@ public final class SpyglassCommands {
         this.tool = tool;
         this.teleport = teleport;
         this.salvage = salvage;
+        this.stats = stats;
         this.suggestions = suggestions;
     }
 
@@ -83,6 +87,7 @@ public final class SpyglassCommands {
     private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
     private static final List<String> INVENTORY_ALIASES = List.of("inventory", "inv", "salvage");
     private static final List<String> VERSION_ALIASES = List.of("version", "ver");
+    private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
@@ -108,6 +113,13 @@ public final class SpyglassCommands {
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.use")
                         .handler(ctx -> sendVersion(ctx.sender())));
+            }
+
+            // #168: /spyglass stats - on-demand ingest analytics snapshot.
+            for (String name : STATS_ALIASES) {
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .permission("spyglass.use")
+                        .handler(ctx -> stats.execute(ctx.sender())));
             }
 
             for (String name : SEARCH_ALIASES) {

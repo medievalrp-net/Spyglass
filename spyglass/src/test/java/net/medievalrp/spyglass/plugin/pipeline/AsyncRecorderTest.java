@@ -43,6 +43,35 @@ class AsyncRecorderTest {
                 "127.0.0.1");
     }
 
+    /**
+     * #168: when an {@link IngestStats} is installed, both {@link
+     * AsyncRecorder#record} and {@link AsyncRecorder#recordAll} tally each
+     * intake by event type. Without it (the default), the hot path is unaffected
+     * (covered by every other test here, which never set it).
+     */
+    @Test
+    @Timeout(10)
+    void ingestStatsCountsRecordAndRecordAll() throws Exception {
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        IngestStats stats = new IngestStats(
+                recorder::queueDepth, recorder::drainedCount, recorder::droppedCount, () -> -1L);
+        recorder.setIngestStats(stats);
+        try {
+            recorder.record(sampleRecord());
+            recorder.record(sampleRecord());
+            recorder.recordAll(List.of(sampleRecord(), sampleRecord(), sampleRecord()));
+
+            IngestStats.Snapshot snap = stats.capture(0L);
+            assertThat(snap.total())
+                    .as("record() x2 + recordAll() of 3 = 5 intakes counted")
+                    .isEqualTo(5L);
+            assertThat(snap.counts()).containsEntry("join", 5L);
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
     @Test
     void drainsBatchesToStore() throws Exception {
         CapturingStore store = new CapturingStore();

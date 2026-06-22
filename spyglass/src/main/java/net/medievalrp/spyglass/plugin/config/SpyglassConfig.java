@@ -20,7 +20,8 @@ public record SpyglassConfig(
         java.util.List<String> commandRedact,
         Tool tool,
         Server server,
-        Metrics metrics) {
+        Metrics metrics,
+        Analytics analytics) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -117,7 +118,8 @@ public record SpyglassConfig(
                 commandRedact,
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
                 new Server(root.node("server", "name").getString("default")),
-                parseMetrics(root));
+                parseMetrics(root),
+                parseAnalytics(root));
     }
 
     /**
@@ -148,6 +150,28 @@ public record SpyglassConfig(
      */
     static Metrics parseMetrics(ConfigurationNode root) {
         return new Metrics(root.node("metrics", "enabled").getBoolean(true));
+    }
+
+    /**
+     * Ingest analytics mode (#168). Opt-in: {@code analytics.enabled} defaults
+     * to {@code false} (absent key = off), so a default config carries zero
+     * counting overhead. {@code analytics.interval} is how often the console
+     * report fires; it defaults to 60s and is floored at 5s if someone sets it
+     * absurdly low. Static + package-visible so it's unit-testable headless,
+     * like {@link #parseMetrics}.
+     */
+    static Analytics parseAnalytics(ConfigurationNode root) {
+        boolean enabled = root.node("analytics", "enabled").getBoolean(false);
+        Duration interval;
+        try {
+            interval = Duration.parse(root.node("analytics", "interval").getString("60s"));
+        } catch (RuntimeException malformed) {
+            interval = Duration.parse("60s");
+        }
+        if (interval.seconds() < 5L) {
+            interval = Duration.parse("5s");
+        }
+        return new Analytics(enabled, interval);
     }
 
     public boolean enabled(String eventName) {
@@ -335,6 +359,16 @@ public record SpyglassConfig(
      * {@code config.conf} to opt this server out of Spyglass's submission.
      */
     public record Metrics(boolean enabled) {
+    }
+
+    /**
+     * Ingest analytics mode (#168). {@code enabled} defaults to {@code false}
+     * (opt-in, zero overhead off); {@code interval} is the console report
+     * period (default 60s, floored at 5s). When on, Spyglass tallies recorded
+     * events per second by type plus pipeline load, logs a periodic report, and
+     * answers {@code /spyglass stats}.
+     */
+    public record Analytics(boolean enabled, Duration interval) {
     }
 
     private static ConfigurationNode loadBundledDefaults(JavaPlugin plugin) throws IOException {

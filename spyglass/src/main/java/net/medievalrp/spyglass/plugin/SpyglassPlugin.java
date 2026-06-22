@@ -12,6 +12,9 @@ import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
 import net.medievalrp.spyglass.plugin.command.SpyglassCommands;
+import net.medievalrp.spyglass.plugin.command.service.StatsService;
+import net.medievalrp.spyglass.plugin.pipeline.IngestStats;
+import net.medievalrp.spyglass.plugin.pipeline.IngestStatsReporter;
 import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
@@ -158,6 +161,9 @@ public final class SpyglassPlugin extends JavaPlugin {
      * despawn) accumulate forever -- #128.
      */
     private org.bukkit.scheduler.BukkitTask fallingBlockPurgeTask;
+    // #168: repeating async task that logs the ingest analytics report. Null
+    // unless analytics.enabled; cancelled in onDisable.
+    private org.bukkit.scheduler.BukkitTask analyticsTask;
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
     private SalvageStore salvageStore;
@@ -308,6 +314,17 @@ public final class SpyglassPlugin extends JavaPlugin {
         java.util.List<net.medievalrp.spyglass.api.event.EventRecord> recovered = wal.recover();
         for (net.medievalrp.spyglass.api.event.EventRecord record : recovered) {
             recorder.record(record);
+        }
+
+        // #168: opt-in ingest analytics. Created AFTER WAL replay (so recovered
+        // records aren't counted as live ingest) and BEFORE listeners come
+        // online (so every live event is tallied). Null - and zero hot-path
+        // overhead - when analytics.enabled = false.
+        IngestStats ingestStats = null;
+        if (config.analytics().enabled()) {
+            ingestStats = new IngestStats(
+                    recorder::queueDepth, recorder::drainedCount, recorder::droppedCount);
+            recorder.setIngestStats(ingestStats);
         }
 
         Set<String> enabledEvents = config.events().entrySet().stream()
@@ -564,6 +581,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         }
         SalvageService salvageService = new SalvageService(
                 salvageStore, salvageGui, config.limits().searchResult(), serviceSupport);
+        // #168: /spyglass stats. Null ingestStats (analytics off) => the command
+        // explains how to enable it.
+        StatsService statsService = new StatsService(ingestStats);
 
         SpyglassCommands commands = new SpyglassCommands(
                 this,
@@ -577,6 +597,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 toolService,
                 teleportService,
                 salvageService,
+                statsService,
                 suggestions);
         commands.register();
 
@@ -623,6 +644,17 @@ public final class SpyglassPlugin extends JavaPlugin {
                 .runTaskTimerAsynchronously(this, FallingBlockTracker::purgeExpired,
                         PURGE_PERIOD_TICKS, PURGE_PERIOD_TICKS);
 
+        // #168: periodic ingest analytics report (off the main thread; only
+        // reads concurrent counters + cheap gauges). Off unless analytics.enabled.
+        if (ingestStats != null) {
+            long intervalTicks = Math.max(20L, config.analytics().interval().seconds() * 20L);
+            this.analyticsTask = getServer().getScheduler().runTaskTimerAsynchronously(
+                    this, new IngestStatsReporter(ingestStats, getLogger()),
+                    intervalTicks, intervalTicks);
+            getLogger().info("Spyglass analytics enabled: ingest report every "
+                    + config.analytics().interval().seconds() + "s and via /spyglass stats.");
+        }
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
     }
 
@@ -648,6 +680,11 @@ public final class SpyglassPlugin extends JavaPlugin {
         if (fallingBlockPurgeTask != null) {
             fallingBlockPurgeTask.cancel();
             fallingBlockPurgeTask = null;
+        }
+        // #168: stop the analytics report task before teardown.
+        if (analyticsTask != null) {
+            analyticsTask.cancel();
+            analyticsTask = null;
         }
         // Stop the bStats submit scheduler first so it can't fire mid-teardown.
         if (metrics != null) {
