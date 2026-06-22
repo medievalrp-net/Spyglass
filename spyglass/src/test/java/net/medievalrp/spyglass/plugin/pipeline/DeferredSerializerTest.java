@@ -76,6 +76,38 @@ class DeferredSerializerTest {
     }
 
     @Test
+    void poolsThreadsAndStaysCorrectUnderManySubmissions() {
+        // The block break/place listeners (#154) submit a task per event. This
+        // pins the two things the pooled rework changed: (1) the lock-free
+        // in-flight counter settles to zero after a flood of concurrent
+        // submissions (else a rollback flush would hang), and (2) tasks run on
+        // a small reused pool, NOT one freshly-spawned thread per task (the
+        // per-event spawn was the measured regression).
+        DeferredSerializer serializer = new DeferredSerializer(logger);
+        int n = 2000;
+        java.util.Set<String> workerThreads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.concurrent.atomic.AtomicInteger ran = new java.util.concurrent.atomic.AtomicInteger();
+
+        for (int i = 0; i < n; i++) {
+            serializer.execute(() -> {
+                workerThreads.add(Thread.currentThread().getName());
+                ran.incrementAndGet();
+            });
+        }
+
+        assertThat(serializer.awaitQuiescence(Duration.parse("10s")))
+                .as("lock-free counter must settle to zero after all submissions complete")
+                .isTrue();
+        assertThat(ran.get()).isEqualTo(n);
+        assertThat(workerThreads)
+                .allSatisfy(name -> assertThat(name).startsWith("spyglass-deferred-serializer-"));
+        assertThat(workerThreads.size())
+                .as("a fixed pool reuses a bounded number of threads, not one per task")
+                .isLessThanOrEqualTo(Math.max(2, Runtime.getRuntime().availableProcessors()));
+        serializer.shutdown(Duration.parse("2s"));
+    }
+
+    @Test
     void executeAfterShutdownRunsInlineSoRecordsAreNotDropped() {
         DeferredSerializer serializer = new DeferredSerializer(logger);
         serializer.shutdown(Duration.parse("1s"));
