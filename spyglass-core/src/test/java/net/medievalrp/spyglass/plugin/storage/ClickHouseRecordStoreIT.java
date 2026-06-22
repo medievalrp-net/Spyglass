@@ -371,6 +371,37 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void roundTripsKillAndMobKillAsEntityHitRecord() {
+        // kill/mob-kill reuse EntityHitRecord and the existing CH columns; the
+        // catalog maps both names to it so the read path decodes them.
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation loc = new BlockLocation(WORLD, "world", 1, 64, 2);
+        store.save(List.of(
+                new net.medievalrp.spyglass.api.event.EntityHitRecord(
+                        UUID.randomUUID(), "kill", now, now.plusSeconds(3600),
+                        Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                        "zombie", "zombie", UUID.randomUUID(), 6.0, false, null),
+                new net.medievalrp.spyglass.api.event.EntityHitRecord(
+                        UUID.randomUUID(), "mob-kill", now, now.plusSeconds(3600),
+                        Origin.environment("kill:zombie"),
+                        Source.entity(UUID.randomUUID(), "zombie"), loc, "test",
+                        "Bob", "player", UUID.randomUUID(), 4.0, false, null)));
+        flushAsyncInserts();
+
+        QueryRequest killReq = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "kill")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(killReq).records()).singleElement()
+                .isInstanceOf(net.medievalrp.spyglass.api.event.EntityHitRecord.class);
+
+        QueryRequest mobReq = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "mob-kill")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(mobReq).records()).singleElement()
+                .isInstanceOf(net.medievalrp.spyglass.api.event.EntityHitRecord.class);
+    }
+
+    @Test
     void summaryQueryRetainsItemProjectionsForHover() {
         // Feature: the search hover shows an item's custom name / lore /
         // enchants. The display path (querySummary) must carry the item even
