@@ -205,9 +205,14 @@ class BlockPlaceListenerTest {
         BlockState placedState = mock(BlockState.class);
         when(placedState.getType()).thenReturn(placedMaterial);
         when(placedState.getBlockData()).thenReturn(placedData);
+        when(placedData.getMaterial()).thenReturn(placedMaterial);
 
-        // The block after placing (for fromBlock and getState()).
+        // The block after placing. captureRawCached (#168 stage 2) grabs
+        // getBlockData() first and only falls back to getState() for materials
+        // not yet proven plain; stub both so the fixture works whether the static
+        // plainness cache is cold or already warm (STONE learns PLAIN once).
         Block block = mock(Block.class);
+        when(block.getBlockData()).thenReturn(placedData);
         when(block.getState()).thenReturn(placedState);
         when(block.getWorld()).thenReturn(world);
         when(block.getX()).thenReturn(5);

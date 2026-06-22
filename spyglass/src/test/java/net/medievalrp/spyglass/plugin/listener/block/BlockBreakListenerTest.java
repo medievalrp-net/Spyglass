@@ -166,11 +166,18 @@ class BlockBreakListenerTest {
         // loop exits immediately (y >= maxHeight).
         when(world.getMaxHeight()).thenReturn(0);
 
+        when(blockData.getMaterial()).thenReturn(Material.STONE);
+
         BlockState state = mock(BlockState.class);
         when(state.getType()).thenReturn(Material.STONE);
         when(state.getBlockData()).thenReturn(blockData);
 
         Block block = mock(Block.class);
+        // captureRawCached (#168 stage 2) grabs getBlockData() first and only
+        // falls back to getState() for materials not yet proven plain; stub both
+        // so the fixture is correct whether the static plainness cache is cold or
+        // already warm from a prior test (STONE is plain -> learns PLAIN once).
+        when(block.getBlockData()).thenReturn(blockData);
         when(block.getState()).thenReturn(state);
         when(block.getWorld()).thenReturn(world);
         when(block.getX()).thenReturn(10);
