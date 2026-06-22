@@ -16,6 +16,7 @@ import net.medievalrp.spyglass.plugin.storage.IndexManager;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.storage.SqliteRecordStore;
+import net.medievalrp.spyglass.proxy.command.BufferEvictionListener;
 import net.medievalrp.spyglass.proxy.command.SpyglassCommand;
 import net.medievalrp.spyglass.proxy.config.SpyglassProxyConfig;
 import org.slf4j.Logger;
@@ -78,7 +79,9 @@ public final class SpyglassProxy {
         CommandMeta meta = cm.metaBuilder("sgv")
                 .plugin(this)
                 .build();
-        cm.register(meta, new SpyglassCommand(recordStore, config, logger));
+        SpyglassCommand command = new SpyglassCommand(recordStore, config, logger);
+        cm.register(meta, command);
+        server.getEventManager().register(this, new BufferEvictionListener(command));
     }
 
     @Subscribe
