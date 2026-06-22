@@ -28,6 +28,14 @@ import org.junit.jupiter.api.Test;
  * tests pin that the clone happens at capture time and the {@code
  * serializeAsBytes()} is deferred to finish time, and that {@code capture()}
  * (their composition) still produces the full inline snapshot.
+ *
+ * <p>#154: {@code captureRaw} now carries the immutable {@link BlockData}
+ * object (not the string), and {@code finishCapture} calls
+ * {@code getAsString()} off the main thread. Tests pin that
+ * {@code getAsString()} is NOT called during {@code captureRaw} and IS called
+ * during {@code finishCapture}, and that the resulting snapshot's
+ * {@code blockData()} string is byte-identical to what the old inline path
+ * would have produced.
  */
 class BlockSnapshotsTest {
 
@@ -70,7 +78,40 @@ class BlockSnapshotsTest {
         // Slots preserved, including the empty middle slot.
         assertThat(raw.containerContents()).containsExactly(f.clone0, null, f.clone2);
         assertThat(raw.type()).isEqualTo(Material.CHEST);
-        assertThat(raw.blockData()).isEqualTo("minecraft:chest");
+        // #154: blockData() now returns the BlockData object, not the string.
+        // The string is deferred to finishCapture - verify the object is present.
+        assertThat(raw.blockData()).isNotNull().isSameAs(f.blockData);
+    }
+
+    /**
+     * #154: {@code getAsString()} must NOT be called during {@code captureRaw}
+     * (that is the main-thread call we are deferring) and MUST be called during
+     * {@code finishCapture} (the off-thread call).
+     */
+    @Test
+    void getAsStringIsNotCalledOnCaptureRawButIsCalledOnFinishCapture() {
+        Fixture f = containerFixture();
+
+        BlockSnapshots.RawCapture raw = BlockSnapshots.captureRaw(f.state);
+        // Not yet: getAsString() deferred to finishCapture (#154).
+        verify(f.blockData, never()).getAsString();
+
+        BlockSnapshots.finishCapture(raw);
+        // Now it runs - exactly once.
+        verify(f.blockData).getAsString();
+    }
+
+    /**
+     * #154: the blockData string in the finished snapshot must be
+     * byte-identical to the value {@code getAsString()} returns - same as the
+     * old inline path that called it in {@code captureRaw}.
+     */
+    @Test
+    void finishCaptureProducesTheSameBlockDataStringAsTheOldInlinePath() {
+        Fixture f = containerFixture();
+        // The mock returns "minecraft:chest" from getAsString().
+        BlockSnapshot snapshot = BlockSnapshots.finishCapture(BlockSnapshots.captureRaw(f.state));
+        assertThat(snapshot.blockData()).isEqualTo("minecraft:chest");
     }
 
     @Test
@@ -100,6 +141,7 @@ class BlockSnapshotsTest {
         BlockSnapshot snapshot = BlockSnapshots.capture(f.state);
 
         assertThat(snapshot.material()).isEqualTo(Material.CHEST);
+        assertThat(snapshot.blockData()).isEqualTo("minecraft:chest");
         assertThat(snapshot.containerItems())
                 .extracting(StoredItem::material)
                 .containsExactly(Material.DIAMOND.name(), Material.GOLD_INGOT.name());
@@ -124,7 +166,7 @@ class BlockSnapshotsTest {
         when(blockData.getAsString()).thenReturn("minecraft:chest");
         when(state.getBlockData()).thenReturn(blockData);
 
-        return new Fixture(state, slot0, slot2, clone0, clone2);
+        return new Fixture(state, slot0, slot2, clone0, clone2, blockData);
     }
 
     private static ItemStack stack(Material material) {
@@ -136,6 +178,6 @@ class BlockSnapshotsTest {
     }
 
     private record Fixture(BlockState state, ItemStack slot0, ItemStack slot2,
-                           ItemStack clone0, ItemStack clone2) {
+                           ItemStack clone0, ItemStack clone2, BlockData blockData) {
     }
 }
