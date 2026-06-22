@@ -148,19 +148,22 @@ public final class EntityDeathListener implements RecordingListener {
                     victimType, victimId, damage, projectile, projectileType));
         }
 
-        // Per-item drop records so loot tables stay searchable. Unchanged:
-        // skip players (their drops are noisy / handled elsewhere); source is
-        // the dead entity, origin is whoever triggered the death.
-        if (victim instanceof Player) {
+        // Per-item drop records so loot tables and player death-scatter stay
+        // searchable. The items belong to the victim, so attribute them to the
+        // victim's source: a dead player's inventory spill is then findable as
+        // `p:<name> a:drop`. (Death-scatter comes through EntityDeathEvent's
+        // getDrops(), NOT PlayerDropItemEvent, so without recording it here a
+        // player's death drops were captured nowhere.) Origin stays the death
+        // cause so the killer/context rides along.
+        if (!enabledEvents.contains("drop")) {
             return;
         }
-        Source dropSource = support.entitySource(victimId, victimType);
         for (ItemStack drop : event.getDrops()) {
             StoredItem stored = ItemSerialization.storedItemProjection(0, drop);
             if (stored == null) {
                 continue;
             }
-            RecordContext dropCtx = support.context(deathOrigin, dropSource, location);
+            RecordContext dropCtx = support.context(deathOrigin, victimSource, location);
             recorder.record(ItemDropRecord.of(dropCtx, drop.getType().name(), drop.getAmount(), stored));
         }
     }
