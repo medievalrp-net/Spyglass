@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 import net.medievalrp.spyglass.plugin.storage.IndexManager;
+import net.medievalrp.spyglass.plugin.storage.MariaDbRecordStore;
 import net.medievalrp.spyglass.plugin.storage.MongoRecordStore;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.storage.SqliteRecordStore;
@@ -117,6 +118,14 @@ public final class SpyglassProxy {
                         ? configured
                         : dataDirectory.resolve(configured);
                 yield new SqliteRecordStore(dbPath, true);
+            }
+            case MARIADB -> {
+                // Read-only companion: same network-served database the Paper
+                // server writes to, opened read-only (no schema create / TTL).
+                SpyglassProxyConfig.MariaDb maria = db.mariadb();
+                yield new MariaDbRecordStore(
+                        maria.host(), maria.port(), maria.database(),
+                        maria.user(), maria.password(), maria.ssl(), true);
             }
         };
     }

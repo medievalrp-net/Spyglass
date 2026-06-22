@@ -25,19 +25,19 @@ Proudly sponsored by and running on:
 
 ## Performance
 
-A 2,000,376-block rollback, measured five ways: Spyglass on each of its three backends and CoreProtect on both of theirs, on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
+A 2,000,376-block rollback on Spyglass (ClickHouse) versus CoreProtect (MySQL), on one server (Paper 1.21.8, 6 GB heap, stock Aikar flags).
 
-| 2M-block rollback | Spyglass · ClickHouse | Spyglass · MongoDB | Spyglass · SQLite | CoreProtect · SQLite | CoreProtect · MySQL |
-|---|---|---|---|---|---|
-| Rollback wall-clock | ~5 s | ~7 s | **~3 s** | ~11 s | ~12 s |
-| Undo / restore wall-clock | ~4 s | ~6 s | **~3 s** | ~9 s | ~210 s |
-| TPS during the op (min / avg) | **20.0 / 20.0** | **20.0 / 20.0** | **20.0 / 20.0** | 14 / 19 | 13 / 20 |
-| Worst single tick | ~50 ms | ~100 ms | **~37 ms** | ~670 ms | ~270 ms |
-| On-disk footprint (data + index) | **~11 MiB** | ~145 MiB | ~156 MiB | ~160 MiB | ~180 MiB |
+| 2M-block rollback | Spyglass · ClickHouse | CoreProtect · MySQL |
+|---|---|---|
+| Rollback wall-clock | **~5 s** | ~12 s |
+| Undo / restore wall-clock | **~4 s** | ~10 s |
+| TPS during the op (min / avg) | **20.0 / 20.0** | 13 / 20 |
+| Worst single tick | **~50 ms** | ~270 ms |
+| On-disk footprint (data + index) | **~11 MiB** | ~180 MiB |
 
 A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in production on [Crusalis](https://crusalis.net), with 1,000 players online at the time.
 
-> **Why MongoDB?** the60th asks me the same question. I really just like using MongoDB. Although we recommend servers utilize ClickHouse for performance and efficient disk space usage. MySQL will not come to Spyglass. 
+> **Why MongoDB?** the60th asks me the same question. I really just like using MongoDB. Although we recommend servers utilize ClickHouse for performance and efficient disk space usage. MariaDB and MySQL are supported now too, for servers that already run one.
 
 ## Features
 
@@ -65,10 +65,10 @@ A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in
 | TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
 | Worst single tick | **~100 ms** | up to ~900 ms |
 | Automatic data pruning | ✓ |  |
-| Storage engines | SQLite, MongoDB, ClickHouse | SQLite, MySQL |
+| Storage engines | SQLite, MongoDB, ClickHouse, MariaDB/MySQL | SQLite, MySQL |
 | Minecraft versions | 1.21.x | 1.7+ |
 
-Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB and ClickHouse are there when you outgrow it.
+Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB, ClickHouse, and MariaDB/MySQL are there when you outgrow it or already run one.
 
 ## Requirements
 
@@ -78,6 +78,7 @@ Spyglass runs on SQLite, MongoDB, or ClickHouse. The embedded SQLite backend nee
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
   - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
   - ClickHouse (set `database.backend = "clickhouse"`)
+  - MariaDB or MySQL (set `database.backend = "mariadb"`, or `"mysql"`) at `localhost:3306`
 - Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded - `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike - for player and non-player (console/plugin) edits
 
 ## Commands

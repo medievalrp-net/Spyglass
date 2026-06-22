@@ -37,8 +37,9 @@ public record SpyglassProxyConfig(
             case "clickhouse" -> Backend.CLICKHOUSE;
             case "sqlite" -> Backend.SQLITE;
             case "mongo", "mongodb" -> Backend.MONGO;
+            case "mariadb", "mysql", "maria" -> Backend.MARIADB;
             default -> throw new IOException("Unknown database.backend: " + backendName
-                    + " (expected 'mongo', 'clickhouse', or 'sqlite')");
+                    + " (expected 'sqlite', 'mongo', 'clickhouse', or 'mariadb')");
         };
 
         return new SpyglassProxyConfig(
@@ -56,7 +57,14 @@ public record SpyglassProxyConfig(
                                 root.node("database", "clickhouse", "password").getString(""),
                                 root.node("database", "clickhouse", "ssl").getBoolean(false)),
                         new Sqlite(
-                                root.node("database", "sqlite", "path").getString("spyglass.db"))),
+                                root.node("database", "sqlite", "path").getString("spyglass.db")),
+                        new MariaDb(
+                                root.node("database", "mariadb", "host").getString("localhost"),
+                                root.node("database", "mariadb", "port").getInt(3306),
+                                root.node("database", "mariadb", "database").getString("spyglass"),
+                                root.node("database", "mariadb", "user").getString("root"),
+                                root.node("database", "mariadb", "password").getString(""),
+                                root.node("database", "mariadb", "ssl").getBoolean(false))),
                 new Defaults(
                         Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
@@ -67,7 +75,8 @@ public record SpyglassProxyConfig(
     public enum Backend {
         MONGO,
         CLICKHOUSE,
-        SQLITE
+        SQLITE,
+        MARIADB
     }
 
     public record Database(
@@ -76,7 +85,23 @@ public record SpyglassProxyConfig(
             String name,
             String collection,
             ClickHouse clickhouse,
-            Sqlite sqlite) {
+            Sqlite sqlite,
+            MariaDb mariadb) {
+    }
+
+    /**
+     * MariaDB / MySQL connection settings (used when
+     * {@code backend = "mariadb"} / {@code "mysql"}). Served over the
+     * network, so unlike the embedded SQLite file the proxy reaches it the
+     * same way the Paper server does - it just opens it read-only.
+     */
+    public record MariaDb(
+            String host,
+            int port,
+            String database,
+            String user,
+            String password,
+            boolean ssl) {
     }
 
     /**
@@ -124,8 +149,8 @@ public record SpyglassProxyConfig(
                 # Spyglass plugin. Copy the database block from your Paper
                 # config.conf so this proxy reads the same backend.
                 database {
-                  # "mongo", "clickhouse", or "sqlite" - must match the
-                  # Paper-side backend.
+                  # "sqlite", "mongo", "clickhouse", or "mariadb" - must
+                  # match the Paper-side backend.
                   backend = "mongo"
 
                   # Mongo (used when backend = "mongo")
@@ -151,6 +176,18 @@ public record SpyglassProxyConfig(
                   # network the way Mongo / ClickHouse are.
                   sqlite {
                     path = "spyglass.db"
+                  }
+
+                  # MariaDB / MySQL (used when backend = "mariadb"). Served
+                  # over the network, so the proxy reaches it the same way
+                  # the Paper server does (read-only).
+                  mariadb {
+                    host = "localhost"
+                    port = 3306
+                    database = "spyglass"
+                    user = "root"
+                    password = ""
+                    ssl = false
                   }
                 }
 

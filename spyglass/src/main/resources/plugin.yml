@@ -40,6 +40,7 @@ libraries:
   - com.clickhouse:clickhouse-http-client:${clickhouseClientVersion}
   - com.clickhouse:clickhouse-data:${clickhouseClientVersion}
   - org.xerial:sqlite-jdbc:${sqliteJdbcVersion}
+  - org.mariadb.jdbc:mariadb-java-client:${mariaDbDriverVersion}
   - org.spongepowered:configurate-hocon:${configurateVersion}
   - org.incendo:cloud-paper:${cloudMinecraftVersion}
   - org.incendo:cloud-annotations:${cloudCoreVersion}

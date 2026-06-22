@@ -69,8 +69,9 @@ public record SpyglassConfig(
             case "clickhouse" -> Backend.CLICKHOUSE;
             case "sqlite" -> Backend.SQLITE;
             case "mongo", "mongodb" -> Backend.MONGO;
+            case "mariadb", "mysql", "maria" -> Backend.MARIADB;
             default -> throw new IOException("Unknown database.backend: " + backendName
-                    + " (expected 'mongo', 'clickhouse', or 'sqlite')");
+                    + " (expected 'sqlite', 'mongo', 'clickhouse', or 'mariadb')");
         };
         return new SpyglassConfig(
                 new Database(
@@ -87,7 +88,14 @@ public record SpyglassConfig(
                                 root.node("database", "clickhouse", "password").getString(""),
                                 root.node("database", "clickhouse", "ssl").getBoolean(false)),
                         new Sqlite(
-                                root.node("database", "sqlite", "path").getString("spyglass.db"))),
+                                root.node("database", "sqlite", "path").getString("spyglass.db")),
+                        new MariaDb(
+                                root.node("database", "mariadb", "host").getString("localhost"),
+                                root.node("database", "mariadb", "port").getInt(3306),
+                                root.node("database", "mariadb", "database").getString("spyglass"),
+                                root.node("database", "mariadb", "user").getString("root"),
+                                root.node("database", "mariadb", "password").getString(""),
+                                root.node("database", "mariadb", "ssl").getBoolean(false))),
                 new Storage(
                         Duration.parse(root.node("storage", "retention").getString("4w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
@@ -200,11 +208,19 @@ public record SpyglassConfig(
      * embedded SQLite file ({@code database.sqlite.path}), so a small or
      * medium server runs Spyglass with no external database process at
      * all.
+     *
+     * <p>{@link #MARIADB} is the client-server SQL option for operators
+     * who already run a MariaDB or MySQL server (the common shared-host /
+     * panel setup). Like ClickHouse and SQLite it is fully self-contained -
+     * the records, undo ledger, wand state, and salvage all live in that
+     * one database. The config name {@code "mariadb"}, {@code "mysql"}, and
+     * {@code "maria"} all select it; one driver speaks both protocols.
      */
     public enum Backend {
         MONGO,
         CLICKHOUSE,
-        SQLITE
+        SQLITE,
+        MARIADB
     }
 
     public record Database(
@@ -213,7 +229,23 @@ public record SpyglassConfig(
             String name,
             String collection,
             ClickHouse clickhouse,
-            Sqlite sqlite) {
+            Sqlite sqlite,
+            MariaDb mariadb) {
+    }
+
+    /**
+     * MariaDB / MySQL connection settings (used when
+     * {@code backend = "mariadb"} / {@code "mysql"}). The database is
+     * created on first start if the configured user has rights to;
+     * otherwise pre-create it and point a least-privilege user here.
+     */
+    public record MariaDb(
+            String host,
+            int port,
+            String database,
+            String user,
+            String password,
+            boolean ssl) {
     }
 
     /**

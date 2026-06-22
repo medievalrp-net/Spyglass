@@ -13,6 +13,7 @@ val paperApiVersion: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
 val sqliteJdbcVersion: String by rootProject.extra
+val mariaDbDriverVersion: String by rootProject.extra
 val configurateVersion: String by rootProject.extra
 val cloudMinecraftVersion: String by rootProject.extra
 val cloudCoreVersion: String by rootProject.extra
@@ -96,6 +97,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:$testcontainersVersion")
     testImplementation("org.testcontainers:mongodb:$testcontainersVersion")
     testImplementation("org.testcontainers:clickhouse:$testcontainersVersion")
+    testImplementation("org.testcontainers:mariadb:$testcontainersVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -109,6 +111,7 @@ tasks.processResources {
             "mongoDriverVersion" to mongoDriverVersion,
             "clickhouseClientVersion" to clickhouseClientVersion,
             "sqliteJdbcVersion" to sqliteJdbcVersion,
+            "mariaDbDriverVersion" to mariaDbDriverVersion,
             "configurateVersion" to configurateVersion,
             "cloudMinecraftVersion" to cloudMinecraftVersion,
             "cloudCoreVersion" to cloudCoreVersion,
