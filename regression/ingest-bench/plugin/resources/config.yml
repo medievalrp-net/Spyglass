@@ -1,0 +1,17 @@
+# IngestBench platform + output. The harness rewrites this before each run.
+# The platform is a flat stone slab the actor fires events over; it is never
+# mutated (events are fired through the plugin manager, not applied to blocks).
+platform:
+  world: world
+  x: 0
+  y: 64
+  z: 0
+  size: 8
+# Absolute directory CSVs are written to. Empty -> <plugin data folder>/out.
+output-dir: ""
+# Workload. mutate=true: realistic break + place that actually toggles the work
+# cells air<->stone, so CoreProtect (logs by reading the world block) and Spyglass
+# both log every event 1:1. mutate=false: non-mutating break-only (cheapest, also
+# fair). Either way the comparison is apples-to-apples; mutate=true is the more
+# realistic event mix at the cost of setBlock physics in every config's baseline.
+mutate: false

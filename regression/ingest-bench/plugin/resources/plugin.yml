@@ -1,0 +1,10 @@
+name: IngestBench
+version: 1.0.0
+main: net.medievalrp.ingestbench.IngestBench
+api-version: "1.21"
+author: MedievalRP
+description: Sustained synthetic block-event load generator and per-tick MSPT capture for ingest benchmarking.
+commands:
+  ingestbench:
+    description: Control the ingest benchmark.
+    usage: /ingestbench start <evps> <warmupSec> <measureSec> <label> | stop | status
