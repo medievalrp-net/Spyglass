@@ -180,6 +180,36 @@ class SqliteRecordStoreTest {
     }
 
     @Test
+    void roundTripsKillAndMobKillAsEntityHitRecord() {
+        // kill/mob-kill reuse EntityHitRecord; the catalog maps both names to it
+        // so the read path decodes them instead of dropping the rows.
+        Instant occurred = BASE.minusSeconds(5);
+        net.medievalrp.spyglass.api.event.EntityHitRecord kill =
+                new net.medievalrp.spyglass.api.event.EntityHitRecord(
+                        EventIds.newId(), "kill", occurred, occurred.plusSeconds(RETENTION),
+                        Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                        new BlockLocation(WORLD, "world", 1, 64, 2), "srv",
+                        "zombie", "zombie", UUID.randomUUID(), 6.0, false, null);
+        net.medievalrp.spyglass.api.event.EntityHitRecord mobKill =
+                new net.medievalrp.spyglass.api.event.EntityHitRecord(
+                        EventIds.newId(), "mob-kill", occurred, occurred.plusSeconds(RETENTION),
+                        Origin.environment("kill:zombie"), Source.entity(UUID.randomUUID(), "zombie"),
+                        new BlockLocation(WORLD, "world", 1, 64, 2), "srv",
+                        "Bob", "player", UUID.randomUUID(), 4.0, false, null);
+        store.save(List.of(kill, mobKill));
+
+        var killBack = store.query(request(List.of(new QueryPredicate.Eq("event", "kill")))).records();
+        assertThat(killBack).singleElement()
+                .isInstanceOf(net.medievalrp.spyglass.api.event.EntityHitRecord.class);
+        assertThat(killBack.get(0).event()).isEqualTo("kill");
+
+        var mobBack = store.query(request(List.of(new QueryPredicate.Eq("event", "mob-kill")))).records();
+        assertThat(mobBack).singleElement()
+                .isInstanceOf(net.medievalrp.spyglass.api.event.EntityHitRecord.class);
+        assertThat(mobBack.get(0).event()).isEqualTo("mob-kill");
+    }
+
+    @Test
     void contentSearchMatchesChatMessageViaPostFilter() {
         // On SQLite the message lives in the blob, so m:/content: always runs
         // as an in-memory post-filter. The evaluator must resolve `message`
