@@ -10,11 +10,13 @@ import java.util.UUID;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -22,6 +24,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -126,6 +129,33 @@ class EntityDeathListenerTest {
         assertThat(recorder.records.get(0).event()).isEqualTo("death");
     }
 
+    @Test
+    void playerDeathDropsRecordedAsDropAttributedToVictim() {
+        // A player's inventory spills via EntityDeathEvent.getDrops(), not
+        // PlayerDropItemEvent, so these must be captured here, attributed to
+        // the dead player so `p:<name> a:drop` finds them.
+        Player bob = mockPlayer(BOB, "Bob");
+        when(bob.getKiller()).thenReturn(null);
+        EntityDamageEvent fall = mock(EntityDamageEvent.class);
+        when(fall.getCause()).thenReturn(EntityDamageEvent.DamageCause.FALL);
+        when(fall.getFinalDamage()).thenReturn(8.0);
+        when(bob.getLastDamageCause()).thenReturn(fall);
+        ItemStack diamond = mockStack(Material.DIAMOND, 2);
+        ItemStack iron = mockStack(Material.IRON_INGOT, 5);
+        EntityDeathEvent event = mockDeath(bob);
+        when(event.getDrops()).thenReturn(List.of(diamond, iron));
+
+        new EntityDeathListener(recorder, support, ALL).onEntityDeath(event);
+
+        List<EventRecord> drops = recorder.records.stream()
+                .filter(r -> r.event().equals("drop")).toList();
+        assertThat(drops).hasSize(2);
+        assertThat(drops).allSatisfy(r ->
+                assertThat(r.source().playerName()).isEqualTo("Bob"));
+        assertThat(((ItemDropRecord) drops.get(0)).target()).isEqualTo("DIAMOND");
+        assertThat(((ItemDropRecord) drops.get(1)).target()).isEqualTo("IRON_INGOT");
+    }
+
     private EventRecord findEvent(String name) {
         return recorder.records.stream()
                 .filter(r -> r.event().equals(name))
@@ -170,6 +200,14 @@ class EntityDeathListenerTest {
         when(dmg.getDamager()).thenReturn(damager);
         when(dmg.getFinalDamage()).thenReturn(finalDamage);
         when(victim.getLastDamageCause()).thenReturn(dmg);
+    }
+
+    private static ItemStack mockStack(Material material, int amount) {
+        ItemStack stack = mock(ItemStack.class);
+        when(stack.getType()).thenReturn(material);
+        when(stack.getAmount()).thenReturn(amount);
+        when(stack.getItemMeta()).thenReturn(null);
+        return stack;
     }
 
     private static EntityDeathEvent mockDeath(LivingEntity victim) {
