@@ -37,6 +37,13 @@ class EventCatalogTest {
     }
 
     @Test
+    void killAndMobKillAreStoredAsEntityHitRecord() {
+        assertThat(EventCatalog.recordClassOf("kill")).isEqualTo(EntityHitRecord.class);
+        assertThat(EventCatalog.recordClassOf("mob-kill")).isEqualTo(EntityHitRecord.class);
+        assertThat(EventCatalog.eventNames()).contains("kill", "mob-kill");
+    }
+
+    @Test
     void unknownEventResolvesToNull() {
         assertThat(EventCatalog.recordClassOf("not-an-event")).isNull();
         assertThat(EventCatalog.recordClassOf(null)).isNull();

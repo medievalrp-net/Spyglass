@@ -57,6 +57,13 @@ public final class EventCatalog {
         m.put("clone", ItemPickupRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
+        // Killer-perspective mirror of a death. Reuses EntityHitRecord
+        // (source = killer, victimType/victimId = victim) so both storage
+        // backends already persist it — no codec/schema change. "kill" is a
+        // player killer; "mob-kill" is a mob killer, split so a:kill stays
+        // PvP/player-vs-mob and a:mob-kill is independently toggleable.
+        m.put("kill", EntityHitRecord.class);
+        m.put("mob-kill", EntityHitRecord.class);
         m.put("hit", EntityHitRecord.class);
         m.put("shot", EntityHitRecord.class);
         m.put("mount", EntityMountRecord.class);
