@@ -37,7 +37,7 @@ A 2,000,376-block rollback on Spyglass (ClickHouse) versus CoreProtect (MySQL), 
 
 A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in production on [Crusalis](https://crusalis.net), with 1,000 players online at the time.
 
-> **Why MongoDB?** the60th asks me the same question. I really just like using MongoDB. Although we recommend servers utilize ClickHouse for performance and efficient disk space usage. MariaDB and MySQL are supported now too, for servers that already run one.
+> **Why MongoDB?** the60th asks me the same question. I really just like using MongoDB. Although we recommend servers utilize ClickHouse for performance and efficient disk space usage.
 
 ## Features
 
