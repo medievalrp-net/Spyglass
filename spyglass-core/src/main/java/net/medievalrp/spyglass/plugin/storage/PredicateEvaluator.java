@@ -6,6 +6,8 @@ import java.util.regex.Pattern;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -130,6 +132,17 @@ final class PredicateEvaluator {
             // empty. Resolve it from the decoded record so ip: works on every
             // backend.
             case "address" -> record instanceof JoinRecord j ? j.address() : null;
+            // Chat / command text + recipient list, same blob-folding story as
+            // `address` above. ClickHouse keeps these as real columns and Mongo
+            // as BSON fields, so the store pushes the predicate down there; on
+            // SQLite they live inside the per-event blob, so `m:` (an Or over
+            // `message`/`commandLine`) and `rcp:` (Eq/In over `recipients`) fall
+            // back to this residual filter. Without these cases they resolved to
+            // null and never matched, so m:/rcp: silently returned empty on
+            // SQLite. `m:` covers both chat and command lines, so resolve both.
+            case "message" -> record instanceof ChatRecord c ? c.message() : null;
+            case "commandLine" -> record instanceof CommandRecord c ? c.commandLine() : null;
+            case "recipients" -> record instanceof ChatRecord c ? c.recipients() : null;
             default -> itemPathValue(record, field);
         };
     }
