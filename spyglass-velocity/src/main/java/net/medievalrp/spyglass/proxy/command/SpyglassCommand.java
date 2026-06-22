@@ -12,6 +12,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -38,8 +40,14 @@ import org.slf4j.Logger;
  * fixed sentinel for console) and capped at one result set per source.
  * Memory cost is bounded by {@code limits.search-result} × concurrent
  * operators.
+ *
+ * <p>Buffers are evicted on player disconnect (via {@link #evict}) and
+ * expire after {@link #BUFFER_TTL_MILLIS} of inactivity, mirroring the
+ * Paper-side PageCache eviction semantics.
  */
 public final class SpyglassCommand implements SimpleCommand {
+
+    static final long BUFFER_TTL_MILLIS = TimeUnit.MINUTES.toMillis(15);
 
     private static final UUID CONSOLE_KEY = new UUID(0L, 0L);
 
@@ -48,9 +56,18 @@ public final class SpyglassCommand implements SimpleCommand {
     private final Logger logger;
     private final ProxyQueryStringParser parser;
     private final ProxyResultRenderer renderer = new ProxyResultRenderer();
-    private final ConcurrentMap<UUID, ResultBuffer> buffers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, TimestampedBuffer> buffers = new ConcurrentHashMap<>();
+    // Seam for tests: defaults to wall-clock milliseconds.
+    private final LongSupplier clock;
 
     public SpyglassCommand(RecordStore store, SpyglassProxyConfig config, Logger logger) {
+        this(store, config, logger, System::currentTimeMillis);
+    }
+
+    /** Package-private constructor that accepts a clock seam for unit tests. */
+    SpyglassCommand(RecordStore store, SpyglassProxyConfig config, Logger logger,
+            LongSupplier clock) {
+        this.clock = clock;
         this.store = store;
         this.config = config;
         this.logger = logger;
@@ -165,7 +182,7 @@ public final class SpyglassCommand implements SimpleCommand {
             return;
         }
         ResultBuffer buffer = new ResultBuffer(rendered, config.limits().pageSize());
-        buffers.put(key, buffer);
+        buffers.put(key, new TimestampedBuffer(buffer, clock.getAsLong()));
         sendPage(source, buffer, 1);
     }
 
@@ -186,12 +203,16 @@ public final class SpyglassCommand implements SimpleCommand {
 
     private void runPage(CommandSource source, String[] args) {
         UUID key = sourceKey(source);
-        ResultBuffer buffer = buffers.get(key);
-        if (buffer == null) {
+        TimestampedBuffer entry = buffers.get(key);
+        if (entry == null || clock.getAsLong() - entry.storedAt() > BUFFER_TTL_MILLIS) {
+            if (entry != null) {
+                buffers.remove(key);
+            }
             source.sendMessage(Component.text("No previous search to page through.",
                     NamedTextColor.RED));
             return;
         }
+        ResultBuffer buffer = entry.buffer();
         int target;
         if (args.length == 0) {
             target = buffer.page() + 1;
@@ -204,6 +225,14 @@ public final class SpyglassCommand implements SimpleCommand {
             }
         }
         sendPage(source, buffer, target);
+    }
+
+    /**
+     * Evict the result buffer for {@code playerId}. Called by
+     * {@link BufferEvictionListener} when a player disconnects.
+     */
+    public void evict(UUID playerId) {
+        buffers.remove(playerId);
     }
 
     private void sendPage(CommandSource source, ResultBuffer buffer, int requestedPage) {
@@ -252,11 +281,15 @@ public final class SpyglassCommand implements SimpleCommand {
         return invocation.source().hasPermission("spyglass.search");
     }
 
+    /** Wraps a {@link ResultBuffer} with the wall-clock millisecond it was stored. */
+    record TimestampedBuffer(ResultBuffer buffer, long storedAt) {
+    }
+
     /**
      * Per-source pagination state. Holds the rendered rows so reflowing
      * pages doesn't re-query the backend.
      */
-    private static final class ResultBuffer {
+    static final class ResultBuffer {
         private final List<Component> rows;
         private final int pageSize;
         private int page = 1;
