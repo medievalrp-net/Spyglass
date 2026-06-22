@@ -17,18 +17,3 @@ Copyright (c) 2026 MedievalRP.
 
 If you only build against `spyglass-api`, you are working under Apache-2.0, and
 the GPL does not reach your plugin.
-
-## Contributions
-
-Contributions are accepted under the Spyglass Contributor License Agreement
-([CLA.md](CLA.md)). Contributors keep ownership of their work and grant the
-Maintainer a broad license, including the right to relicense, which keeps
-dual-licensing and commercial-licensing options open. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Commercial licensing
-
-Because the plugin is GPL-3.0 and contributions are taken under the CLA above,
-the Maintainer can offer the Project under separate commercial terms for anyone
-who cannot or does not wish to comply with the GPL. Contact the Maintainer for
-commercial licensing.
