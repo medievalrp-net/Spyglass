@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
@@ -82,5 +84,67 @@ class PredicateEvaluatorTest {
     void doesNotMatchWhenItemAbsent() {
         EventRecord record = deposit(null);
         assertThat(PredicateEvaluator.matchesAll(List.of(tagsMatch("anything")), record)).isFalse();
+    }
+
+    @Test
+    void resolvesChatMessageForResidualMessageFilter() {
+        // m: builds Or(Eq("message", pattern), Eq("commandLine", pattern)); on
+        // SQLite both fields live in the blob, so the filter lands here. Without
+        // the "message" case it resolved to null and m: returned empty (#156).
+        EventRecord chat = chat("hello there, friend", List.of());
+        QueryPredicate match = new QueryPredicate.Eq("message",
+                Pattern.compile(Pattern.quote("there"), Pattern.CASE_INSENSITIVE));
+        QueryPredicate miss = new QueryPredicate.Eq("message",
+                Pattern.compile(Pattern.quote("absent"), Pattern.CASE_INSENSITIVE));
+        assertThat(PredicateEvaluator.matchesAll(List.of(match), chat)).isTrue();
+        assertThat(PredicateEvaluator.matchesAll(List.of(miss), chat)).isFalse();
+        // A non-chat record carries no message -> never matches.
+        assertThat(PredicateEvaluator.matchesAll(List.of(match), deposit(null))).isFalse();
+    }
+
+    @Test
+    void resolvesCommandLineForResidualMessageFilter() {
+        // The commandLine half of m:'s Or — a CommandRecord, blob-folded on SQLite.
+        EventRecord command = command("/tp Alice Bob");
+        QueryPredicate match = new QueryPredicate.Eq("commandLine",
+                Pattern.compile(Pattern.quote("Alice"), Pattern.CASE_INSENSITIVE));
+        QueryPredicate miss = new QueryPredicate.Eq("commandLine",
+                Pattern.compile(Pattern.quote("Charlie"), Pattern.CASE_INSENSITIVE));
+        assertThat(PredicateEvaluator.matchesAll(List.of(match), command)).isTrue();
+        assertThat(PredicateEvaluator.matchesAll(List.of(miss), command)).isFalse();
+    }
+
+    @Test
+    void resolvesRecipientsForResidualRcpFilter() {
+        // rcp: builds Eq/In over "recipients" (a List<UUID>); equalsValue's
+        // list-containment matches when any recipient equals the queried id.
+        UUID alice = UUID.randomUUID();
+        UUID bob = UUID.randomUUID();
+        UUID carol = UUID.randomUUID();
+        EventRecord chat = chat("psst", List.of(alice, bob));
+        assertThat(PredicateEvaluator.matchesAll(
+                List.of(new QueryPredicate.Eq("recipients", alice)), chat)).isTrue();
+        assertThat(PredicateEvaluator.matchesAll(
+                List.of(new QueryPredicate.In("recipients", List.of(carol, bob))), chat)).isTrue();
+        assertThat(PredicateEvaluator.matchesAll(
+                List.of(new QueryPredicate.Eq("recipients", carol)), chat)).isFalse();
+    }
+
+    private static EventRecord chat(String message, List<UUID> recipients) {
+        Instant now = Instant.now();
+        return new ChatRecord(
+                UUID.randomUUID(), "say", now, now.plusSeconds(60),
+                Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                new BlockLocation(UUID.randomUUID(), "world", 1, 2, 3),
+                "srv", "GLOBAL", message, recipients, java.util.Map.of());
+    }
+
+    private static EventRecord command(String commandLine) {
+        Instant now = Instant.now();
+        return new CommandRecord(
+                UUID.randomUUID(), "command", now, now.plusSeconds(60),
+                Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                new BlockLocation(UUID.randomUUID(), "world", 1, 2, 3),
+                "srv", "Alice", commandLine);
     }
 }
