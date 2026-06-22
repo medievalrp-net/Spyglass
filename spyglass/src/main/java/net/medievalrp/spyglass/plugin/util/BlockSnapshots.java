@@ -15,6 +15,7 @@ import org.bukkit.block.DecoratedPot;
 import org.bukkit.block.Jukebox;
 import org.bukkit.block.Sign;
 import org.bukkit.block.banner.Pattern;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.block.sign.Side;
 import org.bukkit.inventory.ItemStack;
 
@@ -40,14 +41,23 @@ public final class BlockSnapshots {
 
     /**
      * Cheap intermediate from {@link #captureRaw}. Holds everything a
-     * {@link BlockSnapshot} needs <em>except</em> the serialized item blobs:
-     * the container contents and jukebox disc are kept as <b>cloned</b>
-     * {@link ItemStack}s (detached from the live world), so {@link #finishCapture}
-     * can run the expensive {@code serializeAsBytes()} off the main thread.
+     * {@link BlockSnapshot} needs <em>except</em> the serialized item blobs
+     * and the blockdata string:
+     * <ul>
+     *   <li>The container contents and jukebox disc are kept as <b>cloned</b>
+     *       {@link ItemStack}s (detached from the live world).</li>
+     *   <li>The block's data is carried as the <b>immutable</b> {@link BlockData}
+     *       copy returned by {@link BlockState#getBlockData()} - it is already
+     *       world-detached and safe to hand across threads. {@link #finishCapture}
+     *       calls {@code getAsString()} on it off the main thread, deferring the
+     *       string allocation away from the server tick (#154).</li>
+     * </ul>
+     * {@link #finishCapture} can therefore run both the expensive
+     * {@code serializeAsBytes()} AND {@code getAsString()} off-thread.
      */
     public record RawCapture(
             Material type,
-            String blockData,
+            BlockData blockData,           // immutable copy; getAsString() deferred to finishCapture
             ItemStack[] containerContents, // cloned; null when the state isn't a Container
             List<String> signFront,
             List<String> signBack,
@@ -122,9 +132,14 @@ public final class BlockSnapshots {
             potSherds = List.copyOf(names);
         }
 
+        // Carry the immutable BlockData copy rather than calling getAsString()
+        // here on the main thread. getAsString() builds the "minecraft:stone[...]"
+        // string and accounts for ~19% of Spyglass's per-event tick cost.
+        // BlockData returned by getBlockData() is an immutable, world-detached
+        // snapshot - it is safe to hand to finishCapture() on an off-thread.
         return new RawCapture(
                 state.getType(),
-                state.getBlockData().getAsString(),
+                state.getBlockData(),
                 containerContents,
                 signFront,
                 signBack,
@@ -134,19 +149,28 @@ public final class BlockSnapshots {
     }
 
     /**
-     * Off-thread half of {@link #capture}: serialize the cloned container
-     * contents and jukebox disc held in {@code raw} into the final
-     * {@link BlockSnapshot}. Touches only world-detached cloned stacks, so it
-     * is safe off the main thread.
+     * Off-thread half of {@link #capture}: calls {@code getAsString()} on the
+     * immutable {@link BlockData} carried by {@code raw}, serializes the cloned
+     * container contents and jukebox disc, and assembles the final
+     * {@link BlockSnapshot}. Everything it touches is world-detached, so it is
+     * safe to run off the main thread.
+     *
+     * <p>{@code getAsString()} is the deferred call (#154): it was previously
+     * called in {@link #captureRaw} on the server tick and accounts for ~19% of
+     * Spyglass's per-event main-thread cost for plain break/place events. Moving
+     * it here yields the same string with no behavior change - just a different
+     * thread.
      */
     public static BlockSnapshot finishCapture(RawCapture raw) {
+        // getAsString() deferred off the main thread (#154).
+        String blockDataString = raw.blockData().getAsString();
         List<StoredItem> items = raw.containerContents() == null
                 ? List.of()
                 : serializeContents(raw.containerContents());
         String jukeboxRecord = ItemSerialization.encode(raw.jukeboxRecord());
         return new BlockSnapshot(
                 raw.type(),
-                raw.blockData(),
+                blockDataString,
                 items,
                 raw.signFront(),
                 raw.signBack(),

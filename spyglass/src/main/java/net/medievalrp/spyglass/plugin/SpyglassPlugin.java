@@ -326,13 +326,13 @@ public final class SpyglassPlugin extends JavaPlugin {
         // names each emits; we register with Bukkit only when at least one is
         // enabled in config.
         List<RecordingListener> listeners = List.of(
-                new BlockBreakListener(recorder, support),
+                new BlockBreakListener(recorder, support, deferredSerializer),
                 new MultiBlockBreakListener(recorder, support),
                 new DependantBreakListener(recorder, support),
                 new BlockExplodeListener(recorder, support, this, deferredSerializer),
                 new EntityExplodeListener(recorder, support, deferredSerializer),
                 new BlockBurnListener(recorder, support, this),
-                new BlockPlaceListener(recorder, support),
+                new BlockPlaceListener(recorder, support, deferredSerializer),
                 new BlockMultiPlaceListener(recorder, support),
                 new FallingBlockLandListener(recorder, support),
                 new ContainerTransactionListener(recorder, support, deferredSerializer),
