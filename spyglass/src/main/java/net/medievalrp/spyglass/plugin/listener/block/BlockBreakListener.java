@@ -57,9 +57,10 @@ public final class BlockBreakListener implements RecordingListener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
-        // captureRaw carries the immutable BlockData; getAsString() is deferred
-        // to finishCapture on the serializer thread (#154).
-        BlockSnapshots.RawCapture rawOriginal = BlockSnapshots.captureRaw(event.getBlock().getState());
+        // captureRawCached grabs only the immutable BlockData and skips the
+        // CraftBlockState build for materials proven to carry no tile-entity data
+        // (#168 stage 2); getAsString() stays deferred to finishCapture (#154).
+        BlockSnapshots.RawCapture rawOriginal = BlockSnapshots.captureRawCached(event.getBlock());
         BlockSnapshot after = BlockSnapshots.air();
         BlockLocation location = BlockLocations.fromBlock(event.getBlock());
         // Build context (stamps occurred + time-ordered id) on the main thread

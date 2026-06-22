@@ -68,9 +68,12 @@ public final class BlockPlaceListener implements RecordingListener {
                 ? null
                 : BlockSnapshots.captureRaw(event.getBlockReplacedState());
 
-        // captureRaw carries the immutable BlockData; getAsString() is deferred
-        // to finishCapture on the serializer thread (#154).
-        BlockSnapshots.RawCapture rawAfter = BlockSnapshots.captureRaw(event.getBlock().getState());
+        // captureRawCached grabs only the immutable BlockData and skips the
+        // CraftBlockState build for materials proven to carry no tile-entity data
+        // (#168 stage 2); getAsString() stays deferred to finishCapture (#154).
+        // (The before-state above uses the snapshot Bukkit already built for the
+        // event, so there is no getState() of ours to skip there.)
+        BlockSnapshots.RawCapture rawAfter = BlockSnapshots.captureRawCached(event.getBlock());
 
         // Allocation trim (#116): fromBlock avoids a throwaway Location allocation.
         BlockLocation location = BlockLocations.fromBlock(event.getBlock());
