@@ -17,3 +17,5 @@ Copyright (c) 2026 MedievalRP.
 
 If you only build against `spyglass-api`, you are working under Apache-2.0, and
 the GPL does not reach your plugin.
+
+Contributions are covered by the [CLA](CLA.md).

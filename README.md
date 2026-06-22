@@ -252,3 +252,5 @@ Spyglass is open source under a split license, mapped in [LICENSING.md](LICENSIN
 
 - The public extension API (`spyglass-api`) is licensed under the [Apache License 2.0](spyglass-api/LICENSE), so third-party plugins can depend on it freely.
 - The plugin and its internals (`spyglass-core`, `spyglass`, `spyglass-velocity`) are licensed under the [GNU General Public License v3.0](LICENSE).
+
+Contributions are covered by the [CLA](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).
