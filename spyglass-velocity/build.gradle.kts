@@ -58,6 +58,10 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testImplementation("org.assertj:assertj-core:$assertjVersion")
+    // velocity-api is compileOnly for production code (provided at runtime by
+    // the proxy), but the test classpath needs it to resolve SimpleCommand and
+    // the Velocity event types referenced by classes under test.
+    testImplementation("com.velocitypowered:velocity-api:$velocityApiVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
