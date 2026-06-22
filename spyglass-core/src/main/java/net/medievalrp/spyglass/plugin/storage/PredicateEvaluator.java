@@ -11,6 +11,7 @@ import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
+import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.jetbrains.annotations.ApiStatus;
@@ -121,6 +122,14 @@ final class PredicateEvaluator {
             case "location.x" -> record.location() == null ? null : record.location().x();
             case "location.y" -> record.location() == null ? null : record.location().y();
             case "location.z" -> record.location() == null ? null : record.location().z();
+            // JoinRecord-only field. ClickHouse/Mongo push `Eq("address", ...)`
+            // down to a real column / BSON field; SQLite folds it into the blob
+            // and resolves it HERE in the residual filter. Without this case
+            // `ip:` resolved to nobody on SQLite (the join lookup matched no
+            // rows), so ip: search/rollback silently returned address-only /
+            // empty. Resolve it from the decoded record so ip: works on every
+            // backend.
+            case "address" -> record instanceof JoinRecord j ? j.address() : null;
             default -> itemPathValue(record, field);
         };
     }

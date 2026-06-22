@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -46,6 +47,28 @@ class PredicateEvaluatorTest {
         assertThat(PredicateEvaluator.matchesAll(List.of(tagsMatch("deliver_letter")), record)).isTrue();
         assertThat(PredicateEvaluator.matchesAll(List.of(tagsMatch("DELIVER")), record)).isTrue();
         assertThat(PredicateEvaluator.matchesAll(List.of(tagsMatch("slay_dragon")), record)).isFalse();
+    }
+
+    @Test
+    void resolvesJoinAddressForResidualIpFilter() {
+        // The ip: resolver runs Eq(event=join) AND Eq(address, X) through the
+        // store; on SQLite (address folded into the blob) that lands here as a
+        // residual filter. Without the "address" field case it resolved to
+        // null and ip: matched nobody. Regression-locks that the decoded
+        // JoinRecord's address is what the residual filter compares.
+        Instant now = Instant.now();
+        EventRecord join = new JoinRecord(
+                UUID.randomUUID(), "join", now, now.plusSeconds(60),
+                Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                new BlockLocation(UUID.randomUUID(), "world", 1, 2, 3),
+                "srv", "Alice", "203.0.113.7");
+
+        QueryPredicate match = new QueryPredicate.Eq("address", "203.0.113.7");
+        QueryPredicate miss = new QueryPredicate.Eq("address", "198.51.100.1");
+        assertThat(PredicateEvaluator.matchesAll(List.of(match), join)).isTrue();
+        assertThat(PredicateEvaluator.matchesAll(List.of(miss), join)).isFalse();
+        // A non-join record has no address -> never matches an address filter.
+        assertThat(PredicateEvaluator.matchesAll(List.of(match), deposit(null))).isFalse();
     }
 
     @Test
