@@ -246,6 +246,31 @@ public final class RollbackEngine {
         return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
     }
 
+    // -- apply-phase failsafe (#127) ------------------------------
+    // Every main-thread apply step that advances a rollback runs through
+    // this wrapper. If the step throws, the throwable is routed to `done`
+    // (the job future) instead of escaping into the scheduler and
+    // vanishing. A vanished throwable leaves `done` forever uncompleted, so
+    // RollbackService.streamPagesAndApply blocks on fut.join() and never
+    // reaches jobQueue.finish() -- which wedges EVERY future rollback /
+    // restore / undo job until the server restarts, and leaks the
+    // physics-suppression region and pinned chunk tickets. Failing `done`
+    // instead makes join() throw, the job is marked FAILED, the queue
+    // advances, the operator is told, and the physics region is released by
+    // the done.whenComplete hook.
+    private static void guarded(CompletableFuture<?> done, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable thrown) {
+            if (!done.completeExceptionally(thrown)) {
+                // `done` already settled (cancelled, or a prior failure won
+                // the race); surface the secondary failure so it isn't silent.
+                LOGGER.log(Level.SEVERE,
+                        "Rollback apply step threw after the job future already completed", thrown);
+            }
+        }
+    }
+
     public CompletableFuture<List<RollbackResult>> applyAllChunked(
             List<RollbackEffect> effects, CommandSender sender,
             ServiceSupport scheduler, int batchSize) {
@@ -326,15 +351,15 @@ public final class RollbackEngine {
 
             sortParallelByChunk(blockReplaceIndices, blockReplaceEffects);
 
-            scheduler.onMainThread(() -> applyChunkByChunk(0, effects, resultArray,
+            scheduler.onMainThread(() -> guarded(done, () -> applyChunkByChunk(0, effects, resultArray,
                     blockReplaceIndices, blockReplaceEffects,
- sender, scheduler, batchSize, done, cancelFlag));
+                    sender, scheduler, batchSize, done, cancelFlag)));
         };
 
         if (worldWriteExecutor != null) {
-            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(() -> guarded(done, stageOne), worldWriteExecutor);
         } else {
-            stageOne.run();
+            guarded(done, stageOne);
         }
         return done;
     }
@@ -579,9 +604,9 @@ public final class RollbackEngine {
 
         if (i < total) {
             int next = i;
-            scheduler.onMainThreadLater(1L, () -> applyChunkByChunk(
+            scheduler.onMainThreadLater(1L, () -> guarded(done, () -> applyChunkByChunk(
                     next, effects, resultArray, blockReplaceIndices, blockReplaceEffects,
-                    sender, scheduler, batchSize, done, cancelFlag));
+                    sender, scheduler, batchSize, done, cancelFlag)));
         } else {
             runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
         }
@@ -624,7 +649,8 @@ public final class RollbackEngine {
         long tResolve = System.nanoTime();
         List<ChunkWork> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
         int cursor = from;
-        while (cursor < total && batch.size() < maxBatchChunks) {
+        try {
+            while (cursor < total && batch.size() < maxBatchChunks) {
             BlockLocation startLoc = blockReplaceEffects.get(cursor).location();
             UUID worldId = startLoc.worldId();
             int cx = startLoc.x() >> 4;
@@ -667,13 +693,43 @@ public final class RollbackEngine {
                             + cx + "," + cz, t);
                 }
             }
-            ChunkDirectWriter.ChunkContext ctx =
-                    ChunkDirectWriter.prepareChunk(world, cx, cz);
-            if (salvageHook != null) {
-                salvageHook.onChunkResolved(world, cx, cz);
+            try {
+                ChunkDirectWriter.ChunkContext ctx =
+                        ChunkDirectWriter.prepareChunk(world, cx, cz);
+                if (salvageHook != null) {
+                    salvageHook.onChunkResolved(world, cx, cz);
+                }
+                batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
+            } catch (Throwable t) {
+                // prepareChunk / onChunkResolved threw after this chunk was
+                // pinned: release its ticket here (it never reaches the post
+                // phase that would), then rethrow so the guarded caller fails
+                // the job. The already-resolved chunks are freed below (#127).
+                if (ticketAdded && ticketHolder != null) {
+                    try {
+                        world.removePluginChunkTicket(cx, cz, ticketHolder);
+                    } catch (Throwable ignored) {
+                        // best-effort
+                    }
+                }
+                throw t;
             }
-            batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
             cursor = chunkEnd;
+            }
+        } catch (Throwable t) {
+            // Resolve phase failed mid-batch: the chunks already pinned will
+            // never reach applyChunkPostMain (which releases their tickets),
+            // so free them here before failing the job (#127).
+            for (ChunkWork w : batch) {
+                if (w.ticketAdded && ticketHolder != null) {
+                    try {
+                        w.world.removePluginChunkTicket(w.cx, w.cz, ticketHolder);
+                    } catch (Throwable ignored) {
+                        // best-effort
+                    }
+                }
+            }
+            throw t;
         }
         applyResolveNanos.addAndGet(System.nanoTime() - tResolve);
 
@@ -706,16 +762,37 @@ public final class RollbackEngine {
                     applyWriteNanos.addAndGet(System.nanoTime() - tDispatch);
                     applyBatchCount.incrementAndGet();
                     applyChunkApplies.addAndGet(batchChunks);
-                    scheduler.onMainThread(() -> {
+                    if (throwable != null) {
+                        // A palette worker threw (parse failures are marked
+                        // Skipped on the worker, not thrown). Surface it instead
+                        // of swallowing; we still run the post phase below so
+                        // every pinned chunk's ticket is released (#127).
+                        LOGGER.log(Level.WARNING, "Rollback chunk palette write batch failed", throwable);
+                    }
+                    scheduler.onMainThread(() -> guarded(done, () -> {
                     // Main-thread post for every chunk in the batch: the
                     // heavy palette writes already happened off-main, so
                     // this is just tile-entity state, finishChunk, the
                     // chunk packet, and the ticket release.
                     long tPost = System.nanoTime();
+                    Throwable postFailure = null;
                     for (ChunkWork work : batch) {
-                        applyChunkPostMain(work, resultArray, blockReplaceIndices, blockReplaceEffects);
+                        try {
+                            applyChunkPostMain(work, resultArray, blockReplaceIndices, blockReplaceEffects);
+                        } catch (Throwable t) {
+                            // applyChunkPostMain's own finally already released
+                            // this chunk's ticket; keep going so the rest of the
+                            // batch is cleaned up too, then fail the job (#127).
+                            if (postFailure == null) {
+                                postFailure = t;
+                            }
+                        }
                     }
                     applyPostNanos.addAndGet(System.nanoTime() - tPost);
+                    if (postFailure != null) {
+                        done.completeExceptionally(postFailure);
+                        return;
+                    }
                     if (sender instanceof Player p && total > 0) {
                         p.sendActionBar(Component.text("Rolling back " + batchEnd + " / " + total));
                     }
@@ -725,7 +802,7 @@ public final class RollbackEngine {
                     } else {
                         runContainerAndLeftover(effects, resultArray, sender, scheduler, batchSize, done);
                     }
-                    });
+                    }));
                 });
     }
 
@@ -937,13 +1014,13 @@ public final class RollbackEngine {
         // Sort off-main (chunk-grouped, bottom-up Y), then apply on main.
         Runnable stageOne = () -> {
             int[] order = cols.chunkSortedOrder();
-            scheduler.onMainThread(() -> applyColumnBatch(
-                    world, cols, order, 0, counts, sender, scheduler, batchSize, done, cancelFlag));
+            scheduler.onMainThread(() -> guarded(done, () -> applyColumnBatch(
+                    world, cols, order, 0, counts, sender, scheduler, batchSize, done, cancelFlag)));
         };
         if (worldWriteExecutor != null) {
-            CompletableFuture.runAsync(stageOne, worldWriteExecutor);
+            CompletableFuture.runAsync(() -> guarded(done, stageOne), worldWriteExecutor);
         } else {
-            stageOne.run();
+            guarded(done, stageOne);
         }
         return done;
     }
@@ -969,7 +1046,8 @@ public final class RollbackEngine {
         // runs of the sorted order share a chunk, so one walk groups them.
         List<ColChunk> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
         int cursor = from;
-        while (cursor < total && batch.size() < maxBatchChunks) {
+        try {
+            while (cursor < total && batch.size() < maxBatchChunks) {
             int startIdx = order[cursor];
             int cx = cols.x(startIdx) >> 4;
             int cz = cols.z(startIdx) >> 4;
@@ -993,53 +1071,98 @@ public final class RollbackEngine {
                             + cx + "," + cz, t);
                 }
             }
-            ChunkDirectWriter.ChunkContext ctx = ChunkDirectWriter.prepareChunk(world, cx, cz);
-            if (salvageHook != null) {
-                salvageHook.onChunkResolved(world, cx, cz);
+            try {
+                ChunkDirectWriter.ChunkContext ctx = ChunkDirectWriter.prepareChunk(world, cx, cz);
+                if (salvageHook != null) {
+                    salvageHook.onChunkResolved(world, cx, cz);
+                }
+                batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
+            } catch (Throwable t) {
+                // Release this chunk's just-added ticket before failing the
+                // batch; the rest are freed below (#127).
+                if (ticketAdded && ticketHolder != null) {
+                    try {
+                        world.removePluginChunkTicket(cx, cz, ticketHolder);
+                    } catch (Throwable ignored) {
+                        // best-effort
+                    }
+                }
+                throw t;
             }
-            batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
             cursor = rangeEnd;
+            }
+        } catch (Throwable t) {
+            // Resolve phase failed: free the tickets pinned for chunks already
+            // in the batch (their post phase never runs to release them), then
+            // rethrow so the guarded caller fails the job (#127).
+            for (ColChunk cc : batch) {
+                if (cc.ticketAdded && ticketHolder != null) {
+                    try {
+                        world.removePluginChunkTicket(cc.cx, cc.cz, ticketHolder);
+                    } catch (Throwable ignored) {
+                        // best-effort
+                    }
+                }
+            }
+            throw t;
         }
         final int batchEnd = cursor;
 
         // Main-thread post: finish/resend each chunk, release tickets, sum
         // the per-chunk counts, then advance. The heavy palette writes
         // already happened off-main (or inline when no executor is wired).
-        Runnable afterWrites = () -> scheduler.onMainThread(() -> {
+        Runnable afterWrites = () -> scheduler.onMainThread(() -> guarded(done, () -> {
+            Throwable postFailure = null;
             for (ColChunk cc : batch) {
-                if (cc.ctx == null) {
-                    // prepareChunk failed: write this chunk's cells on the
-                    // main thread via the single-block fallback.
-                    writeColumnChunkMain(world, cols, order, cc);
-                } else {
-                    ChunkDirectWriter.finishChunk(cc.ctx);
-                }
                 try {
-                    ChunkResender.resend(world, cc.cx, cc.cz);
-                } catch (RuntimeException ignored) {
-                    // Best-effort: a failed resend only delays the client's view
-                    // of the restored chunk until its next natural update.
-                }
-                if (salvageHook != null) {
-                    salvageHook.onChunkWritten(world, cc.cx, cc.cz);
-                }
-                if (cc.ticketAdded && ticketHolder != null) {
+                    if (cc.ctx == null) {
+                        // prepareChunk failed: write this chunk's cells on the
+                        // main thread via the single-block fallback.
+                        writeColumnChunkMain(world, cols, order, cc);
+                    } else {
+                        ChunkDirectWriter.finishChunk(cc.ctx);
+                    }
                     try {
-                        world.removePluginChunkTicket(cc.cx, cc.cz, ticketHolder);
-                    } catch (Throwable ignored) {
-                        // Best-effort: a leaked ticket is reclaimed on plugin
-                        // disable; not worth surfacing.
+                        ChunkResender.resend(world, cc.cx, cc.cz);
+                    } catch (RuntimeException ignored) {
+                        // Best-effort: a failed resend only delays the client's view
+                        // of the restored chunk until its next natural update.
+                    }
+                    if (salvageHook != null) {
+                        salvageHook.onChunkWritten(world, cc.cx, cc.cz);
+                    }
+                    counts.applied += cc.applied;
+                    counts.blockChanged += cc.blockChanged;
+                    counts.unparseable += cc.unparseable;
+                } catch (Throwable t) {
+                    // finishChunk / onChunkWritten threw; record the failure and
+                    // keep cleaning up the rest of the batch (#127).
+                    if (postFailure == null) {
+                        postFailure = t;
+                    }
+                } finally {
+                    // Always release the pinned chunk, even if the post step
+                    // above threw -- otherwise a finishChunk failure leaks the
+                    // ticket for the life of the world (#127).
+                    if (cc.ticketAdded && ticketHolder != null) {
+                        try {
+                            world.removePluginChunkTicket(cc.cx, cc.cz, ticketHolder);
+                        } catch (Throwable ignored) {
+                            // Best-effort: a leaked ticket is reclaimed on plugin
+                            // disable; not worth surfacing.
+                        }
                     }
                 }
-                counts.applied += cc.applied;
-                counts.blockChanged += cc.blockChanged;
-                counts.unparseable += cc.unparseable;
+            }
+            if (postFailure != null) {
+                done.completeExceptionally(postFailure);
+                return;
             }
             if (sender instanceof Player p) {
                 p.sendActionBar(Component.text("Rolling back " + batchEnd + " / " + total));
             }
             applyColumnBatch(world, cols, order, batchEnd, counts, sender, scheduler, batchSize, done, cancelFlag);
-        });
+        }));
 
         if (worldWriteExecutor != null) {
             @SuppressWarnings("unchecked")
@@ -1050,10 +1173,28 @@ public final class RollbackEngine {
                         () -> writeColumnChunk(cols, order, cc), worldWriteExecutor);
             }
             CompletableFuture.allOf(futures)
-                    .whenComplete((v, t) -> afterWrites.run());
+                    .whenComplete((v, t) -> {
+                        if (t != null) {
+                            // A column worker threw; surface it, then still run
+                            // afterWrites so tickets are released and the job
+                            // can fail cleanly rather than wedge (#127).
+                            LOGGER.log(Level.WARNING, "Rollback column palette write batch failed", t);
+                        }
+                        afterWrites.run();
+                    });
         } else {
+            Throwable writeFailure = null;
             for (ColChunk cc : batch) {
-                writeColumnChunk(cols, order, cc);
+                try {
+                    writeColumnChunk(cols, order, cc);
+                } catch (Throwable t) {
+                    if (writeFailure == null) {
+                        writeFailure = t;
+                    }
+                }
+            }
+            if (writeFailure != null) {
+                LOGGER.log(Level.WARNING, "Rollback column palette write failed", writeFailure);
             }
             afterWrites.run();
         }
@@ -1238,8 +1379,8 @@ public final class RollbackEngine {
         }
         if (i < total) {
             int next = i;
-            scheduler.onMainThreadLater(1L, () -> applyLeftoverBatch(
-                    next, effects, resultArray, sender, scheduler, batchSize, done));
+            scheduler.onMainThreadLater(1L, () -> guarded(done, () -> applyLeftoverBatch(
+                    next, effects, resultArray, sender, scheduler, batchSize, done)));
         } else {
             done.complete(List.of(resultArray));
         }
