@@ -59,6 +59,17 @@ public final class FallingBlockTracker {
     }
 
     /**
+     * Package-private overload for tests: inserts a cell with an
+     * explicit {@code expiresAt} epoch-millis value so tests can
+     * simulate already-expired entries without sleeping.
+     */
+    static void track(UUID worldId, int x, int y, int z,
+                      UUID playerId, String playerName, long expiresAt) {
+        CELLS.put(new Key(worldId, x, y, z),
+                new Cell(playerId, playerName, expiresAt));
+    }
+
+    /**
      * Look up and remove the tracker entry for {@code (worldId, x, y,
      * z)}. Returns empty if not tracked, expired, or already consumed
      * — duplicate landings of the same origin (e.g. block lands, gets
