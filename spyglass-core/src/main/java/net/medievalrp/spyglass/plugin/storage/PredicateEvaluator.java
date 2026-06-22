@@ -115,17 +115,6 @@ final class PredicateEvaluator {
             case "expiresAt" -> record.expiresAt();
             case "target" -> record.target();
             case "server" -> record.server();
-            // Content fields: needed so m:/message:/content: match on the
-            // in-memory post-filter path (SQLite always; CH/Mongo when a
-            // sibling clause can't push down). Without these the evaluator
-            // read message/commandLine as null and never matched.
-            case "message" -> messageOf(record);
-            case "commandLine" -> record instanceof CommandRecord command ? command.commandLine() : null;
-            case "address" -> record instanceof JoinRecord join ? join.address() : null;
-            // Chat recipients (rcp:) — a List, so equalsValue's any-element
-            // match handles membership. Unmapped on CH and blob-stored on
-            // SQLite, so this in-memory path is what makes rcp: work there.
-            case "recipients" -> record instanceof ChatRecord chat ? chat.recipients() : null;
             // cause: pushes these down (both are mapped columns); resolve them
             // here too so a cause: combined with a post-filtered sibling match.
             case "source.entityType" -> record.source() == null ? null : record.source().entityType();
@@ -156,7 +145,7 @@ final class PredicateEvaluator {
             // back to this residual filter. Without these cases they resolved to
             // null and never matched, so m:/rcp: silently returned empty on
             // SQLite. `m:` covers both chat and command lines, so resolve both.
-            case "message" -> record instanceof ChatRecord c ? c.message() : null;
+            case "message" -> messageOf(record);
             case "commandLine" -> record instanceof CommandRecord c ? c.commandLine() : null;
             case "recipients" -> record instanceof ChatRecord c ? c.recipients() : null;
             default -> itemPathValue(record, field);
