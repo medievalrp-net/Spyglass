@@ -15,6 +15,8 @@ import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
@@ -397,6 +399,44 @@ class ResultRendererTest {
         // The bag rides into the hover as first-class key/value lines.
         String hover = hoverPlain(rendered);
         assertThat(hover).contains("session_id").contains("42");
+    }
+
+    @Test
+    void deathRendersVictimDiedWithKillerOrCauseAsTarget() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("death")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("death", "died"));
+
+        Instant now = Instant.now();
+        EntityDeathRecord death = new EntityDeathRecord(
+                UUID.randomUUID(), "death", now, now.plusSeconds(60),
+                Origin.environment("death:FALL"), Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 1, 64, 2), "test",
+                "FALL", "player", UUID.randomUUID(), "FALL", "FALL", null);
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(
+                renderer.renderSingle(death, EnumSet.noneOf(Flag.class), true));
+
+        assertThat(plain).contains("Alice").contains("died").contains("FALL");
+    }
+
+    @Test
+    void killRendersKillerKilledVictim() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("kill")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("kill", "killed"));
+
+        Instant now = Instant.now();
+        EntityHitRecord kill = new EntityHitRecord(
+                UUID.randomUUID(), "kill", now, now.plusSeconds(60),
+                Origin.player(), Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 1, 64, 2), "test",
+                "zombie", "zombie", UUID.randomUUID(), 6.0, false, null);
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(
+                renderer.renderSingle(kill, EnumSet.noneOf(Flag.class), true));
+
+        assertThat(plain).contains("Alice").contains("killed").contains("ZOMBIE");
     }
 
     private static String findRunCommand(Component component) {
