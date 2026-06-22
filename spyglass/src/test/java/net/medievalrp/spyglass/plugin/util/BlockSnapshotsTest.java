@@ -3,17 +3,24 @@ package net.medievalrp.spyglass.plugin.util;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import org.bukkit.Material;
+import org.bukkit.block.Banner;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
+import org.bukkit.block.DecoratedPot;
+import org.bukkit.block.Jukebox;
+import org.bukkit.block.Sign;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -38,6 +45,121 @@ import org.junit.jupiter.api.Test;
  * would have produced.
  */
 class BlockSnapshotsTest {
+
+    @BeforeEach
+    void clearPlainnessCache() {
+        // The plainness cache (#168 stage 2) is static; reset it so each test
+        // starts from a cold cache regardless of order.
+        BlockSnapshots.resetPlainnessCache();
+    }
+
+    // ---- #168 stage 2: captureRawCached / the learned plainness cache --------
+
+    /**
+     * The first sighting of a material must consult the authoritative
+     * {@link BlockState} (to learn its verdict); once proven plain, subsequent
+     * captures of that material must skip {@code getState()} entirely.
+     */
+    @Test
+    void captureRawCachedLearnsPlainThenSkipsGetState() {
+        PlainFixture f = plainFixture(Material.STONE);
+
+        BlockSnapshots.RawCapture r1 = BlockSnapshots.captureRawCached(f.block);
+        // First time: must read the real state to learn the verdict.
+        verify(f.block, times(1)).getState();
+
+        BlockSnapshots.RawCapture r2 = BlockSnapshots.captureRawCached(f.block);
+        // Proven plain: getState() is NOT called again - the whole point of #168.
+        verify(f.block, times(1)).getState();
+
+        // Both carry the immutable BlockData grab and no tile-entity payload.
+        assertThat(r1.type()).isEqualTo(Material.STONE);
+        assertThat(r2.type()).isEqualTo(Material.STONE);
+        assertThat(r2.blockData()).isSameAs(f.data);
+        assertThat(r2.containerContents()).isNull();
+        assertThat(r2.signFront()).isEmpty();
+        assertThat(r2.signBack()).isEmpty();
+        assertThat(r2.bannerPatterns()).isEmpty();
+        assertThat(r2.potSherds()).isEmpty();
+        assertThat(r2.jukeboxRecord()).isNull();
+    }
+
+    /**
+     * The plain fast path must finish to a snapshot identical to the one the
+     * authoritative {@code captureRaw(getState())} path produces for a plain
+     * block - same material, blockdata string, and (empty) payload.
+     */
+    @Test
+    void plainFastPathFinishesIdenticallyToCaptureRaw() {
+        PlainFixture f = plainFixture(Material.DIRT);
+
+        BlockSnapshot viaState = BlockSnapshots.finishCapture(BlockSnapshots.captureRaw(f.state));
+
+        BlockSnapshots.captureRawCached(f.block);                              // learn DIRT=plain
+        BlockSnapshot viaFast = BlockSnapshots.finishCapture(
+                BlockSnapshots.captureRawCached(f.block));                     // fast path
+
+        assertThat(viaFast.material()).isEqualTo(viaState.material());
+        assertThat(viaFast.blockData()).isEqualTo(viaState.blockData());
+        assertThat(viaFast.containerItems()).isEqualTo(viaState.containerItems());
+        assertThat(viaFast.simple()).isEqualTo(viaState.simple());
+    }
+
+    /**
+     * SAFETY: a container must NEVER take the plain fast path. Every sighting
+     * goes through {@code getState()} so its contents are captured - a misclassed
+     * container would silently lose its contents and break rollback.
+     */
+    @Test
+    void captureRawCachedNeverFastPathsAContainer() {
+        Fixture cf = containerFixture();
+        BlockData data = mock(BlockData.class);
+        when(data.getMaterial()).thenReturn(Material.CHEST);
+        Block block = mock(Block.class);
+        when(block.getBlockData()).thenReturn(data);
+        when(block.getState()).thenReturn(cf.state);
+
+        BlockSnapshots.RawCapture r1 = BlockSnapshots.captureRawCached(block);
+        verify(block, times(1)).getState();
+        assertThat(r1.containerContents())
+                .as("contents captured on the first (learning) sighting")
+                .containsExactly(cf.clone0, null, cf.clone2);
+
+        BlockSnapshots.RawCapture r2 = BlockSnapshots.captureRawCached(block);
+        verify(block, times(2)).getState();
+        assertThat(r2.containerContents())
+                .as("a known-data-bearing material STILL goes through getState - no data loss")
+                .containsExactly(cf.clone0, null, cf.clone2);
+    }
+
+    /**
+     * {@code isDataBearing} is the safety predicate behind the cache: it must be
+     * true for exactly the tile-entity types {@code captureRaw} special-cases,
+     * and false for a plain state.
+     */
+    @Test
+    void isDataBearingMatchesTheTileEntityTypesCaptureRawExtracts() {
+        assertThat(BlockSnapshots.isDataBearing(mock(Container.class))).isTrue();
+        assertThat(BlockSnapshots.isDataBearing(mock(Sign.class))).isTrue();
+        assertThat(BlockSnapshots.isDataBearing(mock(Banner.class))).isTrue();
+        assertThat(BlockSnapshots.isDataBearing(mock(Jukebox.class))).isTrue();
+        assertThat(BlockSnapshots.isDataBearing(mock(DecoratedPot.class))).isTrue();
+        assertThat(BlockSnapshots.isDataBearing(mock(BlockState.class)))
+                .as("a plain block state is not data-bearing")
+                .isFalse();
+    }
+
+    /** Verdicts are independent per material - learning one does not affect another. */
+    @Test
+    void verdictsAreLearnedPerMaterial() {
+        PlainFixture stone = plainFixture(Material.STONE);
+        BlockSnapshots.captureRawCached(stone.block);          // STONE -> plain
+        BlockSnapshots.captureRawCached(stone.block);
+
+        PlainFixture glass = plainFixture(Material.GLASS);
+        BlockSnapshots.captureRawCached(glass.block);          // GLASS unseen -> consults state
+        verify(glass.block, times(1)).getState();
+    }
 
     @Test
     void airReturnsTheSameSharedInstance() {
@@ -179,5 +301,28 @@ class BlockSnapshotsTest {
 
     private record Fixture(BlockState state, ItemStack slot0, ItemStack slot2,
                            ItemStack clone0, ItemStack clone2, BlockData blockData) {
+    }
+
+    /**
+     * A live {@link Block} for a plain (non-tile-entity) material: its
+     * {@code getBlockData()} grab and its {@code getState()} fallback both report
+     * the same material and data, so {@code captureRawCached} works on either path.
+     */
+    private static PlainFixture plainFixture(Material material) {
+        BlockData data = mock(BlockData.class);
+        when(data.getMaterial()).thenReturn(material);
+        when(data.getAsString()).thenReturn("minecraft:" + material.name().toLowerCase());
+
+        BlockState state = mock(BlockState.class);   // plain - not any tile-entity type
+        when(state.getType()).thenReturn(material);
+        when(state.getBlockData()).thenReturn(data);
+
+        Block block = mock(Block.class);
+        when(block.getBlockData()).thenReturn(data);
+        when(block.getState()).thenReturn(state);
+        return new PlainFixture(block, state, data);
+    }
+
+    private record PlainFixture(Block block, BlockState state, BlockData data) {
     }
 }
