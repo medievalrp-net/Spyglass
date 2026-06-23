@@ -1,0 +1,50 @@
+name: Publish packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "Publish as -SNAPSHOT (recommended for fork testing)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compute version
+        id: ver
+        run: |
+          base=$(grep '^version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.snapshot }}" = "true" ]; then
+            echo "version=${base}-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${base}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish spyglass-api + spyglass-core
+        env:
+          GPR_USER: ${{ github.actor }}
+          GPR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          ./gradlew
+          :spyglass-api:publishAllPublicationsToGitHubPackagesRepository
+          :spyglass-core:publishAllPublicationsToGitHubPackagesRepository
+          -Pversion=${{ steps.ver.outputs.version }} --no-daemon --stacktrace

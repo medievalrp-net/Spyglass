@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -18,6 +19,7 @@ java {
         languageVersion = JavaLanguageVersion.of(21)
     }
     withSourcesJar()
+    withJavadocJar()
 }
 
 // ClickHouse 0.9.x pulls Guava 33.4.6 transitively, but Paper / WorldEdit
@@ -170,6 +172,26 @@ tasks.register<Test>("clickhouseBench") {
         val name = key.toString()
         if (name.startsWith("SG_BENCH_")) {
             systemProperty(name, value.toString())
+        }
+    }
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("core") {
+            from(components["java"])
+            groupId = "net.medievalrp"
+            artifactId = "spyglass-core"
+            pom {
+                name.set("Spyglass Core")
+                description.set("Shared storage codecs and record-store backends for the Spyglass forensics plugin.")
+                url.set("https://github.com/medievalrp-net/Spyglass")
+                licenses {
+                    license {
+                        name.set("GNU General Public License v3.0")
+                    }
+                }
+            }
         }
     }
 }

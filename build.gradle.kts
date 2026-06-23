@@ -118,6 +118,24 @@ subprojects {
     tasks.matching { it.name == "check" }.configureEach {
         dependsOn("jacocoTestCoverageVerification")
     }
+
+    pluginManager.withPlugin("maven-publish") {
+        extensions.configure<PublishingExtension> {
+            repositories {
+                maven {
+                    name = "GitHubPackages"
+                    url = uri(
+                        "https://maven.pkg.github.com/" +
+                            (System.getenv("GITHUB_REPOSITORY") ?: "medievalrp-net/Spyglass")
+                    )
+                    credentials {
+                        username = System.getenv("GPR_USER") ?: System.getenv("GITHUB_ACTOR")
+                        password = System.getenv("GPR_TOKEN") ?: System.getenv("GITHUB_TOKEN")
+                    }
+                }
+            }
+        }
+    }
 }
 
 tasks.register<Exec>("regression") {
