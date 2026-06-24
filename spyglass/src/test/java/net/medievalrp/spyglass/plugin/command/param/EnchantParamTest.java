@@ -26,17 +26,18 @@ class EnchantParamTest {
 
     private static final List<String> EXPECTED_PATHS = List.of(
             "item.enchants",
+            "result.enchants",
             "beforeItem.enchants",
             "afterItem.enchants",
             "originalBlock.containerItems.enchants",
             "newBlock.containerItems.enchants");
 
     @Test
-    void producesOrAcrossAllFiveEnchantPaths() throws Exception {
+    void producesOrAcrossAllItemEnchantPaths() throws Exception {
         QueryPredicate predicate = new EnchantParam().parse("ench", "sharpness", ctx());
         assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
         QueryPredicate.Or or = (QueryPredicate.Or) predicate;
-        assertThat(or.predicates()).hasSize(5);
+        assertThat(or.predicates()).hasSize(6);
         List<String> fields = or.predicates().stream()
                 .map(p -> ((QueryPredicate.Eq) p).field())
                 .toList();

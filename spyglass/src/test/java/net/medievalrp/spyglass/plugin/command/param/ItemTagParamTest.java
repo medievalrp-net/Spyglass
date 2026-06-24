@@ -21,18 +21,19 @@ class ItemTagParamTest {
 
     private static final List<String> EXPECTED_PATHS = List.of(
             "item.tags",
+            "result.tags",
             "beforeItem.tags",
             "afterItem.tags",
             "originalBlock.containerItems.tags",
             "newBlock.containerItems.tags");
 
     @Test
-    void producesOrAcrossAllFiveTagPaths() throws Exception {
+    void producesOrAcrossAllItemTagPaths() throws Exception {
         QueryPredicate predicate = new ItemTagParam().parse("itags", "quest", ctx());
 
         assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
         QueryPredicate.Or or = (QueryPredicate.Or) predicate;
-        assertThat(or.predicates()).hasSize(5);
+        assertThat(or.predicates()).hasSize(6);
         List<String> fields = or.predicates().stream()
                 .map(p -> ((QueryPredicate.Eq) p).field())
                 .toList();

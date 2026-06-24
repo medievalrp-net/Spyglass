@@ -27,18 +27,19 @@ class ItemNameParamTest {
 
     private static final List<String> EXPECTED_PATHS = List.of(
             "item.name",
+            "result.name",
             "beforeItem.name",
             "afterItem.name",
             "originalBlock.containerItems.name",
             "newBlock.containerItems.name");
 
     @Test
-    void producesOrAcrossAllFiveItemPaths() throws Exception {
+    void producesOrAcrossAllItemNamePaths() throws Exception {
         QueryPredicate predicate = new ItemNameParam().parse("iname", "Excalibur", ctx());
 
         assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
         QueryPredicate.Or or = (QueryPredicate.Or) predicate;
-        assertThat(or.predicates()).hasSize(5);
+        assertThat(or.predicates()).hasSize(6);
 
         List<String> fields = or.predicates().stream()
                 .map(p -> ((QueryPredicate.Eq) p).field())

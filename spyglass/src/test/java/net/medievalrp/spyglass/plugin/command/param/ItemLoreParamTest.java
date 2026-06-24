@@ -22,18 +22,19 @@ class ItemLoreParamTest {
 
     private static final List<String> EXPECTED_PATHS = List.of(
             "item.lore",
+            "result.lore",
             "beforeItem.lore",
             "afterItem.lore",
             "originalBlock.containerItems.lore",
             "newBlock.containerItems.lore");
 
     @Test
-    void producesOrAcrossAllFiveLorePaths() throws Exception {
+    void producesOrAcrossAllItemLorePaths() throws Exception {
         QueryPredicate predicate = new ItemLoreParam().parse("ilore", "primordial", ctx());
 
         assertThat(predicate).isInstanceOf(QueryPredicate.Or.class);
         QueryPredicate.Or or = (QueryPredicate.Or) predicate;
-        assertThat(or.predicates()).hasSize(5);
+        assertThat(or.predicates()).hasSize(6);
         List<String> fields = or.predicates().stream()
                 .map(p -> ((QueryPredicate.Eq) p).field())
                 .toList();
