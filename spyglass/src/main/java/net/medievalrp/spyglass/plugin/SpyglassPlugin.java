@@ -81,6 +81,7 @@ import net.medievalrp.spyglass.plugin.listener.environment.EntityExplodeListener
 import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayListener;
 import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowListener;
 import net.medievalrp.spyglass.plugin.listener.item.CreativeCloneListener;
+import net.medievalrp.spyglass.plugin.listener.item.CraftListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemDropListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
@@ -394,6 +395,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
                 new ItemPickupListener(recorder, support, deferredSerializer),
+                new CraftListener(recorder, support, deferredSerializer),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support, enabledEvents),
