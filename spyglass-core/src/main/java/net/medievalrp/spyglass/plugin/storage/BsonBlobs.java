@@ -230,6 +230,58 @@ public final class BsonBlobs {
     }
 
     /**
+     * Serialize a list of {@link StoredItem} to a single base64 BSON blob — the
+     * ClickHouse {@code craft_ingredients} column. Mirrors the {@code
+     * containerItems} array shape used by {@link #encodeBlockExtras}: each item
+     * is wrapped and stored under an {@code items} array. Returns null for a
+     * null or empty list so the column stays sparse. The blob backends carry
+     * the ingredient list inline via the record codec and never call this.
+     */
+    public static @Nullable String encodeStoredItemList(@Nullable List<StoredItem> items) {
+        if (items == null || items.isEmpty()) {
+            return null;
+        }
+        BsonArray array = new BsonArray(items.size());
+        for (StoredItem item : items) {
+            BsonDocument wrapper = new BsonDocument();
+            try (BsonDocumentWriter writer = new BsonDocumentWriter(wrapper)) {
+                writer.writeStartDocument();
+                writer.writeName(VALUE);
+                STORED_ITEM_CODEC.encode(writer, item, EncoderContext.builder().build());
+                writer.writeEndDocument();
+            }
+            array.add(wrapper.get(VALUE));
+        }
+        BsonDocument document = new BsonDocument().append("items", array);
+        return toBase64(documentToBytes(document));
+    }
+
+    /** Decode a blob produced by {@link #encodeStoredItemList}; an empty list
+     *  for null/blank input (never null). */
+    public static List<StoredItem> decodeStoredItemList(@Nullable String base64) {
+        byte[] bytes = fromBase64(base64);
+        if (bytes == null) {
+            return List.of();
+        }
+        BsonDocument document = bytesToDocument(bytes);
+        if (!document.containsKey("items")) {
+            return List.of();
+        }
+        BsonArray array = document.getArray("items");
+        List<StoredItem> out = new java.util.ArrayList<>(array.size());
+        for (BsonValue value : array) {
+            BsonDocument wrapper = new BsonDocument().append(VALUE, value);
+            try (BsonDocumentReader reader = new BsonDocumentReader(wrapper)) {
+                reader.readStartDocument();
+                reader.readName();
+                out.add(STORED_ITEM_CODEC.decode(reader, DecoderContext.builder().build()));
+                reader.readEndDocument();
+            }
+        }
+        return out;
+    }
+
+    /**
      * Serialize a whole {@link EventRecord} to BSON bytes (no base64) for
      * the SQLite backend's per-event blob. The concrete record codec
      * writes the {@code event} field, so {@link #decodeRecordBytes}

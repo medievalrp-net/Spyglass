@@ -75,4 +75,29 @@ class BsonBlobsTest {
         assertThat(BsonBlobs.encodeStoredItem(null)).isNull();
         assertThat(BsonBlobs.decodeStoredItem(null)).isNull();
     }
+
+    @Test
+    void storedItemListRoundTrips() {
+        // The craft_ingredients column path: a list of lean projections
+        // survives encode/decode preserving order and materials.
+        List<StoredItem> items = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+
+        List<StoredItem> back = BsonBlobs.decodeStoredItemList(
+                BsonBlobs.encodeStoredItemList(items));
+
+        assertThat(back).extracting(StoredItem::material)
+                .containsExactly("DIAMOND", "STICK", "STICK");
+        assertThat(back).isEqualTo(items);
+    }
+
+    @Test
+    void emptyAndNullItemListEncodeToNull() {
+        assertThat(BsonBlobs.encodeStoredItemList(List.of())).isNull();
+        assertThat(BsonBlobs.encodeStoredItemList(null)).isNull();
+        assertThat(BsonBlobs.decodeStoredItemList(null)).isEmpty();
+        assertThat(BsonBlobs.decodeStoredItemList("")).isEmpty();
+    }
 }

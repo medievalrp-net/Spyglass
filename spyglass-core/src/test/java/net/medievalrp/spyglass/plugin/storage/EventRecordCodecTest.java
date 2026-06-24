@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.Origin;
@@ -334,6 +335,50 @@ class EventRecordCodecTest {
         assertThat(item.name()).isEqualTo("Excaliblur");
         assertThat(item.lore()).containsExactly("Forged in fire");
         assertThat(item.enchants()).containsExactly("sharpness=5");
+    }
+
+    @Test
+    void roundTripsCraftRecordWithIngredientList() {
+        // CraftRecord is the first record carrying a List<StoredItem> as a
+        // direct component (ingredients). The Mongo record codec must encode
+        // and decode the list — output projection plus each consumed ingredient
+        // — without losing materials or the searchable output projection.
+        StoredItem output = new StoredItem(
+                0, "DIAMOND_PICKAXE", null, "Sharp One", List.of("Mighty"), List.of("efficiency=5"));
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null));
+        CraftRecord original = new CraftRecord(
+                UUID.randomUUID(), "craft", WHEN, WHEN.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 3, 64, 4),
+                "test", "DIAMOND_PICKAXE", 1, output, ingredients);
+
+        EventRecord decoded = decode(encode(original));
+
+        assertThat(decoded).isInstanceOf(CraftRecord.class).isEqualTo(original);
+        CraftRecord craft = (CraftRecord) decoded;
+        assertThat(craft.result().name()).isEqualTo("Sharp One");
+        assertThat(craft.ingredients()).extracting(StoredItem::material)
+                .containsExactly("DIAMOND", "STICK");
+    }
+
+    @Test
+    void roundTripsCraftRecordWithEmptyIngredients() {
+        // A craft with no readable matrix (defensive: ingredients defaults to
+        // an empty list, must survive the codec as empty, not null).
+        StoredItem output = new StoredItem(0, "TORCH", null);
+        CraftRecord original = new CraftRecord(
+                UUID.randomUUID(), "craft", WHEN, WHEN.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 0, 64, 0),
+                "test", "TORCH", 4, output, List.of());
+
+        EventRecord decoded = decode(encode(original));
+
+        assertThat(decoded).isInstanceOf(CraftRecord.class);
+        assertThat(((CraftRecord) decoded).ingredients()).isEmpty();
+        assertThat(((CraftRecord) decoded).amount()).isEqualTo(4);
     }
 
     @Test
