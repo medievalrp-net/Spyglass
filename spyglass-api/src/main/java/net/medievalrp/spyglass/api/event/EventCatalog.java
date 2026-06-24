@@ -55,6 +55,9 @@ public final class EventCatalog {
         m.put("drop", ItemDropRecord.class);
         m.put("pickup", ItemPickupRecord.class);
         m.put("clone", ItemPickupRecord.class);
+        // A player crafting an item (crafting table / 2x2 grid). Station-
+        // agnostic: future production events (smith, smelt) reuse CraftRecord.
+        m.put("craft", CraftRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
         // Killer-perspective mirror of a death. Reuses EntityHitRecord

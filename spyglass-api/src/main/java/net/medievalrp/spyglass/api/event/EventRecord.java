@@ -18,6 +18,7 @@ public sealed interface EventRecord permits
         BlockUseRecord,
         ItemDropRecord,
         ItemPickupRecord,
+        CraftRecord,
         TeleportRecord,
         EntityDeathRecord,
         EntityHitRecord,

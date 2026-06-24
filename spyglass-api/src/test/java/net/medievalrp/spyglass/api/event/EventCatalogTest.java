@@ -44,6 +44,12 @@ class EventCatalogTest {
     }
 
     @Test
+    void craftIsStoredAsCraftRecord() {
+        assertThat(EventCatalog.recordClassOf("craft")).isEqualTo(CraftRecord.class);
+        assertThat(EventCatalog.eventNames()).contains("craft");
+    }
+
+    @Test
     void unknownEventResolvesToNull() {
         assertThat(EventCatalog.recordClassOf("not-an-event")).isNull();
         assertThat(EventCatalog.recordClassOf(null)).isNull();
