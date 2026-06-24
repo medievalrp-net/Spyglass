@@ -104,4 +104,20 @@ class SpyglassConfigTest {
         // whole config load.
         assertThat(SpyglassConfig.parseAnalytics(root).interval().seconds()).isEqualTo(60L);
     }
+
+    @Test
+    void bundledDefaultConfigEnablesCraftWithVerb() throws Exception {
+        // The shipped config.conf must carry the craft event so the auto-merge
+        // adds it to existing installs and a:craft works out of the box.
+        org.spongepowered.configurate.hocon.HoconConfigurationLoader loader =
+                org.spongepowered.configurate.hocon.HoconConfigurationLoader.builder()
+                        .source(() -> new java.io.BufferedReader(new java.io.InputStreamReader(
+                                SpyglassConfigTest.class.getResourceAsStream("/config.conf"),
+                                java.nio.charset.StandardCharsets.UTF_8)))
+                        .build();
+        org.spongepowered.configurate.ConfigurationNode craft = loader.load().node("events", "craft");
+
+        assertThat(craft.node("enabled").getBoolean(false)).isTrue();
+        assertThat(craft.node("past-tense").getString()).isEqualTo("crafted");
+    }
 }
