@@ -15,10 +15,12 @@ import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.ChatRecord;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.extension.DisplayRenderer;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -159,6 +161,37 @@ class ResultRendererTest {
                 renderer.renderSingle(chatRecord("hi", "hi"), EnumSet.noneOf(Flag.class), true));
 
         assertThat(plain).contains("said hi").doesNotContain("hi: hi");
+    }
+
+    @Test
+    void craftRendersOutputInlineAndIngredientHover() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("craft")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("craft", "crafted"));
+
+        Instant now = Instant.now();
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null);
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        CraftRecord craft = new CraftRecord(
+                UUID.randomUUID(), "craft", now, now.plusSeconds(60),
+                Origin.player(), Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 1, 64, 2), "test",
+                "DIAMOND_PICKAXE", 1, output, ingredients);
+
+        Component rendered = renderer.renderSingle(craft, EnumSet.noneOf(Flag.class), true);
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+        assertThat(plain).contains("Alice").contains("crafted").contains("DIAMOND_PICKAXE");
+
+        Component hover = extractHover(rendered);
+        assertThat(hover).as("craft line should carry a hover").isNotNull();
+        String hoverPlain = PlainTextComponentSerializer.plainText().serialize(hover);
+        // Ingredients collapse to per-material counts, first-seen order.
+        assertThat(hoverPlain).contains("Ingredients").contains("DIAMOND x3").contains("STICK x2");
     }
 
     @Test

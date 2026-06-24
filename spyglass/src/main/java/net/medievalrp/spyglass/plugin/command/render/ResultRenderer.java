@@ -17,6 +17,7 @@ import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
@@ -271,6 +272,9 @@ public final class ResultRenderer {
         if (record instanceof TeleportRecord tp && tp.cause() != null && !tp.cause().isBlank()) {
             lines.add(kv("Via", tp.cause()));
         }
+        if (record instanceof CraftRecord craft && !craft.ingredients().isEmpty()) {
+            lines.add(kv("Ingredients", ingredientSummary(craft.ingredients())));
+        }
         // Plugin-supplied extension fields (e.g. a chat channel) get their own
         // hover line, so they're visible even with no DisplayRenderer registered.
         record.extensions().forEach((key, value) -> lines.add(kv(capitalizeKey(key), value)));
@@ -323,6 +327,8 @@ public final class ResultRenderer {
                     withdraw.beforeItem() != null ? withdraw.beforeItem() : withdraw.afterItem();
             case ItemDropRecord drop -> drop.item();
             case ItemPickupRecord pickup -> pickup.item();
+            // The crafted output, so its custom name / enchants show on hover.
+            case CraftRecord craft -> craft.result();
             default -> null;
         };
     }
@@ -412,6 +418,23 @@ public final class ResultRenderer {
         return item + " IN " + containerType;
     }
 
+    /** "DIAMOND x3, STICK x2" — collapse a craft's ingredient projections to a
+     *  compact per-material count for the hover, preserving first-seen order. */
+    private static String ingredientSummary(List<StoredItem> ingredients) {
+        java.util.LinkedHashMap<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (StoredItem ingredient : ingredients) {
+            counts.merge(upperOrEmpty(ingredient.material()), 1, Integer::sum);
+        }
+        StringBuilder out = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : counts.entrySet()) {
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(entry.getKey()).append(" x").append(entry.getValue());
+        }
+        return out.toString();
+    }
+
     private static String targetOf(EventRecord record, boolean showIp) {
         return switch (record) {
             case BlockBreakRecord breakRec -> breakRec.target();
@@ -439,6 +462,8 @@ public final class ResultRenderer {
             case QuitRecord quit -> "";
             case ItemDropRecord drop -> drop.target();
             case ItemPickupRecord pickup -> pickup.target();
+            // The crafted output material; renders "<player> crafted Nx DIAMOND_PICKAXE".
+            case CraftRecord craft -> craft.target();
             case TeleportRecord tp -> tp.target() + " via " + tp.cause();
             // Entity events: bukkit EntityType names are conventionally
             // uppercase (ZOMBIE, SNIFFER, etc.). Display lowercase /
@@ -465,6 +490,7 @@ public final class ResultRenderer {
             case ContainerWithdrawRecord withdraw -> withdraw.amount();
             case ItemDropRecord drop -> drop.amount();
             case ItemPickupRecord pickup -> pickup.amount();
+            case CraftRecord craft -> craft.amount();
             default -> 0;
         };
     }

@@ -20,6 +20,7 @@ import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
@@ -81,6 +82,7 @@ public final class ProxyResultRenderer {
             Map.entry("drop", "dropped"),
             Map.entry("pickup", "picked up"),
             Map.entry("clone", "cloned"),
+            Map.entry("craft", "crafted"),
             Map.entry("teleport", "teleported"),
             Map.entry("death", "died"),
             Map.entry("kill", "killed"),
@@ -213,6 +215,9 @@ public final class ProxyResultRenderer {
         if (record instanceof TeleportRecord tp && tp.cause() != null && !tp.cause().isBlank()) {
             lines.add(kv("Via", tp.cause()));
         }
+        if (record instanceof CraftRecord craft && !craft.ingredients().isEmpty()) {
+            lines.add(kv("Ingredients", ingredientSummary(craft.ingredients())));
+        }
 
         Component hover = Component.empty();
         for (int i = 0; i < lines.size(); i++) {
@@ -248,6 +253,23 @@ public final class ProxyResultRenderer {
         return value == null ? "" : value.toUpperCase(Locale.ROOT);
     }
 
+    /** "DIAMOND x3, STICK x2" — collapse a craft's ingredient projections to a
+     *  compact per-material count for the hover, preserving first-seen order. */
+    private static String ingredientSummary(java.util.List<net.medievalrp.spyglass.api.event.StoredItem> ingredients) {
+        java.util.LinkedHashMap<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (net.medievalrp.spyglass.api.event.StoredItem ingredient : ingredients) {
+            counts.merge(upperOrEmpty(ingredient.material()), 1, Integer::sum);
+        }
+        StringBuilder out = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : counts.entrySet()) {
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(entry.getKey()).append(" x").append(entry.getValue());
+        }
+        return out.toString();
+    }
+
     private static String withContainer(String item, String containerType) {
         if (containerType == null || containerType.isBlank()) {
             return item;
@@ -273,6 +295,7 @@ public final class ProxyResultRenderer {
             case QuitRecord r -> "";
             case ItemDropRecord r -> r.target();
             case ItemPickupRecord r -> r.target();
+            case CraftRecord r -> r.target();
             case TeleportRecord r -> r.target() + " via " + r.cause();
             case EntityDeathRecord r -> upperOrEmpty(r.target());
             case EntityHitRecord r -> upperOrEmpty(r.target());
@@ -303,6 +326,7 @@ public final class ProxyResultRenderer {
             case ContainerWithdrawRecord r -> r.amount();
             case ItemDropRecord r -> r.amount();
             case ItemPickupRecord r -> r.amount();
+            case CraftRecord r -> r.amount();
             default -> 0;
         };
     }

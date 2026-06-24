@@ -175,6 +175,7 @@ final class PredicateEvaluator {
         String rest = field.substring(dot + 1);
         return switch (root) {
             case "item" -> storedItemField(itemOf(record), rest);
+            case "result" -> storedItemField(resultOf(record), rest);
             case "beforeItem" -> storedItemField(beforeItemOf(record), rest);
             case "afterItem" -> storedItemField(afterItemOf(record), rest);
             case "originalBlock" -> snapshotField(originalBlockOf(record), rest);
@@ -191,6 +192,10 @@ final class PredicateEvaluator {
             case ItemPickupRecord r -> r.item();
             default -> null;
         };
+    }
+
+    private static @Nullable StoredItem resultOf(EventRecord record) {
+        return record instanceof net.medievalrp.spyglass.api.event.CraftRecord r ? r.result() : null;
     }
 
     private static @Nullable StoredItem beforeItemOf(EventRecord record) {

@@ -16,6 +16,9 @@ final class ItemFieldParams {
 
     private static final List<String> ITEM_PATHS = List.of(
             "item",
+            // The crafted output on a CraftRecord (a:craft) — searchable like
+            // any other item-bearing field via iname:/ilore:/ench:/itags:.
+            "result",
             "beforeItem",
             "afterItem",
             "originalBlock.containerItems",

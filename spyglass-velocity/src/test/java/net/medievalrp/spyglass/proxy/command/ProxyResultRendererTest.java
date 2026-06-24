@@ -7,9 +7,11 @@ import java.util.EnumSet;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.JoinRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
+import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.query.Flag;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.junit.jupiter.api.Test;
@@ -61,5 +63,29 @@ class ProxyResultRendererTest {
         assertThat(hoverPlain(rendered))
                 .contains("IP: " + ProxyResultRenderer.IP_HIDDEN)
                 .doesNotContain("203.0.113.7");
+    }
+
+    @Test
+    void craftRendersOutputInlineAndIngredientHover() {
+        Instant now = Instant.now();
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null);
+        java.util.List<StoredItem> ingredients = java.util.List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        CraftRecord craft = new CraftRecord(
+                UUID.randomUUID(), "craft", now, now.plusSeconds(60),
+                Origin.player(), Source.player(PLAYER_ID, "Alice"),
+                new BlockLocation(WORLD_ID, "world", 1, 64, 2), "survival",
+                "DIAMOND_PICKAXE", 1, output, ingredients);
+
+        Component rendered = renderer.renderSingle(craft, EnumSet.noneOf(Flag.class), true);
+
+        assertThat(PlainTextComponentSerializer.plainText().serialize(rendered))
+                .contains("Alice").contains("crafted").contains("DIAMOND_PICKAXE");
+        assertThat(hoverPlain(rendered))
+                .contains("Ingredients").contains("DIAMOND x3").contains("STICK x2");
     }
 }
