@@ -33,6 +33,7 @@ import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
+import net.medievalrp.spyglass.api.event.CraftRecord;
 import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
@@ -321,6 +322,7 @@ public final class ClickHouseRecordStore implements RecordStore {
         writeBlockColumns(writer, record);
         writeContainerColumns(writer, record);
         writeItemColumns(writer, record);
+        writeCraftColumns(writer, record);
         writeChatCommandColumns(writer, record);
         writeJoinColumns(writer, record);
         writeTeleportColumns(writer, record);
@@ -416,6 +418,8 @@ public final class ClickHouseRecordStore implements RecordStore {
             amount = d.amount();
         } else if (record instanceof ItemPickupRecord p) {
             amount = p.amount();
+        } else if (record instanceof CraftRecord c) {
+            amount = c.amount();
         }
         writer.setValue("container_type", containerType);
         writer.setValue("slot", slot);
@@ -430,8 +434,20 @@ public final class ClickHouseRecordStore implements RecordStore {
             item = d.item();
         } else if (record instanceof ItemPickupRecord p) {
             item = p.item();
+        } else if (record instanceof CraftRecord c) {
+            // The crafted output reuses the item column so output-item search
+            // (iname:/ilore:/ench:/itags:) works the same as for pickups.
+            item = c.result();
         }
         writer.setValue("item", BsonBlobs.encodeStoredItem(item));
+    }
+
+    private void writeCraftColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
+        String ingredients = null;
+        if (record instanceof CraftRecord c) {
+            ingredients = BsonBlobs.encodeStoredItemList(c.ingredients());
+        }
+        writer.setValue("craft_ingredients", ingredients);
     }
 
     private void writeChatCommandColumns(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
@@ -987,6 +1003,13 @@ public final class ClickHouseRecordStore implements RecordStore {
                     origin, source, location, server, target,
                     row.getInteger("amount"),
                     BsonBlobs.decodeStoredItem(row.getString("item")));
+        }
+        if (clazz == CraftRecord.class) {
+            return new CraftRecord(id, event, occurred, expiresAt,
+                    origin, source, location, server, target,
+                    row.getInteger("amount"),
+                    BsonBlobs.decodeStoredItem(row.getString("item")),
+                    BsonBlobs.decodeStoredItemList(row.getString("craft_ingredients")));
         }
         if (clazz == TeleportRecord.class) {
             BlockLocation from = readOptionalLocation(row, "teleport_from_");

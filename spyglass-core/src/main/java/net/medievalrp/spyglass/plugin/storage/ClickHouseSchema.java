@@ -123,6 +123,12 @@ final class ClickHouseSchema {
         execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                 + " ADD COLUMN IF NOT EXISTS extensions Map(String, String) CODEC(ZSTD(1))");
 
+        // craft events: the recipe inputs blob, idempotent for tables created
+        // before the craft event existed. The crafted output reuses the `item`
+        // column, so only the ingredient list needs a new column.
+        execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                + " ADD COLUMN IF NOT EXISTS craft_ingredients Nullable(String) CODEC(ZSTD(1))");
+
         // One-shot migration: pre-chunked undo_history shape lacked
         // operation_id / chunk_index / chunk_count. ORDER BY changed,
         // so ALTER can't reshape the key — drop and recreate. Worst
@@ -277,6 +283,8 @@ final class ClickHouseSchema {
                 + "    after_item Nullable(String) CODEC(ZSTD(1)),\n"
                 // --- Item events (Drop / Pickup) ---
                 + "    item Nullable(String) CODEC(ZSTD(1)),\n"
+                // --- Craft: the recipe inputs consumed (output reuses `item`) ---
+                + "    craft_ingredients Nullable(String) CODEC(ZSTD(1)),\n"
                 // --- Chat / Command ---
                 + "    message Nullable(String),\n"
                 + "    recipients Array(UUID) CODEC(ZSTD(1)),\n"

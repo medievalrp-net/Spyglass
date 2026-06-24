@@ -402,6 +402,50 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void roundTripsCraftRecordWithIngredients() {
+        // CraftRecord stores the output in the shared `item` column and the
+        // ingredient list in the craft_ingredients blob. Both must survive the
+        // CH wide-column write/decode, and the output item must be searchable
+        // via the `result` path (post-filter on CH).
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation loc = new BlockLocation(WORLD, "world", 3, 64, 4);
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null,
+                "Sharp One", List.of("Mighty"), List.of("efficiency=5"));
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        store.save(List.of(new net.medievalrp.spyglass.api.event.CraftRecord(
+                UUID.randomUUID(), "craft", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                "DIAMOND_PICKAXE", 1, output, ingredients)));
+        flushAsyncInserts();
+
+        QueryRequest byEvent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "craft")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        var craft = (net.medievalrp.spyglass.api.event.CraftRecord)
+                store.query(byEvent).records().get(0);
+        assertThat(craft.target()).isEqualTo("DIAMOND_PICKAXE");
+        assertThat(craft.amount()).isEqualTo(1);
+        assertThat(craft.result()).isNotNull();
+        assertThat(craft.result().name()).isEqualTo("Sharp One");
+        assertThat(craft.ingredients()).extracting(StoredItem::material)
+                .containsExactly("DIAMOND", "DIAMOND", "DIAMOND", "STICK", "STICK");
+
+        // Output-item search via the result path (iname:Sharp).
+        QueryRequest byOutputName = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "craft"),
+                        new QueryPredicate.Eq("result.name",
+                                java.util.regex.Pattern.compile("sharp",
+                                        java.util.regex.Pattern.CASE_INSENSITIVE))),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byOutputName).records()).hasSize(1);
+    }
+
+    @Test
     void summaryQueryRetainsItemProjectionsForHover() {
         // Feature: the search hover shows an item's custom name / lore /
         // enchants. The display path (querySummary) must carry the item even
