@@ -236,6 +236,32 @@ class MariaDbRecordStoreIT {
     }
 
     @Test
+    void craftRecordRoundTripsThroughPayload() {
+        // CraftRecord is non-block, so it stores as a BSON payload blob and the
+        // polymorphic decode must reconstruct the output and the List<StoredItem>
+        // ingredients exactly.
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null,
+                "Sharp One", List.of("Mighty"), List.of("efficiency=5"));
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        net.medievalrp.spyglass.api.event.CraftRecord craft =
+                new net.medievalrp.spyglass.api.event.CraftRecord(
+                        EventIds.newId(), "craft", BASE, BASE.plusSeconds(3600),
+                        Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                        new BlockLocation(WORLD, "world", 3, 64, 4), "srv",
+                        "DIAMOND_PICKAXE", 1, output, ingredients);
+        store.save(List.of(craft));
+
+        QueryResult result = store.query(request(
+                List.of(new QueryPredicate.Eq("event", "craft"))));
+        assertThat(result.records()).containsExactly(craft);
+    }
+
+    @Test
     void streamRollbackEffectsEmitsSimpleBlockAsPrimitives() {
         BlockBreakRecord record = breakAt(UUID.randomUUID(), "Alice", 7, 1,
                 simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));

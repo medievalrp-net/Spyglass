@@ -210,6 +210,45 @@ class SqliteRecordStoreTest {
     }
 
     @Test
+    void roundTripsCraftRecordWithIngredients() {
+        // CraftRecord is stored as a BSON blob (only block break/place are
+        // column-stored), so the polymorphic decode must reconstruct the output
+        // and the List<StoredItem> ingredients, and the output must be
+        // searchable via the result path (post-filter).
+        Instant occurred = BASE.minusSeconds(5);
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null,
+                "Sharp One", List.of("Mighty"), List.of("efficiency=5"));
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        store.save(List.of(new net.medievalrp.spyglass.api.event.CraftRecord(
+                EventIds.newId(), "craft", occurred, occurred.plusSeconds(RETENTION),
+                Origin.player(), Source.player(UUID.randomUUID(), "Alice"),
+                new BlockLocation(WORLD, "world", 3, 64, 4), "srv",
+                "DIAMOND_PICKAXE", 1, output, ingredients)));
+
+        var back = store.query(request(List.of(new QueryPredicate.Eq("event", "craft")))).records();
+        assertThat(back).singleElement()
+                .isInstanceOf(net.medievalrp.spyglass.api.event.CraftRecord.class);
+        var craft = (net.medievalrp.spyglass.api.event.CraftRecord) back.get(0);
+        assertThat(craft.target()).isEqualTo("DIAMOND_PICKAXE");
+        assertThat(craft.amount()).isEqualTo(1);
+        assertThat(craft.result().name()).isEqualTo("Sharp One");
+        assertThat(craft.ingredients()).extracting(StoredItem::material)
+                .containsExactly("DIAMOND", "DIAMOND", "DIAMOND", "STICK", "STICK");
+
+        var byOutputName = store.query(request(List.of(
+                new QueryPredicate.Eq("event", "craft"),
+                new QueryPredicate.Eq("result.name",
+                        java.util.regex.Pattern.compile("sharp",
+                                java.util.regex.Pattern.CASE_INSENSITIVE))))).records();
+        assertThat(byOutputName).hasSize(1);
+    }
+
+    @Test
     void contentSearchMatchesChatMessageViaPostFilter() {
         // On SQLite the message lives in the blob, so m:/content: always runs
         // as an in-memory post-filter. The evaluator must resolve `message`

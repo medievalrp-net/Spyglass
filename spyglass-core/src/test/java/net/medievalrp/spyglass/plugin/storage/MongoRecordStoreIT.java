@@ -375,6 +375,44 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void roundTripsCraftRecordWithIngredients() {
+        // CraftRecord carries a List<StoredItem> ingredient component — the
+        // record codec must persist and decode it natively, and the output
+        // item must be searchable via the result path.
+        Instant now = Instant.now();
+        BlockLocation loc = new BlockLocation(WORLD, "world", 3, 64, 4);
+        StoredItem output = new StoredItem(0, "DIAMOND_PICKAXE", null,
+                "Sharp One", List.of("Mighty"), List.of("efficiency=5"));
+        List<StoredItem> ingredients = List.of(
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "DIAMOND", null),
+                new StoredItem(0, "STICK", null),
+                new StoredItem(0, "STICK", null));
+        store.save(List.of(new net.medievalrp.spyglass.api.event.CraftRecord(
+                UUID.randomUUID(), "craft", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                "DIAMOND_PICKAXE", 1, output, ingredients)));
+
+        QueryRequest byEvent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "craft")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        var craft = (net.medievalrp.spyglass.api.event.CraftRecord)
+                store.query(byEvent).records().get(0);
+        assertThat(craft.target()).isEqualTo("DIAMOND_PICKAXE");
+        assertThat(craft.amount()).isEqualTo(1);
+        assertThat(craft.result().name()).isEqualTo("Sharp One");
+        assertThat(craft.ingredients()).extracting(StoredItem::material)
+                .containsExactly("DIAMOND", "DIAMOND", "DIAMOND", "STICK", "STICK");
+
+        // Output-item search via the result path (iname:Sharp).
+        QueryRequest byOutputName = new QueryRequest(
+                List.of(anyItemField("name", "Sharp")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(byOutputName).records()).hasSize(1);
+    }
+
+    @Test
     void roundTripsRegisteredCustomEvent() {
         net.medievalrp.spyglass.api.event.EventCatalog.register("voice", "spoke");
         Instant now = Instant.now();
@@ -443,6 +481,7 @@ class MongoRecordStoreIT {
                 java.util.regex.Pattern.CASE_INSENSITIVE);
         return new QueryPredicate.Or(List.of(
                 new QueryPredicate.Eq("item." + subField, pattern),
+                new QueryPredicate.Eq("result." + subField, pattern),
                 new QueryPredicate.Eq("beforeItem." + subField, pattern),
                 new QueryPredicate.Eq("afterItem." + subField, pattern),
                 new QueryPredicate.Eq("originalBlock.containerItems." + subField, pattern),
