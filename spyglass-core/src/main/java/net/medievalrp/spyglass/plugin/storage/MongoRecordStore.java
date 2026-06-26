@@ -37,12 +37,16 @@ import net.medievalrp.spyglass.api.query.Sort;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import org.bson.BsonArray;
+import org.bson.BsonDateTime;
 import org.bson.BsonDocument;
 import org.bson.BsonDocumentReader;
+import org.bson.BsonDocumentWriter;
 import org.bson.BsonInt32;
 import org.bson.BsonString;
 import org.bson.UuidRepresentation;
+import org.bson.codecs.Codec;
 import org.bson.codecs.DecoderContext;
+import org.bson.codecs.EncoderContext;
 import org.bson.codecs.configuration.CodecRegistries;
 import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.codecs.jsr310.Jsr310CodecProvider;
@@ -77,6 +81,11 @@ public final class MongoRecordStore implements RecordStore {
     private final MongoCollection<BsonDocument> rawCollection;
     private final MongoCollection<EventRecord> polymorphicCollection;
     private final CodecRegistry codecRegistry;
+    // Per-event-type retention (#181). Null = serialize the record's own
+    // expiresAt via the typed insert (legacy global behaviour, kept for
+    // tests/ITs); set = encode + stamp expires_at per event type before insert.
+    private final RetentionPolicy retentionPolicy;
+    private final Codec<EventRecord> eventCodec;
 
     /**
      * Opens a store that performs write-side setup on startup: collection
@@ -85,7 +94,18 @@ public final class MongoRecordStore implements RecordStore {
      */
     public MongoRecordStore(String uri, String databaseName, String collectionName,
                             IndexManager indexManager) {
-        this(uri, databaseName, collectionName, indexManager, true);
+        this(uri, databaseName, collectionName, indexManager, true, null);
+    }
+
+    /** Primary-backend opener with per-event retention (#181). */
+    public MongoRecordStore(String uri, String databaseName, String collectionName,
+                            IndexManager indexManager, RetentionPolicy retentionPolicy) {
+        this(uri, databaseName, collectionName, indexManager, true, retentionPolicy);
+    }
+
+    public MongoRecordStore(String uri, String databaseName, String collectionName,
+                            IndexManager indexManager, boolean performSetup) {
+        this(uri, databaseName, collectionName, indexManager, performSetup, null);
     }
 
     /**
@@ -98,7 +118,9 @@ public final class MongoRecordStore implements RecordStore {
      *     {@code updateMany}) on startup.
      */
     public MongoRecordStore(String uri, String databaseName, String collectionName,
-                            IndexManager indexManager, boolean performSetup) {
+                            IndexManager indexManager, boolean performSetup,
+                            RetentionPolicy retentionPolicy) {
+        this.retentionPolicy = retentionPolicy;
         this.codecRegistry = CodecRegistries.fromRegistries(
                 // First, so it wins for BlockLocation over both the default
                 // registry's record support and RecordCodecProvider below — it
@@ -113,6 +135,15 @@ public final class MongoRecordStore implements RecordStore {
                         EventRecordCodec.provider(),
                         RollbackEffectCodec.provider(),
                         PojoCodecProvider.builder().automatic(true).build()));
+        // Cached for the per-event-retention write path (#181): encodes a record
+        // to BSON so we can stamp expires_at per type before insert. The UUID
+        // representation lives on the client settings, not the registry, so a
+        // raw encode would throw on the record's UUID fields - prepend a STANDARD
+        // UuidCodec so the manual encode matches what insertMany() writes.
+        this.eventCodec = CodecRegistries.fromRegistries(
+                CodecRegistries.fromCodecs(
+                        new org.bson.codecs.UuidCodec(UuidRepresentation.STANDARD)),
+                codecRegistry).get(EventRecord.class);
         MongoClientSettings settings = MongoClientSettings.builder()
                 .uuidRepresentation(UuidRepresentation.STANDARD)
                 .codecRegistry(codecRegistry)
@@ -218,7 +249,23 @@ public final class MongoRecordStore implements RecordStore {
         if (records.isEmpty()) {
             return;
         }
-        polymorphicCollection.insertMany(records);
+        if (retentionPolicy == null) {
+            polymorphicCollection.insertMany(records);
+            return;
+        }
+        // #181: per-event-type expiry. The TTL index is on expiresAt, so encode
+        // each record and overwrite that field per type before insert. Same BSON
+        // as the typed path (same codec), just a per-type expiresAt - so the
+        // chunk-bucket fields, _id mapping, and zstd compression are unchanged.
+        List<BsonDocument> docs = new ArrayList<>(records.size());
+        for (EventRecord record : records) {
+            BsonDocument doc = new BsonDocument();
+            eventCodec.encode(new BsonDocumentWriter(doc), record, EncoderContext.builder().build());
+            doc.put(RecordFields.EXPIRES_AT, new BsonDateTime(
+                    retentionPolicy.expiresAt(record.occurred(), record.event()).toEpochMilli()));
+            docs.add(doc);
+        }
+        rawCollection.insertMany(docs);
     }
 
     @Override

@@ -94,6 +94,59 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void perEventTypeRetentionStampsExpiresAtPerType() throws Exception {
+        // #181: ClickHouse's TTL is on expires_at, so per-event retention is the
+        // stored expires_at per type. Write break (100s) + say (never) and read
+        // the stored expiry back - this is the prod backend's per-type behaviour.
+        RetentionPolicy policy = new RetentionPolicy(3600L, java.util.Map.of(
+                "break", 100L, "say", RetentionPolicy.NEVER_SECONDS));
+        ClickHouseRecordStore policyStore = new ClickHouseRecordStore(
+                container.getHost(), container.getMappedPort(8123), "spyglass_it",
+                "event_records_it", container.getUsername(), container.getPassword(), false, policy);
+        try {
+            // occurred must be current: break's occurred+100s expiry has to be in
+            // the future or ClickHouse's TTL drops the already-expired row.
+            Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            BlockLocation loc = new BlockLocation(WORLD, "world", 91001, 64, 91001);
+            Origin origin = Origin.player();
+            Source source = Source.player(ALICE, "Alice");
+            BlockSnapshot stone = new BlockSnapshot(org.bukkit.Material.STONE, "minecraft:stone",
+                    List.of(), List.of(), List.of(), List.of(), null);
+            BlockSnapshot air = new BlockSnapshot(org.bukkit.Material.AIR, "minecraft:air",
+                    List.of(), List.of(), List.of(), List.of(), null);
+            policyStore.save(List.of(
+                    new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
+                            origin, source, loc, "t", "STONE", stone, air),
+                    new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
+                            origin, source, loc, "t", "Alice", "hi", List.of(), java.util.Map.of())));
+            flushAsyncInserts();
+
+            // Read back through the field store (same table); it reconstructs
+            // expiresAt from the stored expires_at column - so this proves the
+            // per-type value policyStore wrote actually landed.
+            QueryResult res = store.query(new QueryRequest(
+                    List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
+                    Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false));
+            assertThat(res.records())
+                    .as("records returned (events seen: "
+                            + res.records().stream().map(EventRecord::event).toList() + ")")
+                    .hasSize(2);
+            EventRecord brk = res.records().stream()
+                    .filter(r -> r.event().equals("break")).findFirst().orElseThrow();
+            EventRecord say = res.records().stream()
+                    .filter(r -> r.event().equals("say")).findFirst().orElseThrow();
+            assertThat(brk.expiresAt())
+                    .as("break stored expires_at = occurred + its 100s retention")
+                    .isEqualTo(now.plusSeconds(100L));
+            assertThat(say.expiresAt())
+                    .as("say stored expires_at = the clamped never ceiling (under CH's TTL range)")
+                    .isEqualTo(RetentionPolicy.MAX_EXPIRY);
+        } finally {
+            policyStore.close();
+        }
+    }
+
+    @Test
     void savesAndQueriesAllRecordTypes() {
         Instant now = Instant.now().minusSeconds(60);
         BlockLocation location = new BlockLocation(WORLD, "world", 10, 64, 20);

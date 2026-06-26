@@ -80,6 +80,52 @@ class MongoRecordStoreIT {
     }
 
     @Test
+    void perEventTypeRetentionStampsExpiresAtPerType() {
+        // #181: Mongo's TTL index is on expiresAt, so per-event retention is the
+        // stored expiresAt per type. break (100s) + say (never), read back raw.
+        RetentionPolicy policy = new RetentionPolicy(3600L, Map.of(
+                "break", 100L, "say", RetentionPolicy.NEVER_SECONDS));
+        MongoRecordStore policyStore = new MongoRecordStore(
+                container.getReplicaSetUrl(), "IT", "EventRecords", new IndexManager(), policy);
+        try {
+            Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            Origin origin = Origin.player();
+            Source source = Source.player(ALICE, "Alice");
+            BlockSnapshot stone = new BlockSnapshot(org.bukkit.Material.STONE, "minecraft:stone",
+                    List.of(), List.of(), List.of(), List.of(), null);
+            BlockSnapshot air = new BlockSnapshot(org.bukkit.Material.AIR, "minecraft:air",
+                    List.of(), List.of(), List.of(), List.of(), null);
+            BlockLocation loc = new BlockLocation(WORLD, "world", 92001, 64, 92001);
+            // Clean slate so the typed query below returns only these two.
+            policyStore.database().getCollection("EventRecords", org.bson.BsonDocument.class)
+                    .deleteMany(new org.bson.BsonDocument());
+            policyStore.save(List.of(
+                    new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
+                            origin, source, loc, "t", "STONE", stone, air),
+                    new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
+                            origin, source, loc, "t", "Alice", "hi", List.of(), Map.of())));
+
+            // Read back through the store's typed query; expiresAt is the stored
+            // per-type value the encode-and-patch write produced.
+            QueryResult res = policyStore.query(new QueryRequest(
+                    List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
+                    Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false));
+            EventRecord brk = res.records().stream()
+                    .filter(r -> r.event().equals("break")).findFirst().orElseThrow();
+            EventRecord say = res.records().stream()
+                    .filter(r -> r.event().equals("say")).findFirst().orElseThrow();
+            assertThat(brk.expiresAt())
+                    .as("break stored expiresAt = occurred + its 100s retention")
+                    .isEqualTo(now.plusSeconds(100L));
+            assertThat(say.expiresAt())
+                    .as("say stored expiresAt = the clamped never ceiling")
+                    .isEqualTo(RetentionPolicy.MAX_EXPIRY);
+        } finally {
+            policyStore.close();
+        }
+    }
+
+    @Test
     void savesAndQueriesAllRecordTypes() {
         Instant now = Instant.parse("2026-04-23T12:00:00Z");
         BlockLocation location = new BlockLocation(WORLD, "world", 10, 64, 20);

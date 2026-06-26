@@ -226,9 +226,20 @@ public final class ClickHouseRecordStore implements RecordStore {
     private final String rollbackSelect;
     private final String rollbackReadSelect;
     private final String restoreReadSelect;
+    // Per-event-type retention (#181). Null = use the record's own expiresAt
+    // (legacy global-retention behaviour, kept for tests/ITs); set = compute the
+    // stored expires_at per event type from the policy.
+    private final RetentionPolicy retentionPolicy;
 
     public ClickHouseRecordStore(String host, int port, String database, String table,
                                  String user, String password, boolean ssl) {
+        this(host, port, database, table, user, password, ssl, null);
+    }
+
+    public ClickHouseRecordStore(String host, int port, String database, String table,
+                                 String user, String password, boolean ssl,
+                                 RetentionPolicy retentionPolicy) {
+        this.retentionPolicy = retentionPolicy;
         this.database = database;
         this.table = table;
         this.qualifiedTable = ClickHouseSchema.qualifiedTable(database, table);
@@ -341,7 +352,12 @@ public final class ClickHouseRecordStore implements RecordStore {
         writer.setValue("id", net.medievalrp.spyglass.api.util.EventIds.sequenceOf(record.id()));
         writer.setString("event", record.event());
         writer.setDateTime("occurred", toLocalDateTime(record.occurred()));
-        writer.setDateTime("expires_at", toLocalDateTime(record.expiresAt()));
+        // #181: per-event-type expiry. The ClickHouse table TTL is on expires_at,
+        // so stamping it per type makes each row expire on its type's schedule.
+        java.time.Instant expiresAt = retentionPolicy != null
+                ? retentionPolicy.expiresAt(record.occurred(), record.event())
+                : record.expiresAt();
+        writer.setDateTime("expires_at", toLocalDateTime(expiresAt));
         writer.setString("origin_kind", nullToEmpty(origin == null ? null : origin.kind()));
         writer.setValue("origin_detail", origin == null ? null : origin.detail());
         writer.setString("source_kind", nullToEmpty(source == null ? null : source.kind()));
