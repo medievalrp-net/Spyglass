@@ -64,6 +64,7 @@ public final class SpillBuffer {
     private final AtomicLong seq = new AtomicLong();
     private final AtomicLong pendingRecords = new AtomicLong();
     private final AtomicLong pendingFiles = new AtomicLong();
+    private final AtomicLong pendingBytes = new AtomicLong();
 
     public SpillBuffer(@Nullable Path dataFolder, boolean enabled, Logger logger) {
         this.logger = logger;
@@ -94,6 +95,16 @@ public final class SpillBuffer {
         return pendingRecords.get();
     }
 
+    /** Number of overflow segments currently on disk (operator gauge). */
+    long pendingSegments() {
+        return pendingFiles.get();
+    }
+
+    /** Approximate bytes of overflow currently on disk (operator gauge). */
+    long pendingByteCount() {
+        return pendingBytes.get();
+    }
+
     /**
      * Append a batch to a new on-disk segment (fsync + atomic rename) and
      * return. Off-main producers call this instead of holding the overflow in
@@ -117,6 +128,7 @@ public final class SpillBuffer {
         Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE);
         pendingRecords.addAndGet(batch.size());
         pendingFiles.incrementAndGet();
+        pendingBytes.addAndGet(bytes.length);
     }
 
     /**
@@ -133,7 +145,7 @@ public final class SpillBuffer {
         for (Path oldest = oldestSegment(); oldest != null; oldest = oldestSegment()) {
             try {
                 byte[] bytes = Files.readAllBytes(oldest);
-                return new Spilled(oldest, EventBatchCodec.decode(bytes));
+                return new Spilled(oldest, bytes.length, EventBatchCodec.decode(bytes));
             } catch (IOException | RuntimeException ex) {
                 // A segment that won't decode would wedge the drain forever;
                 // its records are unrecoverable, so drop it and move to the next.
@@ -141,6 +153,7 @@ public final class SpillBuffer {
                         + oldest.getFileName() + " (" + ex.getMessage() + ")");
                 pendingRecords.addAndGet(-recordCountOf(oldest));
                 pendingFiles.decrementAndGet();
+                pendingBytes.addAndGet(-byteSizeOf(oldest));
                 deleteQuietly(oldest);
             }
         }
@@ -151,6 +164,7 @@ public final class SpillBuffer {
     void ack(Spilled spilled) {
         pendingRecords.addAndGet(-spilled.records().size());
         pendingFiles.decrementAndGet();
+        pendingBytes.addAndGet(-spilled.bytes());
         deleteQuietly(spilled.file());
     }
 
@@ -178,6 +192,7 @@ public final class SpillBuffer {
         long maxSeq = -1L;
         long files = 0;
         long records = 0;
+        long bytes = 0;
         for (Path p : all) {
             String name = p.getFileName().toString();
             if (name.endsWith(TMP_SUFFIX)) {
@@ -189,11 +204,13 @@ public final class SpillBuffer {
             }
             files++;
             records += recordCountOf(p);
+            bytes += byteSizeOf(p);
             maxSeq = Math.max(maxSeq, seqOf(p));
         }
         seq.set(maxSeq + 1);
         pendingFiles.set(files);
         pendingRecords.set(records);
+        pendingBytes.set(bytes);
         if (files > 0) {
             logger.info("Spyglass spill: " + records + " overflow record(s) in " + files
                     + " segment(s) left from a prior run; the drain will replay them.");
@@ -216,6 +233,14 @@ public final class SpillBuffer {
         }
     }
 
+    private static long byteSizeOf(Path p) {
+        try {
+            return Files.size(p);
+        } catch (IOException ex) {
+            return 0L;
+        }
+    }
+
     private void deleteQuietly(Path p) {
         try {
             Files.deleteIfExists(p);
@@ -224,7 +249,8 @@ public final class SpillBuffer {
         }
     }
 
-    /** A decoded segment paired with its file, so the drain can {@link #ack} it. */
-    record Spilled(Path file, List<EventRecord> records) {
+    /** A decoded segment paired with its file + on-disk byte size, so the drain
+     *  can {@link #ack} it and keep the byte gauge accurate. */
+    record Spilled(Path file, long bytes, List<EventRecord> records) {
     }
 }

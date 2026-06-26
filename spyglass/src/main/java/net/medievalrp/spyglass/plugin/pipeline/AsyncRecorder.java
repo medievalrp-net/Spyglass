@@ -115,6 +115,14 @@ public final class AsyncRecorder implements Recorder {
     // hot path is a single volatile read + null check when off - the same shape
     // as committedHook above. Set once at startup via setIngestStats.
     private volatile IngestStats ingestStats = null;
+    // Background spill-drain rate cap (records/sec). When reclaiming a large
+    // on-disk backlog on a live server, the drain replays spilled segments using
+    // spare capacity but no faster than this, so the backfill never saturates the
+    // store. 0 = unlimited (drain as fast as the store accepts). Set from config
+    // after construction; volatile because the drain thread reads it.
+    private volatile long spillDrainRatePerSec = 0L;
+    // Rate-limited spill-backlog warning state, mirroring lastWarnedDepth.
+    private final AtomicLong lastSpillWarn = new AtomicLong();
 
     /**
      * Pre-flush gate. {@link #flush} awaits this before snapshotting the
@@ -258,6 +266,27 @@ public final class AsyncRecorder implements Recorder {
         return dropped.get();
     }
 
+    /**
+     * Cap how fast the drain replays on-disk spill overflow in the background
+     * (#180), in records/sec. {@code 0} = unlimited. Keeps reclaiming a large
+     * backlog from saturating the store on a live server; raise it (or set 0)
+     * during a maintenance window to recover faster.
+     */
+    public void setSpillDrainRate(long recordsPerSecond) {
+        this.spillDrainRatePerSec = Math.max(0L, recordsPerSecond);
+    }
+
+    /** Operator gauge (#180): current on-disk spill backlog and its drain cap. */
+    public SpillSnapshot spillSnapshot() {
+        return new SpillSnapshot(spill.enabled(), spill.pendingSegments(),
+                spill.pendingRecordCount(), spill.pendingByteCount(), spillDrainRatePerSec);
+    }
+
+    /** Immutable view of the spill backlog for {@code /spyglass stats}. */
+    public record SpillSnapshot(boolean enabled, long segments, long records,
+                                long bytes, long drainRatePerSec) {
+    }
+
     @Override
     public void record(EventRecord record) {
         // Backpressure an off-main firehose (FAWE worker threads reach the
@@ -314,6 +343,7 @@ public final class AsyncRecorder implements Recorder {
         if (spill.enabled() && queueMax > 0 && queue.size() >= queueMax) {
             try {
                 spill.spill(records);
+                warnIfSpillBacklog();
                 return;
             } catch (java.io.IOException spillFailure) {
                 // Disk full / I/O error: fall back to in-RAM backpressure
@@ -359,6 +389,33 @@ public final class AsyncRecorder implements Recorder {
                         + " (warn threshold " + warnThreshold + "). The drain is"
                         + " falling behind" + ceiling + ". No records dropped — check the"
                         + " storage backend's reachability and drain latency.");
+            }
+        }
+    }
+
+    // Warn as the on-disk spill backlog grows (#180), at the first crossing of
+    // the warn threshold and at each doubling thereafter — same shape as the
+    // queue warning. The drain resets lastSpillWarn to 0 once the backlog clears,
+    // so a later backlog warns afresh. Spilled records are durable but not yet in
+    // the store (not queryable until the drain replays them), so this is the
+    // operator's signal to watch /spyglass stats and consider raising the rate.
+    private void warnIfSpillBacklog() {
+        long pending = spill.pendingRecordCount();
+        if (pending > warnThreshold) {
+            long last = lastSpillWarn.get();
+            boolean firstCrossing = last == 0;
+            boolean doubledSinceLast = last > 0 && pending >= last * 2;
+            if ((firstCrossing || doubledSinceLast)
+                    && lastSpillWarn.compareAndSet(last, pending)) {
+                String rate = spillDrainRatePerSec <= 0
+                        ? "unlimited"
+                        : spillDrainRatePerSec + " rec/s";
+                logger.warning("Spyglass spill backlog " + pending + " record(s) in "
+                        + spill.pendingSegments() + " segment(s) on disk. The drain is"
+                        + " reclaiming it in the background (up to " + rate + "); spilled"
+                        + " records are durable but not queryable until replayed. No records"
+                        + " dropped — raise storage.spill-drain-rate to recover faster, or"
+                        + " check store/drain latency.");
             }
         }
     }
@@ -476,42 +533,80 @@ public final class AsyncRecorder implements Recorder {
     }
 
     private void drainLoop() {
+        // Rate-limit state for the background spill backfill (drain thread only,
+        // so no synchronization). Start with a full second of budget (refill timer
+        // one second in the past) so a backlog begins draining immediately.
+        double spillBudget = 0;
+        long spillRefillNanos = System.nanoTime() - 1_000_000_000L;
         try {
             while (running.get() || !queue.isEmpty() || spill.hasPending()) {
-                // Hot path first: drain the in-RAM queue non-blocking so, while
-                // a burst is live, batches keep cycling through RAM and the
-                // freed space lets producers stay off the (slower) spill path.
+                boolean didWork = false;
+
+                // 1. In-RAM queue first, for freshness: live events reach the
+                //    store promptly even while a backlog is reclaimed underneath.
                 EventRecord first = queue.poll();
                 if (first != null) {
                     if (!drainQueueBatch(first)) {
                         return; // shutdown mid-retry; batch re-queued for the flush
                     }
-                    continue;
+                    didWork = true;
                 }
-                // Queue empty: replay one spilled overflow segment (older than
-                // anything still arriving). Reclaims disk + honours the flush
-                // high-water mark. One segment in RAM at a time keeps heap flat.
+
+                // 2. Reclaim on-disk spill overflow using SPARE capacity. The old
+                //    loop only replayed when the queue was empty, so a continuously
+                //    busy server never drained the backlog and the spill grew
+                //    unbounded (#180). This replays while the queue is non-empty
+                //    too — just not while it is at the backpressure ceiling (an
+                //    active firehose: let the queue cycle and free space first) and
+                //    no faster than the configured rate cap, so reclaiming a huge
+                //    backlog never saturates the store. Shutdown drains at full
+                //    speed to save as much as possible before the deadline. One
+                //    segment in RAM at a time keeps the heap flat.
                 if (spill.hasPending()) {
-                    SpillBuffer.Spilled spilled = spill.poll();
-                    if (spilled != null) {
-                        if (!persistWithRetry(spilled.records())) {
-                            // Shutdown mid-retry: leave the segment on disk; it
-                            // replays on next startup. Don't ack (delete) it.
-                            return;
-                        }
-                        spill.ack(spilled);
-                        wakeBackpressureWaiters();
-                        continue;
+                    boolean shuttingDown = !running.get();
+                    boolean spareCapacity = shuttingDown || queueMax <= 0
+                            || queue.size() < queueMax;
+                    long rate = spillDrainRatePerSec;
+                    if (rate > 0) {
+                        long now = System.nanoTime();
+                        spillBudget = Math.min(rate,
+                                spillBudget + (now - spillRefillNanos) / 1_000_000_000.0 * rate);
+                        spillRefillNanos = now;
                     }
-                    // hasPending() but nothing polled (all-corrupt or a
-                    // counter/file skew): fall through to the blocking poll so
-                    // we throttle instead of busy-spinning.
+                    boolean withinRate = shuttingDown || rate <= 0 || spillBudget >= 1.0;
+                    if (spareCapacity && withinRate) {
+                        SpillBuffer.Spilled spilled = spill.poll();
+                        if (spilled != null) {
+                            if (!persistWithRetry(spilled.records())) {
+                                // Shutdown mid-retry: leave the segment on disk; it
+                                // replays on next startup. Don't ack (delete) it.
+                                return;
+                            }
+                            spill.ack(spilled);
+                            if (rate > 0) {
+                                spillBudget -= spilled.records().size();
+                            }
+                            wakeBackpressureWaiters();
+                            didWork = true;
+                        }
+                        // poll() == null with hasPending() (all-corrupt / counter
+                        // skew): didWork stays false, so we fall through to the
+                        // blocking poll below and throttle instead of busy-spinning.
+                    }
+                } else {
+                    // Backlog cleared: re-arm the growth warning for next time.
+                    lastSpillWarn.set(0L);
                 }
-                // Nothing in queue or spill: block briefly for new queue work
-                // rather than spin.
-                EventRecord waited = queue.poll(250, TimeUnit.MILLISECONDS);
-                if (waited != null && !drainQueueBatch(waited)) {
-                    return;
+
+                // 3. Nothing moved this cycle (queue empty, or spill paused / rate-
+                //    limited with an empty queue): block briefly for new queue work
+                //    rather than busy-spin. While parked the rate budget refills and
+                //    any ceiling backlog subsides.
+                if (!didWork) {
+                    EventRecord waited = queue.poll(250, TimeUnit.MILLISECONDS);
+                    if (waited != null && !drainQueueBatch(waited)) {
+                        return;
+                    }
                 }
             }
         } catch (InterruptedException interrupted) {

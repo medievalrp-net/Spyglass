@@ -478,6 +478,141 @@ class AsyncRecorderTest {
         }
     }
 
+    @Test
+    @Timeout(25)
+    void spillBacklogDrainsWhileTheQueueKeepsReceivingRecords(@TempDir Path dataFolder)
+            throws Exception {
+        // #180: the old drain only replayed spill when the in-RAM queue was
+        // EMPTY, so a continuously-busy server never reclaimed the on-disk
+        // backlog and the spill grew without bound (140 GB seen in prod). With a
+        // steady stream of live records keeping the queue non-empty, the spill
+        // backlog must still drain to empty.
+        long queueMax = 1_000L;
+        int segments = 6;
+        int perSegment = 50;
+        SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
+        // Pre-seed a backlog of spilled segments directly on disk.
+        for (int s = 0; s < segments; s++) {
+            spill.spill(sampleBatch(perSegment));
+        }
+        SlowGatedStore store = new SlowGatedStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                spill, () -> true, Logger.getLogger("test"));
+        AtomicBoolean producing = new AtomicBoolean(true);
+        Thread producer = new Thread(() -> {
+            while (producing.get()) {
+                recorder.record(sampleRecord());
+                try {
+                    Thread.sleep(2L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, "live-ingest");
+        try {
+            producer.start();
+            // Let the producer fill the queue BEFORE the (slow) store is allowed to
+            // drain, so the queue is already non-empty when the drain starts
+            // looping — the busy-server condition the bug starved under. The gate
+            // also guarantees no spill segment is acked before this point.
+            Thread.sleep(200L);
+            store.open(20L); // 20 ms/save keeps the queue non-empty at poll time
+
+            // The backlog must drain to empty WHILE the producer is still feeding
+            // the queue. The old queue-empty-only logic would leave it pending.
+            long deadline = System.currentTimeMillis() + 10_000L;
+            while (System.currentTimeMillis() < deadline && spill.hasPending()) {
+                Thread.sleep(50L);
+            }
+            assertThat(spill.hasPending())
+                    .as("spill backlog must drain even while the queue keeps receiving records")
+                    .isFalse();
+            assertThat(store.totalSaved())
+                    .as("queue records flowed too — the queue was genuinely active while the "
+                            + "backlog drained, not idle")
+                    .isGreaterThan(segments * perSegment);
+        } finally {
+            producing.set(false);
+            producer.join(2_000L);
+            recorder.shutdown(Duration.parse("3s"));
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void spillDrainRateCapPausesReplayWhenBudgetIsExhausted(@TempDir Path dataFolder)
+            throws Exception {
+        // #180: with a tiny rate cap the drain must NOT replay the whole backlog
+        // at once — it paces the backfill. A 1 rec/s cap means a 300-record
+        // backlog cannot fully drain within a short window; most of it stays on
+        // disk. (The default cap is far higher; this just proves the throttle.)
+        SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
+        for (int s = 0; s < 6; s++) {
+            spill.spill(sampleBatch(50));
+        }
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(
+                1_000_000L, 1_000L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                spill, () -> true, Logger.getLogger("test"));
+        recorder.setSpillDrainRate(1L); // 1 record/sec — extremely slow on purpose
+        try {
+            // Initial budget is one second (one segment), then the cap throttles.
+            // After a short wait, a strict cap must leave most of the backlog on disk.
+            Thread.sleep(1_500L);
+            assertThat(spill.pendingRecordCount())
+                    .as("a 1 rec/s cap must pace the backfill, not flush 300 records at once")
+                    .isGreaterThan(100L);
+        } finally {
+            recorder.setSpillDrainRate(0L); // uncap so shutdown drains it promptly
+            recorder.shutdown(Duration.parse("5s"));
+        }
+    }
+
+    /**
+     * Store whose save() blocks until {@link #open(long)} is called, then sleeps
+     * a fixed time per save — models a slow live store so the in-RAM queue stays
+     * non-empty at poll time the way a real DB round-trip keeps it (#180).
+     */
+    private static final class SlowGatedStore implements RecordStore {
+        private final CountDownLatch gate = new CountDownLatch(1);
+        private volatile long sleepMillis = 0L;
+        private final AtomicInteger saved = new AtomicInteger();
+
+        void open(long perSaveSleepMillis) {
+            this.sleepMillis = perSaveSleepMillis;
+            gate.countDown();
+        }
+
+        int totalSaved() {
+            return saved.get();
+        }
+
+        @Override
+        public void save(List<EventRecord> records) {
+            try {
+                gate.await();
+                if (sleepMillis > 0L) {
+                    Thread.sleep(sleepMillis);
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            saved.addAndGet(records.size());
+        }
+
+        @Override
+        public QueryResult query(QueryRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
     /**
      * Store whose save() blocks until {@link #open()} is called — models a
      * wedged drain so the backpressure ceiling engages deterministically. No

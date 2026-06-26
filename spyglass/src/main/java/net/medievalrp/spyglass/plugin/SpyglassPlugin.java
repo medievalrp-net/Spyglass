@@ -311,6 +311,9 @@ public final class SpyglassPlugin extends JavaPlugin {
         recorder = new AsyncRecorder(
                 config.storage().queueCapacity(), config.storage().queueMax(),
                 recordStore, wal, spill, Bukkit::isPrimaryThread, getLogger());
+        // #180: cap how fast the drain reclaims a large on-disk spill backlog in
+        // the background, so it never saturates the store on a live server.
+        recorder.setSpillDrainRate(config.storage().spillDrainRate());
         // Publish RecordCommittedEvent to Bukkit listeners on every
         // intake. Done via a hook (rather than a direct Bukkit call
         // inside AsyncRecorder) so the recorder stays unit-testable
@@ -608,7 +611,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 salvageStore, salvageGui, config.limits().searchResult(), serviceSupport);
         // #168: /spyglass stats. Null ingestStats (analytics off) => the command
         // explains how to enable it.
-        StatsService statsService = new StatsService(ingestStats);
+        StatsService statsService = new StatsService(ingestStats, recorder::spillSnapshot);
 
         SpyglassCommands commands = new SpyglassCommands(
                 this,

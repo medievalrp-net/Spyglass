@@ -101,6 +101,7 @@ public record SpyglassConfig(
                         root.node("storage", "queue-capacity").getInt(100_000),
                         root.node("storage", "queue-max").getInt(500_000),
                         root.node("storage", "spill-to-disk").getBoolean(true),
+                        root.node("storage", "spill-drain-rate").getInt(20_000),
                         Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
                         parseDurability(root.node("storage", "durability").getString("ram")),
                         "synthesized".equalsIgnoreCase(
@@ -309,6 +310,15 @@ public record SpyglassConfig(
      *                      WorldEdit paste heap-flat without dropping records:
      *                      the drain replays spilled segments. Requires
      *                      {@code queueMax > 0}; needs a fast local disk.
+     * @param spillDrainRate cap, in records/sec, on how fast the drain reclaims
+     *                      the on-disk spill backlog in the background (#180). The
+     *                      drain replays spilled segments using spare capacity (it
+     *                      keeps live events fresh and pauses while the queue is at
+     *                      the ceiling) but no faster than this, so reclaiming a
+     *                      large backlog never saturates the store on a live
+     *                      server. {@code 0} = unlimited (drain as fast as the
+     *                      store accepts); raise it or set 0 during a maintenance
+     *                      window to recover a big backlog faster.
      * @param flushTimeout  upper bound on how long {@code onDisable} will
      *                      wait for the queue to drain before returning.
      * @param durability    how aggressive the write path is about
@@ -326,7 +336,7 @@ public record SpyglassConfig(
      *                      cheap; per-event overhead is negligible.
      */
     public record Storage(Duration retention, int queueCapacity, int queueMax,
-                          boolean spillToDisk, Duration flushTimeout,
+                          boolean spillToDisk, int spillDrainRate, Duration flushTimeout,
                           Durability durability, boolean rolledAuditSynthesized) {
     }
 
