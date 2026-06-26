@@ -167,6 +167,35 @@ class MariaDbRecordStoreIT {
                 EnumSet.noneOf(Flag.class), false);
     }
 
+    @Test
+    void perEventRetentionPrunesEachTypeAtItsOwnHorizon() throws Exception {
+        // #181: break expires after 100s, say is kept forever, deposit inherits
+        // the 3600s default - the per-event prune sweep on the real MariaDB.
+        store.close();
+        RetentionPolicy policy = new RetentionPolicy(RETENTION, java.util.Map.of(
+                "break", 100L, "say", RetentionPolicy.NEVER_SECONDS));
+        store = new MariaDbRecordStore(host, port, db, user, pw, false, policy);
+
+        BlockBreakRecord oldBreak = breakAt(UUID.randomUUID(), "Old", 1, 500,
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));
+        BlockBreakRecord recentBreak = breakAt(UUID.randomUUID(), "New", 2, 50,
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));
+        ChatRecord say = chat("kept-forever");          // never -> survives
+        ContainerDepositRecord deposit = deposit(500);   // 500s < 3600 default -> survives
+        store.save(List.of(oldBreak, recentBreak, say, deposit));
+        assertThat(rawCount("records")).isEqualTo(4L);
+
+        long pruned = store.pruneExpired();
+        assertThat(pruned)
+                .as("only the 500s-old break exceeds its 100s per-event retention")
+                .isEqualTo(1L);
+        List<UUID> surviving = store.query(request(List.of())).records().stream()
+                .map(EventRecord::id).toList();
+        assertThat(surviving)
+                .doesNotContain(oldBreak.id())
+                .contains(recentBreak.id(), say.id(), deposit.id());
+    }
+
     private byte[] rawPayload(long seq) throws SQLException {
         try (Connection conn = direct();
              var ps = conn.prepareStatement("SELECT payload FROM records WHERE seq = ?")) {

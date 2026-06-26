@@ -118,7 +118,7 @@ public final class MariaDbRecordStore implements RecordStore {
     }
 
     private static final int DEFAULT_READ_POOL = 4;
-    private static final long DEFAULT_RETENTION_SECONDS = 28L * 24 * 3600; // 4 weeks
+    private static final long DEFAULT_RETENTION_SECONDS = 182L * 24 * 3600; // 26 weeks (~6 months)
     private static final long RETENTION_SWEEP_MINUTES = 60L;
     private static final int POST_FILTER_SCAN_CAP = 20_000;
 
@@ -140,7 +140,7 @@ public final class MariaDbRecordStore implements RecordStore {
     private final String user;
     private final String password;
     private final boolean readOnly;
-    private final long retentionSeconds;
+    private final RetentionPolicy retentionPolicy;
 
     private final Connection writeConn;
     private final Object writeLock = new Object();
@@ -196,11 +196,23 @@ public final class MariaDbRecordStore implements RecordStore {
     public MariaDbRecordStore(String host, int port, String database, String user,
                               String password, boolean ssl, boolean readOnly,
                               int readPoolSize, long retentionSeconds) {
+        this(host, port, database, user, password, ssl, readOnly, readPoolSize,
+                RetentionPolicy.uniform(retentionSeconds > 0 ? retentionSeconds : DEFAULT_RETENTION_SECONDS));
+    }
+
+    public MariaDbRecordStore(String host, int port, String database, String user,
+                              String password, boolean ssl, RetentionPolicy retentionPolicy) {
+        this(host, port, database, user, password, ssl, false, DEFAULT_READ_POOL, retentionPolicy);
+    }
+
+    public MariaDbRecordStore(String host, int port, String database, String user,
+                              String password, boolean ssl, boolean readOnly,
+                              int readPoolSize, RetentionPolicy retentionPolicy) {
         this.database = validateIdentifier(database);
         this.user = user;
         this.password = password;
         this.readOnly = readOnly;
-        this.retentionSeconds = retentionSeconds > 0 ? retentionSeconds : DEFAULT_RETENTION_SECONDS;
+        this.retentionPolicy = retentionPolicy;
         // rewriteBatchedStatements folds the drain's addBatch into one
         // multi-row INSERT (the throughput lever); sslMode=trust encrypts an
         // ssl=true connection without demanding a verified CA (operators on a
@@ -770,7 +782,7 @@ public final class MariaDbRecordStore implements RecordStore {
         }
         UUID id = EventIds.uuidOf(rs.getLong("seq"));
         Instant occurred = Instant.ofEpochSecond(rs.getLong("occurred"));
-        Instant expiresAt = occurred.plusSeconds(retentionSeconds);
+        Instant expiresAt = retentionPolicy.expiresAt(occurred, event);
         Origin origin = new Origin(dictValueOrNull(rs, "origin_kind"), null);
         int playerRef = rs.getInt("player");
         boolean hasPlayer = !rs.wasNull();
@@ -1158,17 +1170,50 @@ public final class MariaDbRecordStore implements RecordStore {
         }
     }
 
-    /** Drop records past the retention horizon; the TTL analogue. */
+    /**
+     * Drop records past their retention horizon; the TTL analogue. Each event
+     * type with a per-event {@code retention} override (#181) is swept at its own
+     * cutoff; everything else at the global default. With no overrides this is a
+     * single {@code DELETE ... WHERE occurred < cutoff}, identical to before.
+     */
     public long pruneExpired() {
         if (readOnly) {
             return 0L;
         }
-        long thresholdSec = (System.currentTimeMillis() / 1000L) - retentionSeconds;
+        long nowSec = System.currentTimeMillis() / 1000L;
         synchronized (writeLock) {
-            try (PreparedStatement ps = writeConn.prepareStatement(
-                    "DELETE FROM records WHERE occurred < ?")) {
-                ps.setLong(1, thresholdSec);
-                return ps.executeUpdate();
+            try {
+                long deleted = 0L;
+                List<Integer> overrideIds = new ArrayList<>();
+                for (Map.Entry<String, Long> override : retentionPolicy.overrides().entrySet()) {
+                    Integer dictId = resolveDictId(override.getKey());
+                    if (dictId == null) {
+                        continue; // this event type has never been recorded yet
+                    }
+                    overrideIds.add(dictId);
+                    try (PreparedStatement ps = writeConn.prepareStatement(
+                            "DELETE FROM records WHERE event = ? AND occurred < ?")) {
+                        ps.setInt(1, dictId);
+                        ps.setLong(2, nowSec - override.getValue());
+                        deleted += ps.executeUpdate();
+                    }
+                }
+                long defaultCutoff = nowSec - retentionPolicy.defaultSeconds();
+                StringBuilder sql = new StringBuilder("DELETE FROM records WHERE occurred < ?");
+                if (!overrideIds.isEmpty()) {
+                    sql.append(" AND event NOT IN (");
+                    sql.append("?,".repeat(overrideIds.size()));
+                    sql.setLength(sql.length() - 1);
+                    sql.append(')');
+                }
+                try (PreparedStatement ps = writeConn.prepareStatement(sql.toString())) {
+                    ps.setLong(1, defaultCutoff);
+                    for (int i = 0; i < overrideIds.size(); i++) {
+                        ps.setInt(2 + i, overrideIds.get(i));
+                    }
+                    deleted += ps.executeUpdate();
+                }
+                return deleted;
             } catch (SQLException ex) {
                 throw new RuntimeException("MariaDB retention prune failed: " + ex.getMessage(), ex);
             }

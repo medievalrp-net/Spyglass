@@ -480,6 +480,60 @@ class SqliteRecordStoreTest {
         assertThat(store.query(request(List.of())).records()).containsExactly(fresh);
     }
 
+    @Test
+    void perEventRetentionPrunesEachTypeAtItsOwnHorizon() throws SQLException {
+        // #181: break expires after 100s, say is kept forever, everything else
+        // (deposit) inherits the 3600s default. A 500s-old row of each type:
+        // only the break is past its horizon.
+        store.close();
+        RetentionPolicy policy = new RetentionPolicy(RETENTION, Map.of(
+                "break", 100L, "say", RetentionPolicy.NEVER_SECONDS));
+        store = new SqliteRecordStore(dir.resolve("spyglass.db"), false, policy);
+
+        Instant old = BASE.minusSeconds(500);
+        BlockBreakRecord oldBreak = breakAt(UUID.randomUUID(), "Old", 1, 500,
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));
+        BlockBreakRecord recentBreak = breakAt(UUID.randomUUID(), "New", 2, 50,
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));
+        ChatRecord oldSay = new ChatRecord(EventIds.newId(), "say", old, old.plusSeconds(3600),
+                Origin.player(), Source.player(UUID.randomUUID(), "Dan"),
+                new BlockLocation(WORLD, "world", 0, 64, 0), "srv", null,
+                "hello", List.of(), Map.of());
+        ContainerDepositRecord oldDeposit = deposit(500);
+        store.save(List.of(oldBreak, recentBreak, oldSay, oldDeposit));
+        assertThat(rawCount("records")).isEqualTo(4L);
+
+        long pruned = store.pruneExpired();
+        assertThat(pruned)
+                .as("only the 500s-old break exceeds its 100s per-event retention")
+                .isEqualTo(1L);
+
+        List<UUID> surviving = store.query(request(List.of())).records().stream()
+                .map(EventRecord::id).toList();
+        assertThat(surviving)
+                .as("break past its 100s horizon is pruned; recent break, never-say, "
+                        + "and default-deposit survive")
+                .doesNotContain(oldBreak.id())
+                .contains(recentBreak.id(), oldSay.id(), oldDeposit.id());
+
+        // Column-stored block events reconstruct their expiry per type on read.
+        EventRecord readBreak = store.query(request(List.of())).records().stream()
+                .filter(r -> r.id().equals(recentBreak.id())).findFirst().orElseThrow();
+        assertThat(readBreak.expiresAt())
+                .as("a column-stored break reconstructs expiry as occurred + its 100s retention")
+                .isEqualTo(recentBreak.occurred().plusSeconds(100L));
+        // Blob-stored events (chat) carry the write-time expiry inside the blob,
+        // so SQLite reads that back rather than the per-type horizon. Deletion is
+        // still per-type (the never-say survived the prune above); only the
+        // displayed expiresAt differs. ClickHouse/Mongo store expires_at per type
+        // and have no such gap.
+        EventRecord readSay = store.query(request(List.of())).records().stream()
+                .filter(r -> r.id().equals(oldSay.id())).findFirst().orElseThrow();
+        assertThat(readSay.expiresAt())
+                .as("blob-stored say keeps its write-time expiry on read (prune still per-type)")
+                .isEqualTo(old.plusSeconds(3600));
+    }
+
     private static final class CapturingSink implements RecordStore.RollbackEffectSink {
         record Block(UUID world, int x, int y, int z, String data) {
         }

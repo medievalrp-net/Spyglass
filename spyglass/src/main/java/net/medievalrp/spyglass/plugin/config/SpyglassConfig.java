@@ -60,7 +60,9 @@ public record SpyglassConfig(
                 String.valueOf(key),
                 new EventSettings(
                         value.node("enabled").getBoolean(true),
-                        value.node("past-tense").getString(String.valueOf(key)))));
+                        value.node("past-tense").getString(String.valueOf(key)),
+                        parseEventRetention(value.node("retention").getString(null),
+                                String.valueOf(key), plugin.getLogger()))));
 
         java.util.List<String> commandRedact = parseCommandRedact(root);
 
@@ -97,7 +99,7 @@ public record SpyglassConfig(
                                 root.node("database", "mariadb", "password").getString(""),
                                 root.node("database", "mariadb", "ssl").getBoolean(false))),
                 new Storage(
-                        Duration.parse(root.node("storage", "retention").getString("4w")),
+                        Duration.parse(root.node("storage", "retention").getString("26w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
                         root.node("storage", "queue-max").getInt(500_000),
                         root.node("storage", "spill-to-disk").getBoolean(true),
@@ -184,7 +186,7 @@ public record SpyglassConfig(
     }
 
     public boolean enabled(String eventName) {
-        return events.getOrDefault(eventName, new EventSettings(false, eventName)).enabled();
+        return events.getOrDefault(eventName, new EventSettings(false, eventName, null)).enabled();
     }
 
     public String pastTense(String eventName) {
@@ -360,6 +362,48 @@ public record SpyglassConfig(
         WAL_BATCHED
     }
 
+    /**
+     * Parse a per-event {@code events.<name>.retention} value (#181) into seconds.
+     * {@code null}/blank -> inherit the global default; {@code "0"}/{@code "never"}/
+     * {@code "forever"}/{@code "off"} -> keep forever; otherwise a duration like
+     * {@code "12w"}. An unparseable value warns and falls back to the global default.
+     */
+    static Long parseEventRetention(String raw, String event, java.util.logging.Logger logger) {
+        if (raw == null) {
+            return null; // inherit storage.retention
+        }
+        String v = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.isEmpty()) {
+            return null;
+        }
+        if (v.equals("0") || v.equals("never") || v.equals("forever") || v.equals("off")) {
+            return net.medievalrp.spyglass.plugin.storage.RetentionPolicy.NEVER_SECONDS;
+        }
+        try {
+            return Duration.parse(raw).seconds();
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass: invalid retention \"" + raw + "\" for event '"
+                    + event + "'; inheriting the global storage.retention. (" + ex.getMessage() + ")");
+            return null;
+        }
+    }
+
+    /**
+     * Per-event retention policy (#181): the global {@code storage.retention} as
+     * the default, with overrides for every event that set its own
+     * {@code retention}. Consumed by the active {@code RecordStore}.
+     */
+    public net.medievalrp.spyglass.plugin.storage.RetentionPolicy retentionPolicy() {
+        Map<String, Long> overrides = new LinkedHashMap<>();
+        events.forEach((name, settings) -> {
+            if (settings.retentionSeconds() != null) {
+                overrides.put(name, settings.retentionSeconds());
+            }
+        });
+        return new net.medievalrp.spyglass.plugin.storage.RetentionPolicy(
+                storage.retention().seconds(), overrides);
+    }
+
     private static Durability parseDurability(String raw) {
         String key = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
         return switch (key) {
@@ -378,7 +422,14 @@ public record SpyglassConfig(
                          long rollbackTickBudgetMs) {
     }
 
-    public record EventSettings(boolean enabled, String pastTense) {
+    /**
+     * @param retentionSeconds per-event retention override in seconds (#181), or
+     *                         {@code null} to inherit the global
+     *                         {@code storage.retention}. {@link
+     *                         net.medievalrp.spyglass.plugin.storage.RetentionPolicy#NEVER_SECONDS}
+     *                         marks a "keep forever" type.
+     */
+    public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds) {
     }
 
     public record Tool(Material material) {
