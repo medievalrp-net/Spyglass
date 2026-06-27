@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.SpyglassLimits;
@@ -193,7 +194,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         try {
             config = SpyglassConfig.load(this);
         } catch (Exception ex) {
-            getLogger().severe("Failed to load config: " + ex.getMessage());
+            getLogger().log(Level.SEVERE, "Failed to load config. Disabling the plugin.", ex);
             setEnabled(false);
             return;
         }
