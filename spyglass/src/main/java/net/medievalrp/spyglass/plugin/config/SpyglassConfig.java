@@ -61,7 +61,7 @@ public record SpyglassConfig(
                 new EventSettings(
                         value.node("enabled").getBoolean(true),
                         value.node("past-tense").getString(String.valueOf(key)),
-                        parseEventRetention(value.node("retention").getString(null),
+                        parseEventRetention(value.node("retention").getString(),
                                 String.valueOf(key), plugin.getLogger()))));
 
         java.util.List<String> commandRedact = parseCommandRedact(root);
