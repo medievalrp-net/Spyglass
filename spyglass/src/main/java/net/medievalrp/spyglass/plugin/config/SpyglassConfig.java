@@ -61,8 +61,7 @@ public record SpyglassConfig(
                 new EventSettings(
                         value.node("enabled").getBoolean(true),
                         value.node("past-tense").getString(String.valueOf(key)),
-                        parseEventRetention(value.node("retention").getString(),
-                                String.valueOf(key), plugin.getLogger()))));
+                        readEventRetention(value, String.valueOf(key), plugin.getLogger()))));
 
         java.util.List<String> commandRedact = parseCommandRedact(root);
 
@@ -360,6 +359,24 @@ public record SpyglassConfig(
          * audit logs.
          */
         WAL_BATCHED
+    }
+
+    /**
+     * Read an event node's {@code retention} value and parse it (#181, #185).
+     *
+     * <p>The value is fetched with the no-arg {@link ConfigurationNode#getString()}.
+     * Configurate's {@code getString(String)} overload runs {@code requireNonNull}
+     * on the supplied default, so {@code getString(null)} threw a
+     * {@code NullPointerException} ("Failed to load config: def") on every config
+     * whose events omit {@code retention} - which is the bundled default for all of
+     * them, so 1.0.5 failed to enable everywhere. The nullable read returns
+     * {@code null} for a missing key, which {@link #parseEventRetention} treats as
+     * inherit-the-global. Kept package-visible so the absent-key path is unit-tested
+     * without standing up a full plugin.
+     */
+    static Long readEventRetention(ConfigurationNode eventNode, String event,
+            java.util.logging.Logger logger) {
+        return parseEventRetention(eventNode.node("retention").getString(), event, logger);
     }
 
     /**

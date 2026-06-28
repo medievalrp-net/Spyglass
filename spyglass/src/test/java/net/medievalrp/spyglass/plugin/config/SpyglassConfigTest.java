@@ -41,6 +41,26 @@ class SpyglassConfigTest {
         assertThat(SpyglassConfig.parseEventRetention("banana", "say", LOG)).isNull();
     }
 
+    // #185: 1.0.5 read events.<name>.retention with getString(null), which NPEs in
+    // Configurate ("Failed to load config: def") because no bundled event sets the
+    // key. parseEventRetention(null, ...) above can't catch that - it's the read,
+    // not the parse, that threw. These drive the real read path over a live node, so
+    // a revert to the throwing overload fails here instead of only on a live server.
+    @Test
+    void eventNodeWithoutRetentionReadsAsInheritNotACrash() {
+        BasicConfigurationNode event = BasicConfigurationNode.root();
+        // 'retention' deliberately absent - the default for every bundled event.
+        assertThat(SpyglassConfig.readEventRetention(event, "break", LOG)).isNull();
+    }
+
+    @Test
+    void eventNodeWithRetentionReadsTheOverride() throws SerializationException {
+        BasicConfigurationNode event = BasicConfigurationNode.root();
+        event.node("retention").set("3d");
+        assertThat(SpyglassConfig.readEventRetention(event, "say", LOG))
+                .isEqualTo(3L * 24 * 60 * 60);
+    }
+
     @Test
     void absentRedactKeyFallsBackToDefaultAuthSet() throws SerializationException {
         BasicConfigurationNode root = BasicConfigurationNode.root();
