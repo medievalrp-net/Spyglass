@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.listener.entity;
 
 import java.util.Base64;
 import java.util.Set;
+import java.util.concurrent.Executor;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.ItemDropRecord;
@@ -16,6 +17,7 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -51,11 +53,18 @@ public final class EntityDeathListener implements RecordingListener {
     // granularity, so the independent death / kill / mob-kill toggles must be
     // honoured here. Live, thread-safe view of the enabled set.
     private final Set<String> enabledEvents;
+    // Off-main stage for the per-drop item projection (getItemMeta +
+    // Adventure text + custom-data render), which a JFR profile flagged on the
+    // server thread. The cheap snapshot is taken inline; the heavy build runs
+    // here. See the drop loop in onEntityDeath for the rollback-flush note.
+    private final Executor serializer;
 
-    public EntityDeathListener(Recorder recorder, RecordingSupport support, Set<String> enabledEvents) {
+    public EntityDeathListener(Recorder recorder, RecordingSupport support,
+            Set<String> enabledEvents, Executor serializer) {
         this.recorder = recorder;
         this.support = support;
         this.enabledEvents = enabledEvents;
+        this.serializer = serializer;
     }
 
     @Override
@@ -159,12 +168,28 @@ public final class EntityDeathListener implements RecordingListener {
             return;
         }
         for (ItemStack drop : event.getDrops()) {
-            StoredItem stored = ItemSerialization.storedItemProjection(0, drop);
-            if (stored == null) {
+            if (drop == null || drop.getType() == Material.AIR) {
                 continue;
             }
+            // Snapshot on the main thread: clone the live stack (about to be
+            // spawned as a world item entity, so it could be mutated/consumed),
+            // capture the cheap fields, and stamp the context (occurred + the
+            // time-ordered v7 id) at event time. The heavy projection then runs
+            // off-main on the independent clone (#97). ItemDropRecord is
+            // forensic-only (never rolled back or salvaged), so deferring it has
+            // no flush / read-your-writes interaction — mirrors
+            // ItemPickupListener.
+            ItemStack snapshot = drop.clone();
+            String dropTarget = drop.getType().name();
+            int dropAmount = drop.getAmount();
             RecordContext dropCtx = support.context(deathOrigin, victimSource, location);
-            recorder.record(ItemDropRecord.of(dropCtx, drop.getType().name(), drop.getAmount(), stored));
+            serializer.execute(() -> {
+                StoredItem stored = ItemSerialization.storedItemProjection(0, snapshot);
+                if (stored == null) {
+                    return;
+                }
+                recorder.record(ItemDropRecord.of(dropCtx, dropTarget, dropAmount, stored));
+            });
         }
     }
 
