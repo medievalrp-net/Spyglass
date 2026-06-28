@@ -33,6 +33,7 @@ import net.medievalrp.spyglass.plugin.command.param.ContentParam;
 import net.medievalrp.spyglass.plugin.command.param.MessageParam;
 import net.medievalrp.spyglass.plugin.command.param.PlayerParam;
 import net.medievalrp.spyglass.plugin.command.param.QueryStringParser;
+import net.medievalrp.spyglass.plugin.command.param.ChunkRadiusParam;
 import net.medievalrp.spyglass.plugin.command.param.RadiusParam;
 import net.medievalrp.spyglass.plugin.command.param.RecipientParam;
 import net.medievalrp.spyglass.plugin.command.param.ServerParam;
@@ -446,6 +447,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new PlayerParam());
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
+        apiImpl.registerQueryParamHandler(new ChunkRadiusParam());
         apiImpl.registerQueryParamHandler(new TimeParam());
         apiImpl.registerQueryParamHandler(new BeforeParam());
         apiImpl.registerQueryParamHandler(new BlockParam());

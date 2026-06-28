@@ -38,28 +38,29 @@ Root: `/spyglass`. Short alias: `/sg`.
 
 `key:value`. Combine freely; results match all keys. On `p:`, `a:`, `b:`, and `c:`, prefix a value with `!` to exclude it instead (`b:stone,!chest` matches stone but never chests; `a:!place` matches everything except placements). Wrap a value in double quotes when it contains spaces or colons: `iname:"Storm Caller"`, `itags:"mmoitems:type"`.
 
-| Key | Aliases | Notes |
-|---|---|---|
-| `p` | `player` | Player(s). Comma-separated for OR; `!name` excludes |
-| `a` | `action`, `event` | Event type. See `/sg events`; `!name` excludes |
-| `b` | `block` | Target block material; `!material` excludes |
-| `i` | `item` | Item material |
-| `iname` | `itemname` | Item display name (substring). Quote multi-word names: `iname:"Storm Caller"` |
-| `ilore` | `itemlore`, `d` | Item lore (substring). Quote multi-word phrases: `ilore:"for the worthy"` |
+| Key | Aliases | Notes                                                                                                                                            |
+|---|---|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `p` | `player` | Player(s). Comma-separated for OR; `!name` excludes                                                                                              |
+| `a` | `action`, `event` | Event type. See `/sg events`; `!name` excludes                                                                                                   |
+| `b` | `block` | Target block material; `!material` excludes                                                                                                      |
+| `i` | `item` | Item material                                                                                                                                    |
+| `iname` | `itemname` | Item display name (substring). Quote multi-word names: `iname:"Storm Caller"`                                                                    |
+| `ilore` | `itemlore`, `d` | Item lore (substring). Quote multi-word phrases: `ilore:"for the worthy"`                                                                        |
 | `itags` | `itag` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values. Quote plugin-namespaced keys: `itags:"mmoitems:type"` |
-| `ench` | `enchant`, `enchantment`, `ienchant`, `ienchantments` | Enchantment |
-| `cu` | `custom` | Item has metadata: custom name, lore, enchants, or custom data |
-| `e` | `entity` | Entity type |
-| `c` | `cause` | Change cause |
-| `m` | `message` | Chat / sign / book text |
-| `rcp` | `recipient` | Private-message recipient |
-| `r` | `radius` | Radius in blocks. Default applies if omitted |
-| `t` | `since` | Lower time bound (how far back). Default 4h |
-| `before` | - | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago |
-| `w` | `world` | World name |
-| `srv` | `server` | Server name (multi-server) |
-| `trg` | `target` | Block coords `x,y,z` |
-| `ip` | - | Source IP |
+| `ench` | `enchant`, `enchantment`, `ienchant`, `ienchantments` | Enchantment                                                                                                                                      |
+| `cu` | `custom` | Item has metadata: custom name, lore, enchants, or custom data                                                                                   |
+| `e` | `entity` | Entity type                                                                                                                                      |
+| `c` | `cause` | Change cause                                                                                                                                     |
+| `m` | `message` | Chat / sign / book text                                                                                                                          |
+| `rcp` | `recipient` | Private-message recipient                                                                                                                        |
+| `r` | `radius` | Radius in blocks. Default applies if omitted                                                                                                     |
+| `cr` | `chunkradius` | Radius in chunks, full height. `cr:1` = current chunk, `cr:2` = 3x3 etc                                                                          |
+| `t` | `since` | Lower time bound (how far back). Default 4h                                                                                                      |
+| `before` | - | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago                                                                              |
+| `w` | `world` | World name                                                                                                                                       |
+| `srv` | `server` | Server name (multi-server)                                                                                                                       |
+| `trg` | `target` | Block coords `x,y,z`                                                                                                                             |
+| `ip` | - | Source IP                                                                                                                                        |
 
 ## Flags
 
