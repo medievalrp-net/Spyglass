@@ -22,6 +22,7 @@ regression/.runtime/
 # Internal AI operator tooling - kept locally, never published
 CLAUDE.md
 .claude/
+docs/superpowers/
 
 # Stray run/boot logs
 *.log
