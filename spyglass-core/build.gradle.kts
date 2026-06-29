@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -18,6 +19,7 @@ java {
         languageVersion = JavaLanguageVersion.of(21)
     }
     withSourcesJar()
+    withJavadocJar()
 }
 
 // ClickHouse 0.9.x pulls Guava 33.4.6 transitively, but Paper / WorldEdit
