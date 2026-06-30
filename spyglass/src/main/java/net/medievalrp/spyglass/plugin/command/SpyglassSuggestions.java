@@ -82,15 +82,35 @@ public final class SpyglassSuggestions {
         int colon = token.indexOf(':');
         if (colon > 0) {
             String alias = token.substring(0, colon).toLowerCase(java.util.Locale.ROOT);
-            String partialValue = token.substring(colon + 1);
+            String value = token.substring(colon + 1);
             Optional<QueryParamHandler> handler = api.queryParam(alias);
             if (handler.isEmpty()) {
                 return List.of();
             }
-            List<String> suggestions = handler.get().suggestions(sender, partialValue);
+            // Most value params accept a comma-separated list (a:break,place /
+            // p:Alice,Bob), and `!`-prefixed entries are excludes (#30). Tab
+            // completion must complete the entry currently being typed, not the
+            // whole value: split off everything up to and including the last
+            // comma as an already-committed prefix, peel a leading `!`, and ask
+            // the handler to complete only that final bare entry. Without this
+            // the handler saw the whole `break,pl` span and prefix-matched
+            // nothing past the first entry, so only the first action in a list
+            // was ever completable (#189). Each suggestion is reassembled as the
+            // entire argument value (alias:committed[!]entry) so it survives
+            // Cloud's greedy-span filter (#55) and keeps the earlier entries the
+            // user already typed. Single-value params never see a comma here, and
+            // params where a comma is literal (m:, content) return no
+            // suggestions, so this is a no-op for them.
+            int lastComma = value.lastIndexOf(',');
+            String committed = value.substring(0, lastComma + 1);   // "" when no comma
+            String entry = value.substring(lastComma + 1);
+            boolean negated = entry.startsWith("!");
+            String bare = negated ? entry.substring(1) : entry;
+            String entryPrefix = negated ? "!" : "";
+            List<String> suggestions = handler.get().suggestions(sender, bare);
             List<String> prefixed = new ArrayList<>(suggestions.size());
             for (String suggestion : suggestions) {
-                prefixed.add(alias + ":" + suggestion);
+                prefixed.add(alias + ":" + committed + entryPrefix + suggestion);
             }
             return prefixed;
         }
