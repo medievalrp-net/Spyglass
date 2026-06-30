@@ -2,11 +2,16 @@ package net.medievalrp.spyglass.plugin.listener.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -37,6 +42,10 @@ class EntityDeathListenerTest {
     private static final UUID WORLD_ID = UUID.fromString("77777777-7777-7777-7777-777777777777");
 
     private static final Set<String> ALL = Set.of("death", "drop", "kill", "mob-kill");
+    // Same-thread serializer: the inline tests below assert on records
+    // synchronously, so the deferred drop projection (#188) runs immediately.
+    // The deferral-specific tests use a capturing executor instead.
+    private static final Executor DIRECT = Runnable::run;
 
     private CapturingRecorder recorder;
     private RecordingSupport support;
@@ -49,7 +58,7 @@ class EntityDeathListenerTest {
 
     @Test
     void declaresAllDeathFamilyEvents() {
-        EntityDeathListener listener = new EntityDeathListener(recorder, support, ALL);
+        EntityDeathListener listener = new EntityDeathListener(recorder, support, ALL, DIRECT);
         assertThat(listener.events()).isEqualTo(Set.of("death", "drop", "kill", "mob-kill"));
     }
 
@@ -61,7 +70,7 @@ class EntityDeathListenerTest {
         stubDamageByEntity(zombie, alice, EntityDamageEvent.DamageCause.ENTITY_ATTACK, 6.0);
         EntityDeathEvent event = mockDeath(zombie);
 
-        new EntityDeathListener(recorder, support, ALL).onEntityDeath(event);
+        new EntityDeathListener(recorder, support, ALL, DIRECT).onEntityDeath(event);
 
         EntityDeathRecord death = (EntityDeathRecord) findEvent("death");
         assertThat(death.source().entityType()).isEqualTo("zombie");
@@ -82,7 +91,7 @@ class EntityDeathListenerTest {
         stubDamageByEntity(bob, zombie, EntityDamageEvent.DamageCause.ENTITY_ATTACK, 4.0);
         EntityDeathEvent event = mockDeath(bob);
 
-        new EntityDeathListener(recorder, support, ALL).onEntityDeath(event);
+        new EntityDeathListener(recorder, support, ALL, DIRECT).onEntityDeath(event);
 
         EntityDeathRecord death = (EntityDeathRecord) findEvent("death");
         assertThat(death.source().playerName()).isEqualTo("Bob");
@@ -104,7 +113,7 @@ class EntityDeathListenerTest {
         when(bob.getLastDamageCause()).thenReturn(fall);
         EntityDeathEvent event = mockDeath(bob);
 
-        new EntityDeathListener(recorder, support, ALL).onEntityDeath(event);
+        new EntityDeathListener(recorder, support, ALL, DIRECT).onEntityDeath(event);
 
         assertThat(recorder.records).hasSize(1);
         EntityDeathRecord death = (EntityDeathRecord) recorder.records.get(0);
@@ -122,7 +131,7 @@ class EntityDeathListenerTest {
         stubDamageByEntity(zombie, alice, EntityDamageEvent.DamageCause.ENTITY_ATTACK, 6.0);
         EntityDeathEvent event = mockDeath(zombie);
 
-        new EntityDeathListener(recorder, support, Set.of("death", "drop"))
+        new EntityDeathListener(recorder, support, Set.of("death", "drop"), DIRECT)
                 .onEntityDeath(event);
 
         assertThat(recorder.records).hasSize(1);
@@ -145,7 +154,7 @@ class EntityDeathListenerTest {
         EntityDeathEvent event = mockDeath(bob);
         when(event.getDrops()).thenReturn(List.of(diamond, iron));
 
-        new EntityDeathListener(recorder, support, ALL).onEntityDeath(event);
+        new EntityDeathListener(recorder, support, ALL, DIRECT).onEntityDeath(event);
 
         List<EventRecord> drops = recorder.records.stream()
                 .filter(r -> r.event().equals("drop")).toList();
@@ -154,6 +163,100 @@ class EntityDeathListenerTest {
                 assertThat(r.source().playerName()).isEqualTo("Bob"));
         assertThat(((ItemDropRecord) drops.get(0)).target()).isEqualTo("DIAMOND");
         assertThat(((ItemDropRecord) drops.get(1)).target()).isEqualTo("IRON_INGOT");
+    }
+
+    @Test
+    void dropProjectionIsDeferredWhileDeathRecordsInlineAtEventTime() {
+        // #188: the only main-thread work per drop is clone + type/amount +
+        // context; the storedItemProjection build is handed to the serializer.
+        // The death record (main-thread-only entity NBT) still records inline.
+        Player bob = mockPlayer(BOB, "Bob");
+        stubFallDeath(bob);
+        ItemStack diamond = mockStack(Material.DIAMOND, 2);
+        ItemStack iron = mockStack(Material.IRON_INGOT, 5);
+        EntityDeathEvent event = mockDeath(bob);
+        when(event.getDrops()).thenReturn(List.of(diamond, iron));
+
+        List<Runnable> deferred = new ArrayList<>();
+        new EntityDeathListener(recorder, support, ALL, deferred::add).onEntityDeath(event);
+
+        assertThat(recorder.records).singleElement()
+                .satisfies(r -> assertThat(r.event()).isEqualTo("death"));
+        assertThat(deferred).hasSize(2);
+
+        deferred.forEach(Runnable::run);
+
+        List<EventRecord> drops = recorder.records.stream()
+                .filter(r -> r.event().equals("drop")).toList();
+        assertThat(drops).hasSize(2);
+        assertThat(drops).allSatisfy(r ->
+                assertThat(r.source().playerName()).isEqualTo("Bob"));
+        assertThat(((ItemDropRecord) drops.get(0)).target()).isEqualTo("DIAMOND");
+        assertThat(((ItemDropRecord) drops.get(0)).amount()).isEqualTo(2);
+        assertThat(((ItemDropRecord) drops.get(0)).item().material()).isEqualTo("DIAMOND");
+        assertThat(((ItemDropRecord) drops.get(1)).target()).isEqualTo("IRON_INGOT");
+        assertThat(((ItemDropRecord) drops.get(1)).amount()).isEqualTo(5);
+    }
+
+    @Test
+    void dropStampsOccurredAndIdAtEventTimeNotSerializationTime() {
+        Player bob = mockPlayer(BOB, "Bob");
+        stubFallDeath(bob);
+        ItemStack diamond = mockStack(Material.DIAMOND, 1);
+        EntityDeathEvent event = mockDeath(bob);
+        when(event.getDrops()).thenReturn(List.of(diamond));
+
+        List<Runnable> deferred = new ArrayList<>();
+        Instant before = Instant.now();
+        new EntityDeathListener(recorder, support, ALL, deferred::add).onEntityDeath(event);
+        Instant after = Instant.now();
+
+        // Built only when the deferred task runs, strictly after the handling
+        // window, yet occurred + id (stamped via RecordContext on the main
+        // thread) must reflect event time, not serialization time.
+        deferred.forEach(Runnable::run);
+
+        ItemDropRecord drop = (ItemDropRecord) recorder.records.stream()
+                .filter(r -> r.event().equals("drop")).findFirst().orElseThrow();
+        assertThat(drop.occurred()).isBetween(before, after);
+        assertThat(drop.id()).isNotNull();
+    }
+
+    @Test
+    void dropClonesStackOnHandlingThreadBeforeDeferring() {
+        Player bob = mockPlayer(BOB, "Bob");
+        stubFallDeath(bob);
+        ItemStack diamond = mockStack(Material.DIAMOND, 2);
+        EntityDeathEvent event = mockDeath(bob);
+        when(event.getDrops()).thenReturn(List.of(diamond));
+
+        List<Runnable> deferred = new ArrayList<>();
+        new EntityDeathListener(recorder, support, ALL, deferred::add).onEntityDeath(event);
+
+        // The snapshot is taken synchronously, before the deferred task could
+        // observe a consumed/mutated live stack.
+        verify(diamond).clone();
+        assertThat(deferred).hasSize(1);
+        assertThat(recorder.records).noneSatisfy(r ->
+                assertThat(r.event()).isEqualTo("drop"));
+    }
+
+    @Test
+    void airDropIsSkippedWithoutCloningOrDeferring() {
+        Player bob = mockPlayer(BOB, "Bob");
+        stubFallDeath(bob);
+        ItemStack air = mock(ItemStack.class);
+        when(air.getType()).thenReturn(Material.AIR);
+        EntityDeathEvent event = mockDeath(bob);
+        when(event.getDrops()).thenReturn(List.of(air));
+
+        List<Runnable> deferred = new ArrayList<>();
+        new EntityDeathListener(recorder, support, ALL, deferred::add).onEntityDeath(event);
+
+        assertThat(deferred).isEmpty();
+        verify(air, never()).clone();
+        assertThat(recorder.records).noneSatisfy(r ->
+                assertThat(r.event()).isEqualTo("drop"));
     }
 
     private EventRecord findEvent(String name) {
@@ -207,7 +310,22 @@ class EntityDeathListenerTest {
         when(stack.getType()).thenReturn(material);
         when(stack.getAmount()).thenReturn(amount);
         when(stack.getItemMeta()).thenReturn(null);
+        // The drop is cloned on the main thread and the projection is built
+        // off-thread from that clone (#188), so the clone needs its type too.
+        ItemStack clone = mock(ItemStack.class);
+        when(clone.getType()).thenReturn(material);
+        when(clone.getAmount()).thenReturn(amount);
+        when(clone.getItemMeta()).thenReturn(null);
+        when(stack.clone()).thenReturn(clone);
         return stack;
+    }
+
+    private static void stubFallDeath(Player victim) {
+        when(victim.getKiller()).thenReturn(null);
+        EntityDamageEvent fall = mock(EntityDamageEvent.class);
+        when(fall.getCause()).thenReturn(EntityDamageEvent.DamageCause.FALL);
+        when(fall.getFinalDamage()).thenReturn(8.0);
+        when(victim.getLastDamageCause()).thenReturn(fall);
     }
 
     private static EntityDeathEvent mockDeath(LivingEntity victim) {

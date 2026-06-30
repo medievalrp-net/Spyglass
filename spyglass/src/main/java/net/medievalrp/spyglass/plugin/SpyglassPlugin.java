@@ -404,7 +404,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new ItemPickupListener(recorder, support, deferredSerializer),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
-                new EntityDeathListener(recorder, support, enabledEvents),
+                new EntityDeathListener(recorder, support, enabledEvents, deferredSerializer),
                 new EntityDamageListener(recorder, support),
                 new EntityMountListener(recorder, support),
                 new EntityDismountListener(recorder, support),
