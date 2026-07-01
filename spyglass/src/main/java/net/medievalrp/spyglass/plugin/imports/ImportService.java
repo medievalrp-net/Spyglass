@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -170,8 +171,16 @@ public final class ImportService {
             ImportSummary summary = new ImportPipeline(
                     source, new CoreProtectMapper(ctx), sink, progress, senderProgress).run();
 
-            // TODO(task10): confirm async inserts are flushed before OPTIMIZE
             if (store instanceof ClickHouseRecordStore ch) {
+                // ClickHouseRecordStore.save() uses async_insert=1 +
+                // wait_for_async_insert=0 (fire-and-forget): the INSERT
+                // acks before the server materializes a part. OPTIMIZE
+                // ... FINAL only merges parts that already exist, so
+                // without this flush the last buffered batch(es) can be
+                // invisible to it - undercounting rows rather than
+                // leaving duplicates. Same idiom ClickHouseRecordStoreIT
+                // uses between save() and a read-your-writes query.
+                flushClickHouseAsyncInserts(ch);
                 ch.optimize();
             }
 
@@ -210,6 +219,26 @@ public final class ImportService {
             return ImportOutcome.NEEDS_CONFIRM;
         }
         return null;
+    }
+
+    /**
+     * Forces ClickHouse to materialize any rows still sitting in its
+     * server-side async-insert buffer into queryable parts, so the
+     * {@code OPTIMIZE ... FINAL} that follows actually sees (and can
+     * merge/dedup) everything this run wrote. Mirrors the
+     * {@code SYSTEM FLUSH ASYNC INSERT QUEUE} idiom ClickHouseRecordStoreIT
+     * uses between a save and a read-your-writes query.
+     */
+    private void flushClickHouseAsyncInserts(ClickHouseRecordStore ch) {
+        try (com.clickhouse.client.api.command.CommandResponse ignored = ch.client()
+                .execute("SYSTEM FLUSH ASYNC INSERT QUEUE")
+                .get(60, TimeUnit.SECONDS)) {
+            // ack
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ex) {
+            throw new RuntimeException("ClickHouse async-insert flush failed: " + ex.getMessage(), ex);
+        }
     }
 
     private String blankToDefault(String serverName) {
