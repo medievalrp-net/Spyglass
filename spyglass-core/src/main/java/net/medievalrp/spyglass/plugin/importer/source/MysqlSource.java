@@ -31,16 +31,12 @@ public final class MysqlSource {
                                  String user, String password) {
 
         public String jdbcUrl() {
-            // Connector/J's required flags for cursor-based reads:
-            //   useCursorFetch — actually honour fetchSize
-            //   useServerPrepStmts — server-side prepares (paired with cursorFetch)
-            //   netTimeoutForStreamingResults — keep cursor alive during long streams
-            // Charset is left default; Connector/J negotiates utf8mb4 with
-            // any recent MariaDB/MySQL server automatically.
-            return "jdbc:mysql://" + host + ":" + port + "/" + database
-                    + "?useCursorFetch=true"
-                    + "&useServerPrepStmts=true"
-                    + "&netTimeoutForStreamingResults=600";
+            // MariaDB Connector/J speaks the MySQL wire protocol; useCursorFetch
+            // gives server-side streaming so a large co_block table doesn't buffer
+            // client-side. Same read-only cursor contract the plugin's MariaDB
+            // record store already relies on.
+            return "jdbc:mariadb://" + host + ":" + port + "/" + database
+                    + "?useCursorFetch=true";
         }
     }
 
@@ -97,21 +93,21 @@ public final class MysqlSource {
     }
 
     public static CoreProtectSource open(String url) throws IOException {
-        ConnectionSpec spec = parse(url);
-        try {
-            Class.forName("com.mysql.cj.jdbc.Driver");
-        } catch (ClassNotFoundException ex) {
-            throw new IOException("mysql-connector-j driver missing from classpath", ex);
-        }
+        return open(parse(url));
+    }
 
+    public static CoreProtectSource open(ConnectionSpec spec) throws IOException {
+        try {
+            Class.forName("org.mariadb.jdbc.Driver");
+        } catch (ClassNotFoundException ex) {
+            throw new IOException("mariadb-java-client driver missing from classpath", ex);
+        }
         Properties props = new Properties();
         props.setProperty("user", spec.user());
         props.setProperty("password", spec.password());
-
         Connection connection;
         try {
             connection = DriverManager.getConnection(spec.jdbcUrl(), props);
-            // Cursor fetch needs autoCommit=false and a transaction.
             connection.setAutoCommit(false);
             connection.setReadOnly(true);
             SchemaProbe.requireCoreProtect20Plus(connection);

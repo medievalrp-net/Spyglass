@@ -53,7 +53,6 @@ dependencies {
     // option for shared / multi-server installs. Both drivers are tiny
     // and the user picks one at runtime via the --source URL scheme.
     implementation("org.xerial:sqlite-jdbc:$sqliteJdbcVersion")
-    implementation("com.mysql:mysql-connector-j:$mysqlConnectorVersion")
 
     // ClickHouse client v2 logs through SLF4J; without a binding the
     // first log call prints a "No SLF4J providers were found" warning
