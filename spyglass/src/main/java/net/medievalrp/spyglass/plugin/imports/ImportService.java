@@ -206,7 +206,7 @@ public final class ImportService {
             ImportRecord p = prior.get();
             tell(sender, "This source was already imported on " + Instant.ofEpochMilli(p.importedAtEpochMs())
                     + " by " + p.importedBy() + " (read=" + p.read() + ", written=" + p.written()
-                    + ", skipped=" + p.skipped() + "). Re-run with -confirm to import again.");
+                    + ", skipped=" + p.skipped() + "). Re-run with --confirm to import again.");
             return ImportOutcome.NEEDS_CONFIRM;
         }
         return null;

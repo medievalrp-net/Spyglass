@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
  * Persistent record of prior CoreProtect imports, keyed by source identity
  * (see the importer's {@code ImportIdentity}). Backs the re-import guard: a
  * matching identity means "already imported" and the command refuses
- * without -confirm.
+ * without --confirm.
  *
  * <p>Mirrors {@code RollbackResumeStore}'s data-folder persistence idiom
  * (hand-rolled serialization via {@code Files.writeString}/{@code
