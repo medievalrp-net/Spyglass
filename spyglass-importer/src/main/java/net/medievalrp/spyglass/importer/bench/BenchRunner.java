@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import net.medievalrp.spyglass.importer.source.MysqlSource;
+import net.medievalrp.spyglass.plugin.importer.source.MysqlSource;
 import org.sqlite.SQLiteConfig;
 
 /**

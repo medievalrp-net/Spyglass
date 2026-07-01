@@ -103,6 +103,14 @@ subprojects {
                         // `check` doesn't trip on the ITs being skipped.
                         // Raise once no-Docker coverage is measured on a
                         // Docker-less runner.
+                        // The CoreProtect import engine (source/mapping/
+                        // pipeline/world/sink under plugin.importer) moved
+                        // in here from spyglass-importer along with its
+                        // well-covered unit tests, so no-Docker coverage
+                        // is now comfortably above this floor — left
+                        // unchanged rather than tightened, per the same
+                        // "raise once measured on a Docker-less runner"
+                        // reasoning as above.
                         "spyglass-core" -> 0.20.toBigDecimal()
                         // Two undo-stack ITs are Docker-gated; same
                         // no-Docker-baseline reasoning as spyglass-core.
@@ -111,9 +119,13 @@ subprojects {
                         // command + renderer + parser); no floor until
                         // its test suite stabilises.
                         "spyglass-velocity" -> 0.00.toBigDecimal()
-                        // Importer is a standalone CLI; coverage floor
-                        // lifts once the SqliteSource + mapper tests
-                        // stabilise after the thin-slice lands.
+                        // Importer is a standalone CLI wrapper now; the
+                        // SqliteSource/mapper engine tests that used to
+                        // justify raising this floor moved to
+                        // spyglass-core (they cover code that now lives
+                        // there). What remains here is Main/cli/bench/
+                        // validate/ClickHouseSink, which has no unit
+                        // tests of its own yet.
                         "spyglass-importer" -> 0.00.toBigDecimal()
                         else -> 0.00.toBigDecimal()
                     }

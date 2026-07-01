@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.importer.sink;
 import java.util.ArrayList;
 import java.util.List;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.plugin.importer.sink.RecordSink;
 import net.medievalrp.spyglass.plugin.storage.ClickHouseRecordStore;
 
 /**

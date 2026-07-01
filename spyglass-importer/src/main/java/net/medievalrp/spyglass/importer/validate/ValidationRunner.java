@@ -11,7 +11,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Locale;
-import net.medievalrp.spyglass.importer.source.MysqlSource;
+import net.medievalrp.spyglass.plugin.importer.source.MysqlSource;
 import org.sqlite.SQLiteConfig;
 
 /**
