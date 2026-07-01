@@ -1,0 +1,256 @@
+# Spyglass importer + ClickHouse test rig.
+#
+#   Bring up the data store:
+#     docker compose -f docker/docker-compose.yml up -d clickhouse
+#
+#   Run a dry-run import (no writes to CH, just exercises source + mapper):
+#     ./gradlew :spyglass-importer:shadowJar
+#     docker compose -f docker/docker-compose.yml --profile import \
+#         run --rm importer --dry-run
+#
+#   Run a real import:
+#     docker compose -f docker/docker-compose.yml --profile import \
+#         run --rm importer
+#
+#   Tail an interactive ClickHouse client:
+#     docker compose -f docker/docker-compose.yml --profile shell \
+#         run --rm clickhouse-client
+#
+#   Tear down (keeps the data volume):
+#     docker compose -f docker/docker-compose.yml down
+#
+#   Tear down + wipe data:
+#     docker compose -f docker/docker-compose.yml down -v
+#
+# The importer container mounts the host shadowJar from
+# spyglass-importer/build/libs/, so the iteration loop is "edit
+# Java -> ./gradlew shadowJar -> docker compose run importer ...".
+# No image rebuild needed.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: spyglass-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: spyglass
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP
+      - "9000:9000"  # Native TCP
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  importer:
+    image: eclipse-temurin:21-jre
+    container_name: spyglass-importer
+    profiles: ["import"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      # Read-only fixture data (CoreProtect SQLite + worlds/uid.dat).
+      - ../coreprotect-test:/test-data:ro
+      # Mount the freshly-built importer jar from host. Rebuild via
+      # ./gradlew :spyglass-importer:shadowJar -- no image rebuild.
+      - ../spyglass-importer/build/libs:/importer:ro
+    working_dir: /workspace
+    # Fixed connection flags live in entrypoint so they're always
+    # included regardless of what the user passes on the CLI. User
+    # arguments to `docker compose run importer ...` are appended to
+    # this list (compose's `command:` would *replace* them, so we
+    # leave that empty).
+    entrypoint:
+      - "java"
+      - "-jar"
+      - "/importer/spyglass-importer-1.0.0.jar"
+      - "import"
+      - "--source"
+      - "/test-data/crusalis-aod-3-database.db"
+      - "--worlds-dir"
+      - "/test-data"
+      - "--server-name"
+      - "crusalis-aod-3"
+      - "--clickhouse-host"
+      - "clickhouse"
+      - "--clickhouse-port"
+      - "8123"
+      - "--clickhouse-database"
+      - "spyglass"
+    command: []
+
+  # Post-import validation: compare CP source counts against Spyglass CH
+  # counts and exit non-zero on parity drift.
+  # `docker compose --profile validate run --rm validate`
+  validate:
+    image: eclipse-temurin:21-jre
+    container_name: spyglass-validate
+    profiles: ["validate"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ../coreprotect-test:/test-data:ro
+      - ../spyglass-importer/build/libs:/importer:ro
+    working_dir: /workspace
+    entrypoint:
+      - "java"
+      - "-jar"
+      - "/importer/spyglass-importer-1.0.0.jar"
+      - "validate"
+      - "--coreprotect-sqlite"
+      - "/test-data/crusalis-aod-3-database.db"
+      - "--clickhouse-host"
+      - "clickhouse"
+      - "--clickhouse-database"
+      - "spyglass"
+      - "--server-name"
+      - "crusalis-aod-3"
+    command: []
+
+  # MySQL-fixture variant of validate. After running `mysql-import`,
+  # this audits row counts on the MariaDB fixture vs ClickHouse.
+  validate-mysql:
+    image: eclipse-temurin:21-jre
+    container_name: spyglass-validate-mysql
+    profiles: ["mysql-import"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    volumes:
+      - ../spyglass-importer/build/libs:/importer:ro
+    working_dir: /workspace
+    entrypoint:
+      - "java"
+      - "-jar"
+      - "/importer/spyglass-importer-1.0.0.jar"
+      - "validate"
+      - "--coreprotect-mysql"
+      - "mysql://spyglass_reader:readonly@mariadb:3306/coreprotect"
+      - "--clickhouse-host"
+      - "clickhouse"
+      - "--clickhouse-database"
+      - "spyglass"
+      - "--server-name"
+      - "mysql-fixture"
+    command: []
+
+  # Side-by-side latency bench: same dataset on both backends.
+  # `docker compose --profile bench run --rm bench`
+  bench:
+    image: eclipse-temurin:21-jre
+    container_name: spyglass-bench
+    profiles: ["bench"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ../coreprotect-test:/test-data:ro
+      - ../spyglass-importer/build/libs:/importer:ro
+    working_dir: /workspace
+    entrypoint:
+      - "java"
+      - "-jar"
+      - "/importer/spyglass-importer-1.0.0.jar"
+      - "bench"
+      - "--coreprotect-sqlite"
+      - "/test-data/crusalis-aod-3-database.db"
+      - "--clickhouse-host"
+      - "clickhouse"
+      - "--clickhouse-port"
+      - "8123"
+      - "--clickhouse-database"
+      - "spyglass"
+    command: []
+
+  # MariaDB preloaded with a synthetic CoreProtect schema + fixture rows.
+  # Used to validate the MySQL source path end-to-end without needing a
+  # real CoreProtect-on-MySQL deployment. `docker compose up -d mariadb`.
+  mariadb:
+    image: mariadb:11.4
+    container_name: spyglass-mariadb
+    restart: unless-stopped
+    profiles: ["mysql", "mysql-import"]
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpw
+      MARIADB_DATABASE: coreprotect
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost",
+             "-u", "root", "--password=rootpw"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # One-shot importer targeting the MariaDB fixture. Useful as a
+  # "does the MySQL JDBC code path work end-to-end" smoke test.
+  # `docker compose --profile mysql-import run --rm importer-mysql`
+  importer-mysql:
+    image: eclipse-temurin:21-jre
+    container_name: spyglass-importer-mysql
+    profiles: ["mysql-import"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    volumes:
+      - ../coreprotect-test:/test-data:ro
+      - ../spyglass-importer/build/libs:/importer:ro
+    working_dir: /workspace
+    entrypoint:
+      - "java"
+      - "-jar"
+      - "/importer/spyglass-importer-1.0.0.jar"
+      - "import"
+      - "--source"
+      - "mysql://spyglass_reader:readonly@mariadb:3306/coreprotect"
+      - "--worlds-dir"
+      - "/test-data"
+      - "--server-name"
+      - "mysql-fixture"
+      - "--clickhouse-host"
+      - "clickhouse"
+      - "--clickhouse-database"
+      - "spyglass"
+    command: []
+
+  # Disposable interactive shell against the running CH instance.
+  # `docker compose --profile shell run --rm clickhouse-client`
+  clickhouse-client:
+    image: clickhouse/clickhouse-server:24.8
+    profiles: ["shell"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    entrypoint:
+      - "clickhouse-client"
+      - "--host"
+      - "clickhouse"
+      - "--database"
+      - "spyglass"
+
+volumes:
+  clickhouse-data:
+  clickhouse-logs:
+  mariadb-data:

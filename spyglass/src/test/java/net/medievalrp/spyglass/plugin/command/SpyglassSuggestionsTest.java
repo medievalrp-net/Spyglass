@@ -5,11 +5,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
+import net.medievalrp.spyglass.plugin.imports.ImportConfig;
 import org.bukkit.command.CommandSender;
 import org.incendo.cloud.CommandManager;
 import org.incendo.cloud.execution.ExecutionCoordinator;
@@ -49,7 +52,8 @@ class SpyglassSuggestionsTest {
         when(api.flags()).thenReturn(List.<FlagHandler>of());
         when(api.queryParam("player")).thenReturn(Optional.of(player));
 
-        SpyglassSuggestions suggestions = new SpyglassSuggestions(api);
+        SpyglassSuggestions suggestions = new SpyglassSuggestions(
+                api, new ImportConfig(Map.of()), Path.of("import"));
         manager = new TestManager();
         manager.command(manager.commandBuilder("search")
                 .required("params", suggestions.paramsParser(), suggestions.paramsProvider()));
