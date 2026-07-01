@@ -1,10 +1,12 @@
 package net.medievalrp.spyglass.plugin.imports;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Locale;
 
 /**
  * Credential-free identity for import sources.
@@ -26,8 +28,20 @@ public class ImportIdentity {
 	 * @throws IOException if the file cannot be read
 	 */
 	public static String ofSqliteFile(Path path) throws IOException {
-		byte[] fileContent = Files.readAllBytes(path);
-		String hash = computeSha256(fileContent);
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+		byte[] buffer = new byte[1 << 16];
+		try (InputStream in = Files.newInputStream(path)) {
+			int read;
+			while ((read = in.read(buffer)) != -1) {
+				digest.update(buffer, 0, read);
+			}
+		}
+		String hash = bytesToHex(digest.digest());
 		return "sqlite-sha256:" + hash;
 	}
 
@@ -42,24 +56,8 @@ public class ImportIdentity {
 	 * @return identity string in format "mysql://&lt;host&gt;:&lt;port&gt;/&lt;database&gt;"
 	 */
 	public static String ofMysql(String host, int port, String database) {
-		String lowercasedHost = host.toLowerCase();
+		String lowercasedHost = host.toLowerCase(Locale.ROOT);
 		return String.format("mysql://%s:%d/%s", lowercasedHost, port, database);
-	}
-
-	/**
-	 * Compute SHA-256 hash of the given bytes.
-	 *
-	 * @param data bytes to hash
-	 * @return hexadecimal representation of the SHA-256 hash
-	 */
-	private static String computeSha256(byte[] data) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] hash = digest.digest(data);
-			return bytesToHex(hash);
-		} catch (NoSuchAlgorithmException e) {
-			throw new AssertionError("SHA-256 algorithm not available", e);
-		}
 	}
 
 	/**

@@ -27,6 +27,7 @@ permissions:
   spyglass.tele:
     default: op
   spyglass.import:
+    description: Import a CoreProtect database into Spyglass.
     default: op
 
 # Externalized at runtime via Paper's library loader (Maven Central, cached

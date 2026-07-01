@@ -35,4 +35,14 @@ class ImportHistoryStoreTest {
         assertThat(store.all()).hasSize(1);
         assertThat(store.find("id-3").orElseThrow().written()).isEqualTo(9);
     }
+
+    @Test
+    void displayNameWithBracesRoundTrips(@TempDir Path dir) {
+        ImportHistoryStore store = new ImportHistoryStore(dir);
+        store.record(new ImportHistoryStore.ImportRecord(
+                "id-braces", "backup{v2}.db", 1L, "op", 3, 3, 0));
+        ImportHistoryStore reopened = new ImportHistoryStore(dir);
+        assertThat(reopened.find("id-braces")).isPresent();
+        assertThat(reopened.find("id-braces").orElseThrow().displayName()).isEqualTo("backup{v2}.db");
+    }
 }

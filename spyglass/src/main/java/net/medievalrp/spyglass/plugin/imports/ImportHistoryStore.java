@@ -151,6 +151,10 @@ public final class ImportHistoryStore {
         }
     }
 
+    // Braces are escaped as "{"/"}" (not "\{"/"\}") so that the
+    // escaped text never contains a literal '{' or '}' - OBJECT_PATTERN's
+    // "[^{}]*" body match would otherwise be corrupted by an embedded brace
+    // even though it is logically escaped, silently dropping the record.
     private static String escape(String s) {
         if (s == null) {
             return "";
@@ -164,6 +168,8 @@ public final class ImportHistoryStore {
                 case '\n' -> sb.append("\\n");
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
+                case '{' -> sb.append("\\u007b");
+                case '}' -> sb.append("\\u007d");
                 default -> sb.append(c);
             }
         }
@@ -172,23 +178,45 @@ public final class ImportHistoryStore {
 
     private static String unescape(String s) {
         StringBuilder sb = new StringBuilder(s.length());
-        boolean esc = false;
-        for (int i = 0; i < s.length(); i++) {
+        int i = 0;
+        while (i < s.length()) {
             char c = s.charAt(i);
-            if (esc) {
-                switch (c) {
-                    case 'n' -> sb.append('\n');
-                    case 'r' -> sb.append('\r');
-                    case 't' -> sb.append('\t');
-                    case '"' -> sb.append('"');
-                    case '\\' -> sb.append('\\');
-                    default -> sb.append(c);
+            if (c == '\\' && i + 1 < s.length()) {
+                char next = s.charAt(i + 1);
+                switch (next) {
+                    case 'n' -> {
+                        sb.append('\n');
+                        i += 2;
+                    }
+                    case 'r' -> {
+                        sb.append('\r');
+                        i += 2;
+                    }
+                    case 't' -> {
+                        sb.append('\t');
+                        i += 2;
+                    }
+                    case '"' -> {
+                        sb.append('"');
+                        i += 2;
+                    }
+                    case '\\' -> {
+                        sb.append('\\');
+                        i += 2;
+                    }
+                    case 'u' -> {
+                        String hex = s.substring(i + 2, i + 6);
+                        sb.append((char) Integer.parseInt(hex, 16));
+                        i += 6;
+                    }
+                    default -> {
+                        sb.append(next);
+                        i += 2;
+                    }
                 }
-                esc = false;
-            } else if (c == '\\') {
-                esc = true;
             } else {
                 sb.append(c);
+                i++;
             }
         }
         return sb.toString();
