@@ -8,7 +8,6 @@ val paperApiVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
 val picocliVersion: String by rootProject.extra
 val sqliteJdbcVersion: String by rootProject.extra
-val mysqlConnectorVersion: String by rootProject.extra
 val junitVersion: String by rootProject.extra
 val assertjVersion: String by rootProject.extra
 val jetbrainsAnnotationsVersion: String by rootProject.extra

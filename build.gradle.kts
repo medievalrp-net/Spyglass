@@ -14,7 +14,6 @@ val configurateVersion = "4.2.0"
 val cloudMinecraftVersion = "2.0.0-beta.16"
 val cloudCoreVersion = "2.0.0"
 val picocliVersion = "4.7.6"
-val mysqlConnectorVersion = "8.4.0"
 val junitVersion = "5.13.4"
 val assertjVersion = "3.27.6"
 val mockitoVersion = "5.20.0"
@@ -175,7 +174,6 @@ extra.apply {
     set("cloudMinecraftVersion", cloudMinecraftVersion)
     set("cloudCoreVersion", cloudCoreVersion)
     set("picocliVersion", picocliVersion)
-    set("mysqlConnectorVersion", mysqlConnectorVersion)
     set("junitVersion", junitVersion)
     set("assertjVersion", assertjVersion)
     set("mockitoVersion", mockitoVersion)

@@ -15,9 +15,8 @@ import java.util.Properties;
  *
  * <p>Forward-only cursor + per-statement {@code fetchSize=10000} require
  * {@code useCursorFetch=true} on the connection URL, which we set for
- * the user — without it, MySQL Connector/J buffers the whole result set
- * client-side regardless of {@code setFetchSize}, OOMing on large
- * databases.
+ * the user to enable server-side prepared statements and cursor fetch,
+ * preventing client-side buffering of large result sets.
  */
 public final class MysqlSource {
 
