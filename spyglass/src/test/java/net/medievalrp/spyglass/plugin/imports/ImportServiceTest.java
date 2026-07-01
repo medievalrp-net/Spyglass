@@ -81,7 +81,7 @@ class ImportServiceTest {
     private static ImportService newService(Path dir, RecordStore store, Backend backend,
                                             ImportHistoryStore history) {
         return new ImportService(store, backend, ServiceSupport.synchronous(),
-                dir, dir /* worldContainer */, "test-server", Duration.ofDays(30),
+                dir /* worldContainer */, "test-server", Duration.ofDays(30),
                 1000, history, Logger.getLogger("test"));
     }
 
