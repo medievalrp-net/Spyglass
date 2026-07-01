@@ -43,6 +43,16 @@ public final class ImportPaths {
             throw new IOException("File not found or is not a regular file: " + userInput);
         }
 
+        // Re-check containment on the real (symlink-resolved) path: the lexical
+        // check above only catches ".." / absolute-path escapes. A symlink that
+        // lives inside importDir but points outside it would pass the lexical
+        // check yet still resolve to a file outside importDir.
+        Path realBase = normalizedImportDir.toRealPath();
+        Path real = candidate.toRealPath();
+        if (!real.startsWith(realBase)) {
+            throw new IOException("Path traversal detected: " + userInput);
+        }
+
         return candidate;
     }
 

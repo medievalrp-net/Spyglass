@@ -68,4 +68,17 @@ class ImportPathsTest {
         var files = ImportPaths.listDbFiles(nonexistent);
         assertThat(files).isEmpty();
     }
+
+    @Test
+    void rejectsSymlinkEscapingImportDir(@TempDir Path dir) throws Exception {
+        Path outside = Files.createTempFile("outside", ".db");
+        Path link = dir.resolve("evil.db");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (Exception unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "symlinks unsupported on this platform");
+        }
+        assertThatThrownBy(() -> ImportPaths.resolveInside(dir, "evil.db"))
+                .isInstanceOf(IOException.class);
+    }
 }

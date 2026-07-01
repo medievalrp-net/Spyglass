@@ -19,6 +19,12 @@ public record ImportConfig(Map<String, MysqlSourceSpec> sources) {
     /** A named MySQL CoreProtect source. Blank serverName = use this server's name. */
     public record MysqlSourceSpec(String host, int port, String database,
                                   String user, String password, String serverName) {
+
+        @Override
+        public String toString() {
+            return "MysqlSourceSpec[host=" + host + ", port=" + port + ", database=" + database
+                    + ", user=" + user + ", password=***, serverName=" + serverName + "]";
+        }
     }
 
     public Optional<MysqlSourceSpec> source(String name) {

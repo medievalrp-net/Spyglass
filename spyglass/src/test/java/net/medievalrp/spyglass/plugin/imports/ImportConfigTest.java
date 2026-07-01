@@ -51,5 +51,13 @@ class ImportConfigTest {
         assertThat(config(file).source("s").orElseThrow().port()).isEqualTo(3306);
     }
 
+    @Test
+    void mysqlSourceSpecToStringRedactsPassword() {
+        ImportConfig.MysqlSourceSpec spec =
+                new ImportConfig.MysqlSourceSpec("h", 3306, "db", "user", "s3cret", "srv");
+        assertThat(spec.toString()).doesNotContain("s3cret");
+        assertThat(spec.toString()).contains("host=h").contains("user=user");
+    }
+
     private static ImportConfig config(Path f) throws Exception { return ImportConfig.loadFrom(f); }
 }

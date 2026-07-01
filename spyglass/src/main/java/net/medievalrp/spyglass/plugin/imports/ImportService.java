@@ -236,6 +236,7 @@ public final class ImportService {
             // ack
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while flushing ClickHouse async inserts", ie);
         } catch (Exception ex) {
             throw new RuntimeException("ClickHouse async-insert flush failed: " + ex.getMessage(), ex);
         }
