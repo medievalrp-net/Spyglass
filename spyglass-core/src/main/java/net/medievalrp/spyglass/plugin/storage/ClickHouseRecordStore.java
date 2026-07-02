@@ -1219,4 +1219,27 @@ public final class ClickHouseRecordStore implements RecordStore {
             throw new RuntimeException("OPTIMIZE failed: " + ex.getMessage(), ex);
         }
     }
+
+    /**
+     * Force the server's async-insert buffer to disk so just-saved rows become
+     * SELECT-visible (#205). {@link #save} uses {@code async_insert=1,
+     * wait_for_async_insert=0} (fire-and-forget), so an acked row sits in the
+     * buffer for up to ~1s before a query can see it; the recorder calls this at
+     * the end of a read-your-writes flush so a rollback issued right after a
+     * burst doesn't read a partial picture. Durability is already covered by the
+     * Spyglass WAL; this closes the visibility gap.
+     */
+    @Override
+    public void flushPendingWrites() {
+        try (CommandResponse ignored = client.execute(
+                "SYSTEM FLUSH ASYNC INSERT QUEUE").get(30, TimeUnit.SECONDS)) {
+            // ack: pending async inserts are now flushed and queryable.
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("ClickHouse async-insert flush interrupted", ie);
+        } catch (Exception ex) {
+            throw new RuntimeException(
+                    "ClickHouse async-insert flush failed: " + ex.getMessage(), ex);
+        }
+    }
 }

@@ -136,6 +136,44 @@ class AsyncRecorderTest {
     }
 
     @Test
+    void flushForcesStoreVisibilityAfterDraining() {
+        // #205: after the queue drains, flush() forces the store to make the
+        // saved rows SELECT-visible (a no-op on most backends; the async-insert
+        // buffer flush on ClickHouse), so a read-your-writes rollback sees them.
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            for (int index = 0; index < 5; index++) {
+                recorder.record(sampleRecord());
+            }
+            assertThat(recorder.flush(Duration.parse("3s"))).isTrue();
+            assertThat(store.flushPendingCallCount())
+                    .as("flush forces store visibility once, after the queue drains")
+                    .isEqualTo(1);
+            assertThat(store.totalSaved()).isEqualTo(5);
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
+    void flushReturnsFalseWhenVisibilityFlushFails() {
+        // If forcing visibility fails (e.g. ClickHouse unreachable) flush() must
+        // report incomplete rather than claim the newest events are queryable.
+        CapturingStore store = new CapturingStore();
+        store.failVisibilityFlush = true;
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            recorder.record(sampleRecord());
+            assertThat(recorder.flush(Duration.parse("3s")))
+                    .as("a failed visibility flush makes flush() report incomplete")
+                    .isFalse();
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
     void flushAwaitsBarrierThenDrainsQueue() {
         // #98: flush drains the serialization barrier first, then the queue.
         CapturingStore store = new CapturingStore();
@@ -653,14 +691,30 @@ class AsyncRecorderTest {
 
     private static final class CapturingStore implements RecordStore {
         private final CopyOnWriteArrayList<EventRecord> all = new CopyOnWriteArrayList<>();
+        private final AtomicInteger flushPendingCalls = new AtomicInteger();
+        // #205: simulate a backend whose visibility flush (e.g. ClickHouse
+        // unreachable) fails, so flush() must report incomplete.
+        volatile boolean failVisibilityFlush;
 
         int totalSaved() {
             return all.size();
         }
 
+        int flushPendingCallCount() {
+            return flushPendingCalls.get();
+        }
+
         @Override
         public void save(List<EventRecord> records) {
             all.addAll(records);
+        }
+
+        @Override
+        public void flushPendingWrites() {
+            flushPendingCalls.incrementAndGet();
+            if (failVisibilityFlush) {
+                throw new RuntimeException("simulated visibility-flush failure");
+            }
         }
 
         @Override
