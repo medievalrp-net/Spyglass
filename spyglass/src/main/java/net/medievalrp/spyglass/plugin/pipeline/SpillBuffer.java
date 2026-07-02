@@ -65,6 +65,13 @@ public final class SpillBuffer {
     private final AtomicLong pendingRecords = new AtomicLong();
     private final AtomicLong pendingFiles = new AtomicLong();
     private final AtomicLong pendingBytes = new AtomicLong();
+    // Drain-thread-only ordered cache of segment paths still to replay, so
+    // draining N segments costs one directory listing per empty-cache refill
+    // instead of one listing per poll (the old oldestSegment() re-listed every
+    // call -> O(N^2) to drain a large backlog) (#210). poll()/ack() are the
+    // single drain thread per this class's contract, so it needs no locking; new
+    // spills (higher seq, sorted later) are picked up on the next refill.
+    private final java.util.ArrayDeque<Path> segmentCache = new java.util.ArrayDeque<>();
 
     public SpillBuffer(@Nullable Path dataFolder, boolean enabled, Logger logger) {
         this.logger = logger;
@@ -142,13 +149,14 @@ public final class SpillBuffer {
             return null;
         }
         // Skip past any unreadable segments (drop them) until a good one or none.
-        for (Path oldest = oldestSegment(); oldest != null; oldest = oldestSegment()) {
+        for (Path oldest = nextSegment(); oldest != null; oldest = nextSegment()) {
             try {
                 byte[] bytes = Files.readAllBytes(oldest);
                 return new Spilled(oldest, bytes.length, EventBatchCodec.decode(bytes));
             } catch (IOException | RuntimeException ex) {
                 // A segment that won't decode would wedge the drain forever;
                 // its records are unrecoverable, so drop it and move to the next.
+                // nextSegment() already removed it from the cache; delete the file.
                 logger.log(Level.WARNING, "Spyglass spill: dropping unreadable segment "
                         + oldest.getFileName() + " (" + ex.getMessage() + ")");
                 pendingRecords.addAndGet(-recordCountOf(oldest));
@@ -160,7 +168,8 @@ public final class SpillBuffer {
         return null;
     }
 
-    /** Delete a segment after its records were saved, and update counters. */
+    /** Delete a segment after its records were saved, and update counters. The
+     *  {@link #poll} that produced it already removed it from the cache. */
     void ack(Spilled spilled) {
         pendingRecords.addAndGet(-spilled.records().size());
         pendingFiles.decrementAndGet();
@@ -168,17 +177,22 @@ public final class SpillBuffer {
         deleteQuietly(spilled.file());
     }
 
+    /** Oldest not-yet-replayed segment, removed from the cache. Refills the
+     *  cache from disk (sorted, chronological) when it empties, so a run of
+     *  {@link #poll}s costs one listing per refill, not one per call. */
     @Nullable
-    private Path oldestSegment() {
-        try (Stream<Path> stream = Files.list(dir)) {
-            return stream
-                    .filter(p -> p.getFileName().toString().endsWith(EXTENSION))
-                    .min(Comparator.comparing(p -> p.getFileName().toString()))
-                    .orElse(null);
-        } catch (IOException ex) {
-            logger.log(Level.WARNING, "Spyglass spill: failed to list " + dir, ex);
-            return null;
+    private Path nextSegment() {
+        if (segmentCache.isEmpty()) {
+            try (Stream<Path> stream = Files.list(dir)) {
+                stream.filter(p -> p.getFileName().toString().endsWith(EXTENSION))
+                        .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                        .forEach(segmentCache::addLast);
+            } catch (IOException ex) {
+                logger.log(Level.WARNING, "Spyglass spill: failed to list " + dir, ex);
+                return null;
+            }
         }
+        return segmentCache.pollFirst();
     }
 
     private void seedFromExisting() {

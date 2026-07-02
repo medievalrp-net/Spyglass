@@ -198,7 +198,7 @@ class ContainerTransactionListenerTest {
         when(holder.getBlock()).thenReturn(block);
 
         Inventory inventory = mock(Inventory.class);
-        when(inventory.getHolder()).thenReturn(holder);
+        when(inventory.getHolder(false)).thenReturn(holder); // #210: listener reads getHolder(false)
         when(inventory.getItem(slot)).thenReturn(slotItem);
 
         InventoryClickEvent event = mock(InventoryClickEvent.class);
@@ -232,7 +232,7 @@ class ContainerTransactionListenerTest {
         when(doubleChest.getRightSide()).thenReturn(right);
 
         Inventory inventory = mock(Inventory.class);
-        when(inventory.getHolder()).thenReturn(doubleChest);
+        when(inventory.getHolder(false)).thenReturn(doubleChest); // #210: getHolder(false)
         when(inventory.getItem(rawSlot)).thenReturn(slotItem);
 
         InventoryClickEvent event = mock(InventoryClickEvent.class);
