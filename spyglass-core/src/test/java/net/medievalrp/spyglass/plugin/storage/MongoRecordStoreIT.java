@@ -100,13 +100,20 @@ class MongoRecordStoreIT {
             policyStore.database().getCollection("EventRecords", org.bson.BsonDocument.class)
                     .deleteMany(new org.bson.BsonDocument());
             policyStore.save(List.of(
+                    // break + say are overridden -> the encode-and-patch write path.
                     new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
                             origin, source, loc, "t", "STONE", stone, air),
                     new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
-                            origin, source, loc, "t", "Alice", "hi", List.of(), Map.of())));
+                            origin, source, loc, "t", "Alice", "hi", List.of(), Map.of()),
+                    // place is NOT overridden and is stamped with the default
+                    // retention, so it takes the streaming typed insert (#206); it
+                    // must still round-trip the default expiresAt.
+                    new BlockPlaceRecord(UUID.randomUUID(), "place", now, now.plusSeconds(3600),
+                            origin, source, loc, "t", "STONE", air, stone)));
 
             // Read back through the store's typed query; expiresAt is the stored
-            // per-type value the encode-and-patch write produced.
+            // per-type value (the patched write for overrides, the record's own
+            // default for the streamed non-override).
             QueryResult res = policyStore.query(new QueryRequest(
                     List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
                     Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false));
@@ -114,12 +121,17 @@ class MongoRecordStoreIT {
                     .filter(r -> r.event().equals("break")).findFirst().orElseThrow();
             EventRecord say = res.records().stream()
                     .filter(r -> r.event().equals("say")).findFirst().orElseThrow();
+            EventRecord place = res.records().stream()
+                    .filter(r -> r.event().equals("place")).findFirst().orElseThrow();
             assertThat(brk.expiresAt())
-                    .as("break stored expiresAt = occurred + its 100s retention")
+                    .as("break stored expiresAt = occurred + its 100s retention (patched)")
                     .isEqualTo(now.plusSeconds(100L));
             assertThat(say.expiresAt())
-                    .as("say stored expiresAt = the clamped never ceiling")
+                    .as("say stored expiresAt = the clamped never ceiling (patched)")
                     .isEqualTo(RetentionPolicy.MAX_EXPIRY);
+            assertThat(place.expiresAt())
+                    .as("place stored expiresAt = occurred + the 3600s default (streamed, #206)")
+                    .isEqualTo(now.plusSeconds(3600L));
         } finally {
             policyStore.close();
         }

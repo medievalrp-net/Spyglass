@@ -253,19 +253,53 @@ public final class MongoRecordStore implements RecordStore {
             polymorphicCollection.insertMany(records);
             return;
         }
-        // #181: per-event-type expiry. The TTL index is on expiresAt, so encode
-        // each record and overwrite that field per type before insert. Same BSON
-        // as the typed path (same codec), just a per-type expiresAt - so the
-        // chunk-bucket fields, _id mapping, and zstd compression are unchanged.
-        List<BsonDocument> docs = new ArrayList<>(records.size());
+        // #181: per-event-type expiry. A record whose stored expiresAt already
+        // equals its per-event target inserts via the streaming typed codec - the
+        // same allocation-free path as the no-policy branch above - and only a
+        // record needing a DIFFERENT expiry (a per-event override) is re-encoded
+        // into a BsonDocument and patched. Previously every record built that
+        // tree, which dominated the drain-thread heap under load (#206), the same
+        // materialized-tree cost #125 removed from the spill/WAL codec. Both paths
+        // store the same per-type expiresAt, so the TTL index, chunk-bucket
+        // fields, _id mapping, and zstd compression are unchanged.
+        List<EventRecord> direct = null;
+        List<BsonDocument> patched = null;
         for (EventRecord record : records) {
-            BsonDocument doc = new BsonDocument();
-            eventCodec.encode(new BsonDocumentWriter(doc), record, EncoderContext.builder().build());
-            doc.put(RecordFields.EXPIRES_AT, new BsonDateTime(
-                    retentionPolicy.expiresAt(record.occurred(), record.event()).toEpochMilli()));
-            docs.add(doc);
+            if (expiryAlreadyCorrect(record, retentionPolicy)) {
+                if (direct == null) {
+                    direct = new ArrayList<>(records.size());
+                }
+                direct.add(record);
+            } else {
+                if (patched == null) {
+                    patched = new ArrayList<>();
+                }
+                BsonDocument doc = new BsonDocument();
+                eventCodec.encode(new BsonDocumentWriter(doc), record, EncoderContext.builder().build());
+                doc.put(RecordFields.EXPIRES_AT, new BsonDateTime(
+                        retentionPolicy.expiresAt(record.occurred(), record.event()).toEpochMilli()));
+                patched.add(doc);
+            }
         }
-        rawCollection.insertMany(docs);
+        if (direct != null) {
+            polymorphicCollection.insertMany(direct);
+        }
+        if (patched != null) {
+            rawCollection.insertMany(patched);
+        }
+    }
+
+    /**
+     * True when a record's stored {@code expiresAt} already equals its per-event
+     * retention target, so it inserts via the streaming typed codec with no
+     * expiry patch (#206). A record stamped with the global default retention
+     * matches for every non-overridden event type - the common case - so only
+     * override-type (or oddly-stamped, or null-expiry) records pay the re-encode.
+     */
+    static boolean expiryAlreadyCorrect(EventRecord record, RetentionPolicy policy) {
+        Instant expiresAt = record.expiresAt();
+        return expiresAt != null
+                && policy.expiresAt(record.occurred(), record.event()).equals(expiresAt);
     }
 
     @Override
