@@ -246,6 +246,45 @@ public final class RollbackService {
         }
     }
 
+    /**
+     * The recorder's flush timed out before every queued/spilled record
+     * reached the store, so the rollback below reads an incomplete picture and
+     * can only partially restore. Log it at WARNING with the job id AND tell
+     * the operator how much is still in flight (#204). The old notice went only
+     * to {@code job.sender}, so a partial rollback left no server-log trace and
+     * did not say how much was missing; the drain figures come from
+     * {@link net.medievalrp.spyglass.plugin.pipeline.Recorder#spillSnapshot()}.
+     */
+    private void warnRecorderStillDraining(RollbackJob job) {
+        String detail = drainDetail(recorder.spillSnapshot());
+        logger.warning("Spyglass rollback " + job.shortId()
+                + " starting before the recorder drained: " + detail
+                + ". The newest events may be missing from this rollback; re-run once the"
+                + " backlog clears (see /spyglass stats) to catch them.");
+        support.onMainThread(() -> job.sender.sendMessage(Feedback.bonus(
+                "Recorder still draining: " + detail + ". Rollback may miss the most recent"
+                + " events; re-run after it clears to catch the rest.")));
+    }
+
+    /**
+     * Human-readable "how much is still draining" phrase for
+     * {@link #warnRecorderStillDraining}. With a spill backlog it reports the
+     * record count and, when the drain is rate-capped, an estimated time to
+     * clear; otherwise it reports that the store simply has not caught up.
+     * Package-private + static for unit testing (#204).
+     */
+    static String drainDetail(net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder.SpillSnapshot spill) {
+        long backlog = spill.records();
+        if (backlog <= 0) {
+            return "the store has not caught up to the newest events";
+        }
+        long rate = spill.drainRatePerSec();
+        String eta = rate > 0
+                ? " (~" + Math.max(1L, backlog / rate) + "s to clear at " + rate + " rec/s)"
+                : "";
+        return backlog + " record(s) still draining from the overflow spill" + eta;
+    }
+
     public void runJob(RollbackJob job) {
         JobContext ctx = pendingContexts.remove(job.id);
         if (ctx == null) {
@@ -265,8 +304,7 @@ public final class RollbackService {
             try {
                 boolean drained = recorder.flush(flushTimeout);
                 if (!drained) {
-                    support.onMainThread(() -> job.sender.sendMessage(Feedback.bonus(
-                            "Recorder still draining; rollback may miss the most recent events.")));
+                    warnRecorderStillDraining(job);
                 }
                 streamPagesAndApply(job, ctx.request(), ctx.mode(),
                         ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped(),
