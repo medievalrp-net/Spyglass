@@ -198,6 +198,38 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void flushPendingWritesMakesAsyncInsertsQueryable() {
+        // #205: save() is fire-and-forget async_insert, so rows are not SELECT-
+        // visible until the server buffer flushes. flushPendingWrites() - the
+        // method the recorder's read-your-writes flush calls - must force that
+        // buffer so a rollback issued right after a burst reads every event.
+        Instant now = Instant.now().minusSeconds(30);
+        BlockLocation location = new BlockLocation(WORLD, "world", 5, 64, 5);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        BlockSnapshot stone = new BlockSnapshot(org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        List<EventRecord> records = new java.util.ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            records.add(new BlockBreakRecord(UUID.randomUUID(), "break", now, now.plusSeconds(3600),
+                    origin, source, location, "test", "STONE", stone, air));
+        }
+        store.save(records);
+        // The method under test (not the private flushAsyncInserts helper) is
+        // what makes the just-saved async rows queryable.
+        store.flushPendingWrites();
+
+        QueryResult result = store.query(new QueryRequest(
+                List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
+                Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false));
+        assertThat(result.records())
+                .as("flushPendingWrites() makes every async-inserted row queryable")
+                .hasSize(8);
+    }
+
+    @Test
     void roundTripsBlockSnapshotThroughBsonBlob() {
         Instant now = Instant.now().minusSeconds(60);
         BlockLocation loc = new BlockLocation(WORLD, "world", 5, 64, 5);

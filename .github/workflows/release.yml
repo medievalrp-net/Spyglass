@@ -65,6 +65,13 @@ jobs:
           {
             echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
             echo
+            # Brief "what was fixed" summary, maintained per release in this file.
+            if [ -f .github/release-notes.md ]; then
+              echo "### What's fixed"
+              echo
+              cat .github/release-notes.md
+              echo
+            fi
             echo "### Downloads"
             echo "- **\`Spyglass.jar\`** (recommended) - lean build. Paper's library loader"
             echo "  downloads its database driver, command framework, and config libs from"

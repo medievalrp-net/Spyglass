@@ -509,6 +509,19 @@ public final class AsyncRecorder implements Recorder {
                 return false;
             }
         }
+        // The queue has fully drained to the store, but a backend with async
+        // server-side buffering (ClickHouse) may not have made those rows
+        // SELECT-visible yet, which would let a read-your-writes rollback read a
+        // partial picture (#205). Force the buffer out. No-op on the other
+        // backends; if it fails, the newest events may not be queryable, so
+        // report the flush as incomplete rather than falsely durable-and-visible.
+        try {
+            store.flushPendingWrites();
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass store visibility flush failed; the newest events"
+                    + " may not be queryable yet: " + ex.getMessage());
+            return false;
+        }
         return true;
     }
 

@@ -567,4 +567,71 @@ class RollbackServiceTest {
         verify(fixture.undoStack, org.mockito.Mockito.never()).pushReference(
                 any(UUID.class), any(String.class), any(String.class));
     }
+
+    // #204: when the pre-rollback flush times out, the partial-restore
+    // condition must reach the SERVER LOG (it was sender-only before, leaving
+    // no trace), and the operator message must say how much is still draining.
+    @Test
+    void logsAndTellsOperatorWhenRecorderStillDrainingAtRollback() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        // Flush times out; the recorder reports a spill backlog with a finite
+        // drain rate, so an ETA is included (50000 / 500 = 100s).
+        when(fixture.recorder.flush(any(net.medievalrp.spyglass.api.util.Duration.class)))
+                .thenReturn(false);
+        when(fixture.recorder.spillSnapshot()).thenReturn(
+                new net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder.SpillSnapshot(
+                        true, 3L, 50_000L, 1_000_000L, 500L));
+
+        java.util.List<java.util.logging.LogRecord> logged = new java.util.ArrayList<>();
+        java.util.logging.Handler handler = new java.util.logging.Handler() {
+            @Override public void publish(java.util.logging.LogRecord rec) {
+                logged.add(rec);
+            }
+            @Override public void flush() {
+            }
+            @Override public void close() {
+            }
+        };
+        Logger testLogger = Logger.getLogger("test");
+        testLogger.addHandler(handler);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+        try {
+            fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+        } finally {
+            testLogger.removeHandler(handler);
+        }
+
+        // The core of #204: a WARNING now records that a rollback ran on
+        // incomplete data, with the job context and backlog count.
+        assertThat(logged).anyMatch(rec ->
+                rec.getLevel() == java.util.logging.Level.WARNING
+                        && rec.getMessage().contains("before the recorder drained")
+                        && rec.getMessage().contains("50000"));
+        // The operator is told the count and the ETA, not just "still draining".
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("50000") && line.contains("100s"));
+    }
+
+    // #204: the drain-detail phrase reports the backlog count and a rate-based
+    // ETA, drops the ETA when the drain is unlimited, and degrades cleanly when
+    // nothing is spilled (queue-only / slow-store case).
+    @Test
+    void drainDetailReportsBacklogCountAndEta() {
+        var withRate = new net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder.SpillSnapshot(
+                true, 2L, 10_000L, 500_000L, 500L);
+        assertThat(RollbackService.drainDetail(withRate))
+                .contains("10000").contains("20s").contains("500 rec/s");
+
+        var unlimited = new net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder.SpillSnapshot(
+                true, 2L, 10_000L, 500_000L, 0L);
+        assertThat(RollbackService.drainDetail(unlimited))
+                .contains("10000").doesNotContain("to clear");
+
+        var noBacklog = new net.medievalrp.spyglass.plugin.pipeline.AsyncRecorder.SpillSnapshot(
+                false, 0L, 0L, 0L, 0L);
+        assertThat(RollbackService.drainDetail(noBacklog))
+                .isEqualTo("the store has not caught up to the newest events");
+    }
 }

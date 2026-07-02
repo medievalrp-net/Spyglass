@@ -75,6 +75,44 @@ class SpillBufferTest {
     }
 
     @Test
+    void drainsManySegmentsInOrderIncludingOnesSpilledMidDrain(@TempDir Path dir) throws Exception {
+        // #210: the drain-thread segment cache must replay every segment
+        // oldest-first across an empty-cache refill, and pick up spills that
+        // land mid-drain (higher seq -> sorted after the cached ones).
+        SpillBuffer spill = new SpillBuffer(dir, true, LOG);
+        List<UUID> expected = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            UUID id = UUID.randomUUID();
+            expected.add(id);
+            spill.spill(batch(id));
+        }
+
+        List<UUID> drained = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            SpillBuffer.Spilled s = spill.poll();
+            drained.add(s.records().getFirst().id());
+            spill.ack(s);
+        }
+        // Two more spills after the cache was already populated + partly drained.
+        for (int i = 0; i < 2; i++) {
+            UUID id = UUID.randomUUID();
+            expected.add(id);
+            spill.spill(batch(id));
+        }
+        SpillBuffer.Spilled s;
+        while ((s = spill.poll()) != null) {
+            drained.add(s.records().getFirst().id());
+            spill.ack(s);
+        }
+
+        assertThat(drained)
+                .as("every segment replayed once, oldest-first, including mid-drain spills")
+                .containsExactlyElementsOf(expected);
+        assertThat(spill.hasPending()).isFalse();
+        assertThat(spill.pendingRecordCount()).isZero();
+    }
+
+    @Test
     void recoversSegmentsLeftByAPriorRun(@TempDir Path dir) throws Exception {
         UUID id = UUID.randomUUID();
         new SpillBuffer(dir, true, LOG).spill(batch(id, UUID.randomUUID()));

@@ -58,7 +58,11 @@ public final class SalvageCapturer implements SalvageHook {
         this.logger = logger;
     }
 
-    private record Captured(int x, int y, int z, String type, List<StoredItem> items) {
+    // Contents are CLONED (detached), not yet serialized: the heavy
+    // serializeAsBytes + base64 is deferred to the off-main persist step so a
+    // rollback over a container-dense area doesn't serialize every surviving
+    // container on the tick (#207).
+    private record Captured(int x, int y, int z, String type, ItemStack[] contents) {
     }
 
     @Override
@@ -87,13 +91,16 @@ public final class SalvageCapturer implements SalvageHook {
         // thread, before any write to this chunk). Most chunks have none.
         for (BlockState state : chunk.getTileEntities(false)) {
             if (state instanceof Container container) {
-                List<StoredItem> items = capture(inventoryOf(container));
-                if (!items.isEmpty()) {
+                // Clone the live contents on the main thread (cheap); the
+                // serialize is deferred to the persist step (#207). null means
+                // the container is empty - nothing to salvage.
+                ItemStack[] contents = cloneIfNonEmpty(inventoryOf(container));
+                if (contents != null) {
                     if (captured == null) {
                         captured = new ArrayList<>();
                     }
                     captured.add(new Captured(state.getX(), state.getY(), state.getZ(),
-                            state.getType().name(), items));
+                            state.getType().name(), contents));
                 }
             }
         }
@@ -111,37 +118,46 @@ public final class SalvageCapturer implements SalvageHook {
             return;
         }
         final String op = operator;
-        List<SalvageSnapshot> toSave = new ArrayList<>();
+        final UUID worldId = world.getUID();
+        final String worldName = world.getName();
+        // Main thread: decide which containers the rollback destroyed by
+        // comparing CLONED stacks (no serialization), then hand the captured
+        // clones - with their coordinates - to the off-main persist step, which
+        // serializes only the genuinely-destroyed set (#207).
+        List<Captured> destroyed = new ArrayList<>();
         for (Captured cap : captured) {
             Block block = world.getBlockAt(cap.x(), cap.y(), cap.z());
-            boolean destroyed;
+            boolean gone;
             // Check the block TYPE first — read from the chunk section the
             // rollback overwrote. A direct NMS section write leaves the old block
             // entity lingering in the chunk map, so getState() can still return a
             // stale Container even though the block is now (e.g.) stone; the
             // material is authoritative.
             if (!block.getType().name().equals(cap.type())) {
-                destroyed = true;
+                gone = true;
             } else if (block.getState() instanceof Container container) {
                 // Same container type still here — destroyed only if its contents
-                // changed (e.g. the rollback restored a different recorded inv).
-                destroyed = !sameItems(capture(inventoryOf(container)), cap.items());
+                // changed. Compares live stacks against the captured clones via
+                // ItemStack equality, no serialize.
+                gone = !sameContents(inventoryOf(container).getContents(), cap.contents());
             } else {
-                destroyed = true;
+                gone = true;
             }
-            if (destroyed && salvagedCells.add(
-                    world.getUID() + ":" + cap.x() + ":" + cap.y() + ":" + cap.z())) {
-                toSave.add(new SalvageSnapshot(UUID.randomUUID(), rollbackId,
-                        world.getUID(), world.getName(),
-                        cap.x(), cap.y(), cap.z(), cap.type(), op,
-                        Instant.now(), cap.items()));
+            if (gone && salvagedCells.add(
+                    worldId + ":" + cap.x() + ":" + cap.y() + ":" + cap.z())) {
+                destroyed.add(cap);
             }
         }
-        if (!toSave.isEmpty()) {
-            logger.fine("salvage: persisting " + toSave.size()
+        if (!destroyed.isEmpty()) {
+            logger.fine("salvage: persisting " + destroyed.size()
                     + " destroyed container(s) from chunk " + chunkX + "," + chunkZ);
+            final UUID batchRollbackId = rollbackId;
             persistExecutor.execute(() -> {
-                for (SalvageSnapshot snapshot : toSave) {
+                for (Captured cap : destroyed) {
+                    // Serialize off the main thread, then persist.
+                    SalvageSnapshot snapshot = new SalvageSnapshot(UUID.randomUUID(), batchRollbackId,
+                            worldId, worldName, cap.x(), cap.y(), cap.z(), cap.type(), op,
+                            Instant.now(), serializeContents(cap.contents()));
                     try {
                         store.save(snapshot);
                     } catch (RuntimeException ex) {
@@ -161,34 +177,51 @@ public final class SalvageCapturer implements SalvageHook {
                 ? chest.getBlockInventory() : container.getInventory();
     }
 
-    private static List<StoredItem> capture(Inventory inventory) {
-        List<StoredItem> items = new ArrayList<>();
-        int size = inventory.getSize();
-        for (int slot = 0; slot < size; slot++) {
-            ItemStack stack = inventory.getItem(slot);
+    /** Clone the live contents (main thread) if any slot holds a real item;
+     *  returns null for an empty container. Empty slots normalize to null so the
+     *  written-time comparison lines up regardless of AIR-vs-null. */
+    private static ItemStack[] cloneIfNonEmpty(Inventory inventory) {
+        ItemStack[] live = inventory.getContents();
+        ItemStack[] out = new ItemStack[live.length];
+        boolean anyItem = false;
+        for (int slot = 0; slot < live.length; slot++) {
+            ItemStack stack = live[slot];
             if (stack != null && stack.getType() != Material.AIR) {
-                items.add(ItemSerialization.storedItem(slot, stack));
+                out[slot] = stack.clone();
+                anyItem = true;
+            }
+        }
+        return anyItem ? out : null;
+    }
+
+    /** Off-main: serialize the cloned, destroyed container's contents. */
+    private static List<StoredItem> serializeContents(ItemStack[] contents) {
+        List<StoredItem> items = new ArrayList<>();
+        for (int slot = 0; slot < contents.length; slot++) {
+            if (contents[slot] != null) {
+                items.add(ItemSerialization.storedItem(slot, contents[slot]));
             }
         }
         return items;
     }
 
-    // Equal iff the same slot->blob set. Order-independent; cheap for the
-    // handful of captured containers.
-    private static boolean sameItems(List<StoredItem> a, List<StoredItem> b) {
-        if (a.size() != b.size()) {
-            return false;
-        }
-        Set<String> keys = new HashSet<>();
-        for (StoredItem item : a) {
-            keys.add(item.slot() + ":" + item.data());
-        }
-        for (StoredItem item : b) {
-            if (!keys.contains(item.slot() + ":" + item.data())) {
+    // Equal iff every slot's live stack matches the captured clone, treating a
+    // null and an AIR stack as the same empty slot. ItemStack.equals is a
+    // read-only deep compare - no serialization (#207).
+    private static boolean sameContents(ItemStack[] live, ItemStack[] captured) {
+        int size = Math.max(live.length, captured.length);
+        for (int slot = 0; slot < size; slot++) {
+            ItemStack liveStack = slot < live.length ? normalizeEmpty(live[slot]) : null;
+            ItemStack capturedStack = slot < captured.length ? captured[slot] : null;
+            if (!java.util.Objects.equals(liveStack, capturedStack)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static ItemStack normalizeEmpty(ItemStack stack) {
+        return (stack == null || stack.getType() == Material.AIR) ? null : stack;
     }
 
     private static String key(World world, int chunkX, int chunkZ) {

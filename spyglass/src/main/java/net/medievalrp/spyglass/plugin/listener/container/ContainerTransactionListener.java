@@ -88,7 +88,10 @@ public final class ContainerTransactionListener implements RecordingListener {
             return;
         }
 
-        InventoryHolder holder = clicked.getHolder();
+        // getHolder(false): the listener only reads the holder's block location
+        // and type, so skip the tile-entity snapshot copy getHolder() builds on
+        // every container click (#210).
+        InventoryHolder holder = clicked.getHolder(false);
         if (holder instanceof ShulkerBox) {
             return;
         }
@@ -177,7 +180,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         Inventory bottom = event.getView().getBottomInventory();
         boolean clickedIsTop = clicked.equals(top);
 
-        InventoryHolder topHolder = top.getHolder();
+        InventoryHolder topHolder = top.getHolder(false); // no snapshot copy (#210)
         if (topHolder instanceof ShulkerBox) {
             return;
         }
