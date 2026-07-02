@@ -121,6 +121,16 @@ public final class MariaDbRecordStore implements RecordStore {
     private static final long DEFAULT_RETENTION_SECONDS = 182L * 24 * 3600; // 26 weeks (~6 months)
     private static final long RETENTION_SWEEP_MINUTES = 60L;
     private static final int POST_FILTER_SCAN_CAP = 20_000;
+    // Rows deleted per retention batch. The sweep loops native DELETE ... LIMIT,
+    // releasing the write lock between batches, so a large expiry never holds
+    // the InnoDB write path or its undo/redo log in one transaction (#203).
+    private static final int PRUNE_BATCH_SIZE = 50_000;
+    // First sweep runs this soon after construction on the retention thread,
+    // never inline on the caller's (main) thread, so a large or long-offline DB
+    // can't stall plugin enable (#203).
+    private static final long INITIAL_SWEEP_DELAY_SECONDS = 5L;
+    // "Watermark unknown" sentinel: the oldest stored occurred is not yet seeded.
+    private static final long WATERMARK_UNKNOWN = Long.MIN_VALUE;
 
     // 14 columns, in bind order. Notably absent (folded / derived / generated,
     // see the class doc): expires_at, source_kind, player_name, world_name,
@@ -181,6 +191,12 @@ public final class MariaDbRecordStore implements RecordStore {
     private final MariaDbPredicateToSql predicateToSql = new MariaDbPredicateToSql(palette);
 
     private final ScheduledExecutorService retention;
+    // Lower bound (epoch seconds) on the oldest stored {@code occurred}, guarded
+    // by writeLock. When it is at or after the most-aggressive retention horizon,
+    // no record can have expired and the hourly sweep skips its scan (#203).
+    // Kept a lower bound (saves lower it, a completed prune raises it) and stays
+    // occurred-authoritative, so backfilled rows still expire by their real time.
+    private volatile long minOccurredSec = WATERMARK_UNKNOWN;
 
     public MariaDbRecordStore(String host, int port, String database, String user,
                               String password, boolean ssl, long retentionSeconds) {
@@ -275,9 +291,13 @@ public final class MariaDbRecordStore implements RecordStore {
                 t.setDaemon(true);
                 return t;
             });
+            // Seed the oldest-occurred watermark and run the first prune on the
+            // retention thread, not inline: the store is constructed in the
+            // plugin's onEnable() on the main thread and must not stall boot (#203).
+            this.retention.schedule(this::seedWatermarkAndPruneQuietly,
+                    INITIAL_SWEEP_DELAY_SECONDS, TimeUnit.SECONDS);
             this.retention.scheduleWithFixedDelay(this::pruneExpiredQuietly,
                     RETENTION_SWEEP_MINUTES, RETENTION_SWEEP_MINUTES, TimeUnit.MINUTES);
-            pruneExpiredQuietly();
         }
     }
 
@@ -430,11 +450,13 @@ public final class MariaDbRecordStore implements RecordStore {
             Map<String, Integer> pendingDict = new HashMap<>();
             Map<UUID, Integer> pendingUuid = new HashMap<>();
             Map<Integer, String> pendingNames = new HashMap<>();
+            long batchMinOccurred = Long.MAX_VALUE;
             try {
                 writeConn.setAutoCommit(false);
                 for (EventRecord record : records) {
                     bindRecord(record, pendingDict, pendingUuid, pendingNames);
                     insertStatement.addBatch();
+                    batchMinOccurred = Math.min(batchMinOccurred, record.occurred().getEpochSecond());
                 }
                 insertStatement.executeBatch();
                 writeConn.commit();
@@ -449,6 +471,8 @@ public final class MariaDbRecordStore implements RecordStore {
                     uuidReverse.put(id, uuid);
                 });
                 uuidName.putAll(pendingNames);
+                // Keep the retention watermark a valid lower bound (#203).
+                lowerWatermark(batchMinOccurred);
             } catch (SQLException ex) {
                 rollbackQuietly();
                 throw new RuntimeException("MariaDB save failed: " + ex.getMessage(), ex);
@@ -1170,54 +1194,148 @@ public final class MariaDbRecordStore implements RecordStore {
         }
     }
 
+    /** Off-thread boot task: seed the oldest-occurred watermark once, then run
+     *  the first prune - both off the main thread so enable never blocks (#203). */
+    private void seedWatermarkAndPruneQuietly() {
+        try {
+            seedWatermark();
+            pruneExpired();
+        } catch (RuntimeException ex) {
+            LOGGER.log(Level.WARNING, "MariaDB retention seed/sweep failed", ex);
+        }
+    }
+
     /**
      * Drop records past their retention horizon; the TTL analogue. Each event
      * type with a per-event {@code retention} override (#181) is swept at its own
-     * cutoff; everything else at the global default. With no overrides this is a
-     * single {@code DELETE ... WHERE occurred < cutoff}, identical to before.
+     * cutoff; everything else at the global default.
+     *
+     * <p>Cheap on a large table (#203): an in-memory lower bound on the oldest
+     * stored {@code occurred} lets a sweep skip in O(1) when nothing can have
+     * expired (so the hourly no-op stops being a full scan of the unindexed time
+     * column), and the delete is {@code LIMIT}-batched with the write lock
+     * released between batches so a real expiry never holds the InnoDB write path
+     * or its undo log in one transaction. The predicate stays {@code occurred <
+     * cutoff}, so retention is unchanged and backfilled rows still expire by their
+     * real timestamp.
      */
     public long pruneExpired() {
         if (readOnly) {
             return 0L;
         }
         long nowSec = System.currentTimeMillis() / 1000L;
-        synchronized (writeLock) {
-            try {
-                long deleted = 0L;
-                List<Integer> overrideIds = new ArrayList<>();
-                for (Map.Entry<String, Long> override : retentionPolicy.overrides().entrySet()) {
-                    Integer dictId = resolveDictId(override.getKey());
-                    if (dictId == null) {
-                        continue; // this event type has never been recorded yet
-                    }
-                    overrideIds.add(dictId);
-                    try (PreparedStatement ps = writeConn.prepareStatement(
-                            "DELETE FROM records WHERE event = ? AND occurred < ?")) {
+        // O(1) skip: nothing can have expired when the oldest stored record is
+        // younger than even the most aggressive horizon. The watermark is a lower
+        // bound, so a stale-high read never skips a genuine expiry.
+        long watermark = minOccurredSec;
+        if (watermark != WATERMARK_UNKNOWN && watermark >= nowSec - retentionPolicy.minSeconds()) {
+            return 0L;
+        }
+        long deleted = 0L;
+        List<Integer> overrideIds = new ArrayList<>();
+        for (Map.Entry<String, Long> override : retentionPolicy.overrides().entrySet()) {
+            Integer dictId = resolveDictId(override.getKey());
+            if (dictId == null) {
+                continue; // this event type has never been recorded yet
+            }
+            overrideIds.add(dictId);
+            long cutoff = nowSec - override.getValue();
+            deleted += pruneBatched(
+                    "DELETE FROM records WHERE event = ? AND occurred < ? LIMIT ?",
+                    ps -> {
                         ps.setInt(1, dictId);
-                        ps.setLong(2, nowSec - override.getValue());
-                        deleted += ps.executeUpdate();
-                    }
+                        ps.setLong(2, cutoff);
+                        ps.setInt(3, PRUNE_BATCH_SIZE);
+                    });
+        }
+        long defaultCutoff = nowSec - retentionPolicy.defaultSeconds();
+        StringBuilder sql = new StringBuilder("DELETE FROM records WHERE occurred < ?");
+        if (!overrideIds.isEmpty()) {
+            sql.append(" AND event NOT IN (").append(placeholders(overrideIds.size())).append(')');
+        }
+        sql.append(" LIMIT ?");
+        String defaultSql = sql.toString();
+        deleted += pruneBatched(defaultSql, ps -> {
+            int idx = 1;
+            ps.setLong(idx++, defaultCutoff);
+            for (Integer id : overrideIds) {
+                ps.setInt(idx++, id);
+            }
+            ps.setInt(idx, PRUNE_BATCH_SIZE);
+        });
+        // A sweep ran: every survivor is at least as recent as the least-
+        // aggressive cutoff, so raise the watermark to it (still a lower bound).
+        raiseWatermark(nowSec - retentionPolicy.maxSeconds());
+        return deleted;
+    }
+
+    /**
+     * Run a {@code LIMIT}-batched delete until a batch removes fewer than the
+     * batch size, taking and releasing the write lock per batch so the ingest
+     * drain can slip in between batches (#203).
+     */
+    private long pruneBatched(String sql, SqlBinder binder) {
+        long total = 0L;
+        while (true) {
+            int removed;
+            synchronized (writeLock) {
+                try (PreparedStatement ps = writeConn.prepareStatement(sql)) {
+                    binder.bind(ps);
+                    removed = ps.executeUpdate();
+                } catch (SQLException ex) {
+                    throw new RuntimeException("MariaDB retention prune failed: " + ex.getMessage(), ex);
                 }
-                long defaultCutoff = nowSec - retentionPolicy.defaultSeconds();
-                StringBuilder sql = new StringBuilder("DELETE FROM records WHERE occurred < ?");
-                if (!overrideIds.isEmpty()) {
-                    sql.append(" AND event NOT IN (");
-                    sql.append("?,".repeat(overrideIds.size()));
-                    sql.setLength(sql.length() - 1);
-                    sql.append(')');
-                }
-                try (PreparedStatement ps = writeConn.prepareStatement(sql.toString())) {
-                    ps.setLong(1, defaultCutoff);
-                    for (int i = 0; i < overrideIds.size(); i++) {
-                        ps.setInt(2 + i, overrideIds.get(i));
-                    }
-                    deleted += ps.executeUpdate();
-                }
-                return deleted;
+            }
+            total += removed;
+            if (removed < PRUNE_BATCH_SIZE) {
+                return total;
+            }
+            Thread.yield();
+        }
+    }
+
+    /** Seed the oldest-occurred watermark from the table (one min() scan at
+     *  boot, off-thread). Empty table seeds to "far future" so sweeps skip. */
+    private void seedWatermark() {
+        synchronized (writeLock) {
+            try (Statement st = writeConn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT min(occurred) FROM records")) {
+                long value = rs.next() ? rs.getLong(1) : 0L;
+                minOccurredSec = rs.wasNull() ? Long.MAX_VALUE : value;
             } catch (SQLException ex) {
-                throw new RuntimeException("MariaDB retention prune failed: " + ex.getMessage(), ex);
+                throw new RuntimeException("MariaDB watermark seed failed: " + ex.getMessage(), ex);
             }
         }
+    }
+
+    /** Lower the watermark toward a just-inserted batch's oldest occurred so it
+     *  stays a valid lower bound. No-op until seeded. */
+    private void lowerWatermark(long occurredSec) {
+        synchronized (writeLock) {
+            if (minOccurredSec != WATERMARK_UNKNOWN && occurredSec < minOccurredSec) {
+                minOccurredSec = occurredSec;
+            }
+        }
+    }
+
+    /** Raise the watermark after a completed prune (every survivor is at least
+     *  this recent). No-op until seeded. */
+    private void raiseWatermark(long floorSec) {
+        synchronized (writeLock) {
+            if (minOccurredSec != WATERMARK_UNKNOWN && floorSec > minOccurredSec) {
+                minOccurredSec = floorSec;
+            }
+        }
+    }
+
+    private static String placeholders(int count) {
+        return count <= 0 ? "" : "?,".repeat(count).substring(0, count * 2 - 1);
+    }
+
+    /** Binds the parameters of one prune batch. */
+    @FunctionalInterface
+    private interface SqlBinder {
+        void bind(PreparedStatement ps) throws SQLException;
     }
 
     /** Total record rows - test / benchmark helper. */

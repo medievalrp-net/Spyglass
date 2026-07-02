@@ -75,6 +75,33 @@ public final class RetentionPolicy {
         return defaultSeconds;
     }
 
+    /**
+     * The most aggressive (smallest) retention across the default and every
+     * override - the horizon before which no record of any type can have
+     * expired. A prune-sweep can skip entirely when the oldest stored record is
+     * younger than this (#203).
+     */
+    public long minSeconds() {
+        long min = defaultSeconds;
+        for (long seconds : perEventSeconds.values()) {
+            min = Math.min(min, seconds);
+        }
+        return min;
+    }
+
+    /**
+     * The least aggressive (largest) retention across the default and every
+     * override - a lower bound on how old a surviving record can be right after
+     * a sweep (used to advance the oldest-record watermark, #203).
+     */
+    public long maxSeconds() {
+        long max = defaultSeconds;
+        for (long seconds : perEventSeconds.values()) {
+            max = Math.max(max, seconds);
+        }
+        return max;
+    }
+
     /** The per-event overrides (event-name -> seconds); never null, may be empty. */
     public Map<String, Long> overrides() {
         return perEventSeconds;
