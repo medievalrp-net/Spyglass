@@ -77,7 +77,7 @@ public final class FallingBlockCascade {
             // this exact cell, skip but keep walking — there might be
             // un-logged gravity blocks further up.
             if (alreadyCascaded != null) {
-                long packed = ((long) y << 56) | ((long) (x & 0xFFFFFFF) << 28) | (z & 0xFFFFFFF);
+                long packed = packCell(x, y, z);
                 if (!alreadyCascaded.add(packed)) {
                     continue;
                 }
@@ -97,6 +97,26 @@ public final class FallingBlockCascade {
             FallingBlockTracker.track(world.getUID(), x, y, z,
                     player.getUniqueId(), player.getName());
         }
+    }
+
+    /**
+     * Pack {@code (x, y, z)} into a collision-free long key for the
+     * per-session dedup set: 26 bits each for x/z (covers the world
+     * border's +/-33.5M range) and 12 bits for y. The low-12-bit y mask
+     * is collision-free because a single world spans well under 4096
+     * blocks vertically, so no two real y values differ by a multiple of
+     * 4096. Same layout as {@link
+     * net.medievalrp.spyglass.plugin.worldedit.FaweEditDedupe}'s key.
+     *
+     * <p>The previous {@code y << 56} packing left y only 8 bits and did
+     * not mask it, so cells 256 apart at the same (x, z) collided and a
+     * negative y sign-extended into the x field - both of which silently
+     * dropped cascade break records for tall / low gravity columns.
+     */
+    static long packCell(int x, int y, int z) {
+        return ((long) x & 0x3FF_FFFFL) << 38
+                | ((long) z & 0x3FF_FFFFL) << 12
+                | ((long) y & 0xFFFL);
     }
 
     /** Convenience overload for callers that don't need session-level
