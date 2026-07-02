@@ -123,6 +123,13 @@ public final class RollbackEngine {
     // per-block audit-record build, which now runs off-main.
     private volatile int worldWriteBatchChunks = 16;
 
+    // #208: max chunks that may be BLOCK-loaded (a getChunk on a not-yet-loaded
+    // chunk) per resolve hop. A rollback over an unloaded region paces its loads
+    // across ticks instead of bursting up to worldWriteBatchChunks blocking loads
+    // into one tick. Already-loaded chunks don't count against it, so the common
+    // in-view rollback is unaffected.
+    private static final int MAX_CHUNK_LOADS_PER_HOP = 4;
+
     // Apply-phase breakdown (reset per applyAllChunked, logged on
     // completion). writeNanos = wall-time the pool spends on palette
     // writes (sum of per-batch barrier waits); postNanos = main-thread
@@ -438,6 +445,17 @@ public final class RollbackEngine {
         return span <= 0L ? 0 : 64 - Long.numberOfLeadingZeros(span);
     }
 
+    /**
+     * Whether the resolve loop should stop this hop before a not-yet-loaded
+     * chunk, to pace synchronous chunk loads across ticks (#208). Never defers an
+     * already-loaded chunk, and always resolves at least one chunk per hop (an
+     * empty batch never defers) so progress is guaranteed even in a fully cold
+     * region. Package-private for unit testing.
+     */
+    static boolean deferForChunkLoadPacing(boolean chunkLoaded, int loadsThisHop, boolean batchEmpty) {
+        return !chunkLoaded && !batchEmpty && loadsThisHop >= MAX_CHUNK_LOADS_PER_HOP;
+    }
+
     private static void sortByComparator(List<Integer> indices,
                                          List<RollbackEffect.BlockReplace> effects) {
         int n = indices.size();
@@ -649,6 +667,7 @@ public final class RollbackEngine {
         long tResolve = System.nanoTime();
         List<ChunkWork> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
         int cursor = from;
+        int loadsThisHop = 0;
         try {
             while (cursor < total && batch.size() < maxBatchChunks) {
             BlockLocation startLoc = blockReplaceEffects.get(cursor).location();
@@ -678,6 +697,18 @@ public final class RollbackEngine {
                 continue;
             }
 
+            // #208: pace synchronous chunk loads across ticks. prepareChunk's
+            // getChunk blocks to load an unloaded chunk; without this a rollback
+            // over an unloaded region would trigger up to maxBatchChunks blocking
+            // loads in a single tick and stall it. Already-loaded chunks (rolling
+            // back where a player stands - the common case) never hit the cap and
+            // resolve at full speed; a cold region just spreads its loads over
+            // more ticks, trading wall-time for TPS like the apply budget does.
+            boolean chunkLoaded = world.isChunkLoaded(cx, cz);
+            if (deferForChunkLoadPacing(chunkLoaded, loadsThisHop, batch.isEmpty())) {
+                break;
+            }
+
             // Pin the chunk loaded, then resolve its section context —
             // both on main, so the worker never calls into the chunk
             // system. addPluginChunkTicket is thread-safe per Paper.
@@ -700,6 +731,9 @@ public final class RollbackEngine {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
                 batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
+                if (!chunkLoaded) {
+                    loadsThisHop++;
+                }
             } catch (Throwable t) {
                 // prepareChunk / onChunkResolved threw after this chunk was
                 // pinned: release its ticket here (it never reaches the post
@@ -1046,6 +1080,7 @@ public final class RollbackEngine {
         // runs of the sorted order share a chunk, so one walk groups them.
         List<ColChunk> batch = new ArrayList<>(Math.min(maxBatchChunks, 64));
         int cursor = from;
+        int loadsThisHop = 0;
         try {
             while (cursor < total && batch.size() < maxBatchChunks) {
             int startIdx = order[cursor];
@@ -1058,6 +1093,13 @@ public final class RollbackEngine {
                     break;
                 }
                 rangeEnd++;
+            }
+            // #208: pace synchronous chunk loads across ticks (see the mirror in
+            // applyChunkBatchParallel). Already-loaded chunks resolve at full
+            // speed; a cold region spreads its blocking getChunk loads over hops.
+            boolean chunkLoaded = world.isChunkLoaded(cx, cz);
+            if (deferForChunkLoadPacing(chunkLoaded, loadsThisHop, batch.isEmpty())) {
+                break;
             }
             boolean ticketAdded = false;
             if (ticketHolder != null) {
@@ -1077,6 +1119,9 @@ public final class RollbackEngine {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
                 batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
+                if (!chunkLoaded) {
+                    loadsThisHop++;
+                }
             } catch (Throwable t) {
                 // Release this chunk's just-added ticket before failing the
                 // batch; the rest are freed below (#127).

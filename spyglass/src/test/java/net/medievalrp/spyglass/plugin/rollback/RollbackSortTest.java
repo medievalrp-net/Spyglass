@@ -130,4 +130,35 @@ class RollbackSortTest {
         return new BlockSnapshot(Material.STONE, "minecraft:stone",
                 List.of(), List.of(), List.of(), List.of(), null);
     }
+
+    // ===== #208: chunk-load pacing decision ====================
+
+    @Test
+    void loadedChunksNeverDeferSoAnInViewRollbackRunsAtFullSpeed() {
+        // The common case: rolling back where a player stands, every chunk
+        // already loaded. Pacing must never kick in, whatever the hop count.
+        for (int loads = 0; loads < 100; loads++) {
+            assertThat(RollbackEngine.deferForChunkLoadPacing(true, loads, false))
+                    .as("a loaded chunk is never deferred (loadsThisHop=%d)", loads)
+                    .isFalse();
+        }
+    }
+
+    @Test
+    void firstUnloadedChunkOfAHopIsAlwaysResolved() {
+        // An empty batch never defers, so a fully cold region still makes
+        // progress at >= one chunk per hop (no starvation).
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 0, true)).isFalse();
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 999, true)).isFalse();
+    }
+
+    @Test
+    void unloadedChunksAreDeferredOnceThePerHopCapIsReached() {
+        // Below the cap (4) an unloaded chunk still resolves; at/after it, with a
+        // non-empty batch, the loop defers the rest of this hop to the next tick.
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 0, false)).isFalse();
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 3, false)).isFalse();
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 4, false)).isTrue();
+        assertThat(RollbackEngine.deferForChunkLoadPacing(false, 5, false)).isTrue();
+    }
 }
