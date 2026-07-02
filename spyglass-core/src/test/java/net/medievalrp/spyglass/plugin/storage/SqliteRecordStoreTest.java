@@ -534,6 +534,85 @@ class SqliteRecordStoreTest {
                 .isEqualTo(old.plusSeconds(3600));
     }
 
+    @Test
+    void noOpSweepIsSkippedOnceTheWatermarkIsSeeded() throws SQLException {
+        // Only fresh rows: after seeding, the oldest occurred is recent, so the
+        // hourly sweep takes the O(1) skip path instead of scanning (#203).
+        store.save(List.of(simpleBreak(1), simpleBreak(2)));
+        store.seedWatermarkForTest();
+        assertThat(store.oldestOccurredWatermarkForTest())
+                .as("watermark seeded to the oldest stored occurred")
+                .isGreaterThan(BASE.minusSeconds(RETENTION).getEpochSecond());
+
+        long pruned = store.pruneExpired();
+        assertThat(pruned).isZero();
+        assertThat(rawCount("records")).isEqualTo(2L);
+    }
+
+    @Test
+    void prunesBackdatedRowByOccurredNotBySequence() throws SQLException {
+        // The row's id is minted NOW (a recent sequence) but its occurred is far
+        // in the past - the shape a bulk import produces. Retention keys on
+        // occurred, so it is pruned; a sequence-range sweep would wrongly keep it
+        // (its recent seq sits above any old-time bound). Pins #203's choice to
+        // stay occurred-authoritative rather than swap to a seq predicate.
+        Instant old = BASE.minusSeconds(5 * RETENTION);
+        UUID recentId = EventIds.newId();
+        BlockBreakRecord backdated = new BlockBreakRecord(recentId, "break",
+                old, old.plusSeconds(RETENTION),
+                Origin.player(), Source.player(UUID.randomUUID(), "Import"),
+                new BlockLocation(WORLD, "world", 3, 64, 3), "srv", "STONE",
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"));
+        store.save(List.of(backdated, simpleBreak(1)));
+
+        // Watermark unseeded here, so the sweep runs its full occurred filter.
+        long pruned = store.pruneExpired();
+        assertThat(pruned).isEqualTo(1L);
+        assertThat(store.query(request(List.of())).records())
+                .extracting(EventRecord::id)
+                .doesNotContain(recentId);
+    }
+
+    @Test
+    void batchedSweepDeletesEveryExpiredRowAcrossBatches() throws SQLException {
+        store.pruneBatchSizeForTest(50);
+        List<EventRecord> old = new ArrayList<>();
+        for (int i = 0; i < 130; i++) {
+            Instant when = BASE.minusSeconds(2L * RETENTION + i);
+            old.add(new BlockBreakRecord(EventIds.newId(), "break", when, when.plusSeconds(RETENTION),
+                    Origin.player(), Source.player(UUID.randomUUID(), "Old"),
+                    new BlockLocation(WORLD, "world", i, 64, i), "srv", "STONE",
+                    simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air")));
+        }
+        store.save(old);
+        store.save(List.of(simpleBreak(1))); // one fresh survivor
+
+        long pruned = store.pruneExpired();
+        assertThat(pruned)
+                .as("the batch loop must cross the 50-row boundary and delete all 130 expired")
+                .isEqualTo(130L);
+        assertThat(rawCount("records")).isEqualTo(1L);
+    }
+
+    @Test
+    void saveLowersWatermarkSoALaterOldInsertStillPrunes() throws SQLException {
+        // Seed with only fresh data (watermark recent). A subsequent OLD insert
+        // must lower the watermark, or the next sweep would wrongly skip it.
+        store.save(List.of(simpleBreak(1)));
+        store.seedWatermarkForTest();
+        Instant old = BASE.minusSeconds(3 * RETENTION);
+        store.save(List.of(new BlockBreakRecord(EventIds.newId(), "break", old, old.plusSeconds(RETENTION),
+                Origin.player(), Source.player(UUID.randomUUID(), "Old"),
+                new BlockLocation(WORLD, "world", 9, 64, 9), "srv", "STONE",
+                simple(Material.STONE, "minecraft:stone"), simple(Material.AIR, "minecraft:air"))));
+
+        assertThat(store.oldestOccurredWatermarkForTest())
+                .as("save lowered the watermark to the backdated occurred")
+                .isEqualTo(old.getEpochSecond());
+        long pruned = store.pruneExpired();
+        assertThat(pruned).isEqualTo(1L);
+    }
+
     private static final class CapturingSink implements RecordStore.RollbackEffectSink {
         record Block(UUID world, int x, int y, int z, String data) {
         }

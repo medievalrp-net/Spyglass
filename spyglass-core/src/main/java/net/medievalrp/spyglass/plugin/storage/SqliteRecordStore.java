@@ -118,6 +118,19 @@ public final class SqliteRecordStore implements RecordStore {
     private static final long DEFAULT_RETENTION_SECONDS = 182L * 24 * 3600; // 26 weeks (~6 months)
     private static final long RETENTION_SWEEP_MINUTES = 60L;
     private static final int POST_FILTER_SCAN_CAP = 20_000;
+    // Rows deleted per retention batch. The sweep loops this in autocommit
+    // transactions, releasing the write lock between batches, so a large
+    // expiry never freezes the ingest drain or balloons the WAL in one shot
+    // (#203). The occurred filter clusters expired rows at the low-rowid front
+    // for live-ingested data, so each batch scans ~this many rows, not the table.
+    private static final int PRUNE_BATCH_SIZE = 50_000;
+    // First sweep runs this soon after construction on the retention thread,
+    // never inline on the caller's (main) thread, so a large or long-offline
+    // DB can't stall plugin enable (#203).
+    private static final long INITIAL_SWEEP_DELAY_SECONDS = 5L;
+    // "Watermark unknown" sentinel: the store has not yet seeded the oldest
+    // stored occurred, so a sweep cannot take the O(1) skip fast path.
+    private static final long WATERMARK_UNKNOWN = Long.MIN_VALUE;
 
     // 14 columns, in bind order. Notably absent (folded/derived, see the
     // class doc): expires_at, source_kind, player_name, world_name,
@@ -174,6 +187,16 @@ public final class SqliteRecordStore implements RecordStore {
     private final SqlitePredicateToSql predicateToSql = new SqlitePredicateToSql(palette);
 
     private final ScheduledExecutorService retention;
+    // Lower bound (epoch seconds) on the oldest {@code occurred} still stored,
+    // guarded by writeLock. When it is at or after the most-aggressive retention
+    // horizon, no record can have expired and the hourly sweep skips its scan
+    // entirely - turning the common no-op sweep from a full-table scan into an
+    // O(1) comparison (#203). Kept a lower bound so the skip is always safe:
+    // saves lower it toward newly inserted rows, a completed prune raises it to
+    // the least-aggressive cutoff (every survivor is at least that recent), and
+    // it stays occurred-authoritative so backfilled rows (id minted now, occurred
+    // backdated) still expire by their real timestamp.
+    private volatile long minOccurredSec = WATERMARK_UNKNOWN;
 
     public SqliteRecordStore(Path dbFile) {
         this(dbFile, false, DEFAULT_READ_POOL, DEFAULT_RETENTION_SECONDS);
@@ -243,9 +266,14 @@ public final class SqliteRecordStore implements RecordStore {
                 t.setDaemon(true);
                 return t;
             });
+            // Seed the oldest-occurred watermark and run the first prune on the
+            // retention thread, not inline: the store is constructed in the
+            // plugin's onEnable() on the main thread, and the seed's one-time
+            // min(occurred) scan (plus any real prune) must not stall boot (#203).
+            this.retention.schedule(this::seedWatermarkAndPruneQuietly,
+                    INITIAL_SWEEP_DELAY_SECONDS, TimeUnit.SECONDS);
             this.retention.scheduleWithFixedDelay(this::pruneExpiredQuietly,
                     RETENTION_SWEEP_MINUTES, RETENTION_SWEEP_MINUTES, TimeUnit.MINUTES);
-            pruneExpiredQuietly();
         }
     }
 
@@ -349,11 +377,13 @@ public final class SqliteRecordStore implements RecordStore {
             Map<String, Integer> pendingDict = new HashMap<>();
             Map<UUID, Integer> pendingUuid = new HashMap<>();
             Map<Integer, String> pendingNames = new HashMap<>();
+            long batchMinOccurred = Long.MAX_VALUE;
             try {
                 writeConn.setAutoCommit(false);
                 for (EventRecord record : records) {
                     bindRecord(record, pendingDict, pendingUuid, pendingNames);
                     insertStatement.addBatch();
+                    batchMinOccurred = Math.min(batchMinOccurred, record.occurred().getEpochSecond());
                 }
                 insertStatement.executeBatch();
                 writeConn.commit();
@@ -368,6 +398,9 @@ public final class SqliteRecordStore implements RecordStore {
                     uuidReverse.put(id, uuid);
                 });
                 uuidName.putAll(pendingNames);
+                // Keep the retention watermark a valid lower bound: a batch may
+                // carry an older occurred than anything seen so far (#203).
+                lowerWatermark(batchMinOccurred);
             } catch (SQLException ex) {
                 rollbackQuietly();
                 throw new RuntimeException("SQLite save failed: " + ex.getMessage(), ex);
@@ -1053,57 +1086,182 @@ public final class SqliteRecordStore implements RecordStore {
         }
     }
 
+    /** Off-thread boot task: seed the oldest-occurred watermark once, then run
+     *  the first prune - both off the main thread so enable never blocks (#203). */
+    private void seedWatermarkAndPruneQuietly() {
+        try {
+            seedWatermark();
+            pruneExpired();
+        } catch (RuntimeException ex) {
+            LOGGER.log(Level.WARNING, "SQLite retention seed/sweep failed", ex);
+        }
+    }
+
     /**
      * Drop records past their retention horizon; the SQLite TTL analogue. Each
      * event type with a per-event {@code retention} override (#181) is swept at
-     * its own cutoff; everything else at the global default. With no overrides
-     * this is a single {@code DELETE ... WHERE occurred < cutoff}, identical to
-     * before. The {@code event} dict id is reused, so the sweep filters on the
-     * interned event column directly - no extra schema.
+     * its own cutoff; everything else at the global default.
+     *
+     * <p>Two changes make this cheap on a large table (#203). First, an O(1)
+     * skip: an in-memory lower bound on the oldest stored {@code occurred} lets
+     * a sweep return immediately when nothing can have expired, so the common
+     * hourly no-op stops being a full-table scan of the unindexed time column.
+     * Second, the delete is LIMIT-batched and releases the write lock between
+     * batches, so a real expiry (or a retention reduction that trims millions of
+     * rows) never holds the lock in one transaction or balloons the WAL. The
+     * predicate stays {@code occurred < cutoff}, so retention is unchanged and
+     * backfilled rows (id minted now, occurred backdated) still expire by their
+     * real timestamp.
      */
     public long pruneExpired() {
         if (readOnly) {
             return 0L;
         }
         long nowSec = System.currentTimeMillis() / 1000L;
-        synchronized (writeLock) {
-            try {
-                long deleted = 0L;
-                List<Integer> overrideIds = new ArrayList<>();
-                for (Map.Entry<String, Long> override : retentionPolicy.overrides().entrySet()) {
-                    Integer dictId = resolveDictId(override.getKey());
-                    if (dictId == null) {
-                        continue; // this event type has never been recorded yet
-                    }
-                    overrideIds.add(dictId);
-                    try (PreparedStatement ps = writeConn.prepareStatement(
-                            "DELETE FROM records WHERE event = ? AND occurred < ?")) {
+        // O(1) skip: if the oldest stored record is younger than even the most
+        // aggressive horizon, nothing has expired. The watermark is a lower
+        // bound, so a stale-high read can never skip a genuine expiry - at worst
+        // a row inserted concurrently is swept on the next pass.
+        long watermark = minOccurredSec;
+        if (watermark != WATERMARK_UNKNOWN && watermark >= nowSec - retentionPolicy.minSeconds()) {
+            return 0L;
+        }
+        long deleted = 0L;
+        List<Integer> overrideIds = new ArrayList<>();
+        for (Map.Entry<String, Long> override : retentionPolicy.overrides().entrySet()) {
+            Integer dictId = resolveDictId(override.getKey());
+            if (dictId == null) {
+                continue; // this event type has never been recorded yet
+            }
+            overrideIds.add(dictId);
+            long cutoff = nowSec - override.getValue();
+            deleted += pruneBatched(
+                    "DELETE FROM records WHERE rowid IN ("
+                            + "SELECT rowid FROM records WHERE event = ? AND occurred < ? LIMIT ?)",
+                    ps -> {
                         ps.setInt(1, dictId);
-                        ps.setLong(2, nowSec - override.getValue());
-                        deleted += ps.executeUpdate();
-                    }
+                        ps.setLong(2, cutoff);
+                        ps.setInt(3, pruneBatchSize);
+                    });
+        }
+        // Everything without an override: the global default cutoff.
+        long defaultCutoff = nowSec - retentionPolicy.defaultSeconds();
+        StringBuilder inner = new StringBuilder("SELECT rowid FROM records WHERE occurred < ?");
+        if (!overrideIds.isEmpty()) {
+            inner.append(" AND event NOT IN (").append(placeholders(overrideIds.size())).append(')');
+        }
+        inner.append(" LIMIT ?");
+        String defaultSql = "DELETE FROM records WHERE rowid IN (" + inner + ")";
+        deleted += pruneBatched(defaultSql, ps -> {
+            int idx = 1;
+            ps.setLong(idx++, defaultCutoff);
+            for (Integer id : overrideIds) {
+                ps.setInt(idx++, id);
+            }
+            ps.setInt(idx, pruneBatchSize);
+        });
+        // A sweep ran: every survivor is now at least as recent as the
+        // least-aggressive cutoff, so raise the watermark to it (still a lower
+        // bound - a never-expiring type keeps it low, which is correct).
+        raiseWatermark(nowSec - retentionPolicy.maxSeconds());
+        return deleted;
+    }
+
+    /**
+     * Run a LIMIT-batched delete until a batch removes fewer than the batch
+     * size, taking (and releasing) the write lock per batch so the ingest drain
+     * can slip in between batches and the WAL auto-checkpoints (#203). For
+     * live-ingested data the expired rows cluster at the low-rowid front, so
+     * each batch's inner {@code SELECT ... LIMIT} scans about one batch of rows,
+     * not the whole table.
+     */
+    private long pruneBatched(String sql, SqlBinder binder) {
+        long total = 0L;
+        while (true) {
+            int removed;
+            synchronized (writeLock) {
+                try (PreparedStatement ps = writeConn.prepareStatement(sql)) {
+                    binder.bind(ps);
+                    removed = ps.executeUpdate();
+                } catch (SQLException ex) {
+                    throw new RuntimeException("SQLite retention prune failed: " + ex.getMessage(), ex);
                 }
-                // Everything without an override: the global default cutoff.
-                long defaultCutoff = nowSec - retentionPolicy.defaultSeconds();
-                StringBuilder sql = new StringBuilder("DELETE FROM records WHERE occurred < ?");
-                if (!overrideIds.isEmpty()) {
-                    sql.append(" AND event NOT IN (");
-                    sql.append("?,".repeat(overrideIds.size()));
-                    sql.setLength(sql.length() - 1);
-                    sql.append(')');
-                }
-                try (PreparedStatement ps = writeConn.prepareStatement(sql.toString())) {
-                    ps.setLong(1, defaultCutoff);
-                    for (int i = 0; i < overrideIds.size(); i++) {
-                        ps.setInt(2 + i, overrideIds.get(i));
-                    }
-                    deleted += ps.executeUpdate();
-                }
-                return deleted;
+            }
+            total += removed;
+            if (removed < pruneBatchSize) {
+                return total;
+            }
+            // Lock released above between batches; yield so a waiting save() runs.
+            Thread.yield();
+        }
+    }
+
+    /** Seed the oldest-occurred watermark from the table (one min() scan, run
+     *  off-thread at boot). An empty table seeds to "far future" so sweeps skip
+     *  until a save lowers it. */
+    private void seedWatermark() {
+        synchronized (writeLock) {
+            try (Statement st = writeConn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT min(occurred) FROM records")) {
+                // min() over an empty table is one row whose value is SQL NULL;
+                // getLong returns 0 for NULL, so wasNull() (read AFTER getLong)
+                // distinguishes an empty table from a genuine epoch-0 row.
+                long value = rs.next() ? rs.getLong(1) : 0L;
+                minOccurredSec = rs.wasNull() ? Long.MAX_VALUE : value;
             } catch (SQLException ex) {
-                throw new RuntimeException("SQLite retention prune failed: " + ex.getMessage(), ex);
+                throw new RuntimeException("SQLite watermark seed failed: " + ex.getMessage(), ex);
             }
         }
+    }
+
+    /** Lower the watermark toward a just-inserted batch's oldest occurred, so it
+     *  stays a valid lower bound. No-op until the watermark has been seeded. */
+    private void lowerWatermark(long occurredSec) {
+        synchronized (writeLock) {
+            if (minOccurredSec != WATERMARK_UNKNOWN && occurredSec < minOccurredSec) {
+                minOccurredSec = occurredSec;
+            }
+        }
+    }
+
+    /** Raise the watermark after a completed prune (every survivor is at least
+     *  this recent). No-op until seeded. */
+    private void raiseWatermark(long floorSec) {
+        synchronized (writeLock) {
+            if (minOccurredSec != WATERMARK_UNKNOWN && floorSec > minOccurredSec) {
+                minOccurredSec = floorSec;
+            }
+        }
+    }
+
+    private static String placeholders(int count) {
+        return count <= 0 ? "" : "?,".repeat(count).substring(0, count * 2 - 1);
+    }
+
+    /** Binds the parameters of one prune batch. */
+    @FunctionalInterface
+    private interface SqlBinder {
+        void bind(PreparedStatement ps) throws SQLException;
+    }
+
+    // Test seam (#203): shrink the delete batch so a batching test needn't insert
+    // PRUNE_BATCH_SIZE rows. Production always uses PRUNE_BATCH_SIZE.
+    private volatile int pruneBatchSize = PRUNE_BATCH_SIZE;
+
+    void pruneBatchSizeForTest(int size) {
+        this.pruneBatchSize = Math.max(1, size);
+    }
+
+    /** Visible for tests: the current oldest-occurred watermark (epoch seconds),
+     *  or {@link #WATERMARK_UNKNOWN} before it is seeded. */
+    long oldestOccurredWatermarkForTest() {
+        return minOccurredSec;
+    }
+
+    /** Visible for tests: seed the watermark synchronously (production seeds it
+     *  off-thread a few seconds after construction). */
+    void seedWatermarkForTest() {
+        seedWatermark();
     }
 
     /** Fold the WAL back into the main db file (bounds the -wal sidecar). */
