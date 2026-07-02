@@ -17,6 +17,19 @@ public interface RecordStore extends AutoCloseable {
     void save(List<EventRecord> records);
 
     /**
+     * Force any records that {@link #save} has acknowledged but not yet made
+     * SELECT-visible to become visible, closing a read-your-writes gap before a
+     * rollback reads (#205). The default is a no-op: only a backend with async
+     * server-side insert buffering (ClickHouse's {@code async_insert}, where a
+     * saved row can sit in the server buffer for ~1s before it is queryable) has
+     * such a gap; SQLite, MariaDB, and Mongo are visible as soon as {@code save}
+     * returns. The recorder calls this after its flush drains the queue, so a
+     * rollback issued right after an event burst still reads every event.
+     */
+    default void flushPendingWrites() {
+    }
+
+    /**
      * Full-fat query: hydrates every persisted field of every record.
      * Use for rollback / restore / inspect — any path that has to reason
      * about the pre/post block state or the exact item payload.
