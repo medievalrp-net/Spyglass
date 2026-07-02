@@ -42,4 +42,15 @@ public interface Recorder {
      * @return {@code true} if the snapshot drained, {@code false} on timeout
      */
     boolean flush(Duration timeout);
+
+    /**
+     * Snapshot of the on-disk overflow spill backlog, so a caller can tell
+     * the operator how many records are still draining when a {@link #flush}
+     * times out (#204). Default: an empty, disabled snapshot - a recorder
+     * without a spill buffer, and test doubles, report no backlog.
+     * {@link AsyncRecorder} overrides this with the live figures.
+     */
+    default AsyncRecorder.SpillSnapshot spillSnapshot() {
+        return new AsyncRecorder.SpillSnapshot(false, 0L, 0L, 0L, 0L);
+    }
 }
