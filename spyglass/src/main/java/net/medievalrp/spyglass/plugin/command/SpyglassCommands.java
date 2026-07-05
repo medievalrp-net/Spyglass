@@ -175,8 +175,12 @@ public final class SpyglassCommands {
             }
 
             for (String name : INVENTORY_ALIASES) {
+                // Gated on its own node, not spyglass.rollback: pulling items out
+                // of a rollback-destroyed container is a distinct capability from
+                // running a rollback, so an operator can grant recovery without
+                // granting rollback (and vice versa). See plugin.yml (#199).
                 manager.command(manager.commandBuilder(root).literal(name)
-                        .permission("spyglass.rollback")
+                        .permission("spyglass.salvage")
                         .handler(ctx -> salvage.execute(ctx.sender())));
             }
 

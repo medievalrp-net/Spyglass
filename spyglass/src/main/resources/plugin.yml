@@ -20,6 +20,11 @@ permissions:
     default: op
   spyglass.rollback:
     default: op
+  # Opens /sg inventory to recover items a rollback destroyed. A standalone
+  # node, NOT implied by spyglass.rollback: taking items out of recovered
+  # containers is a distinct capability, so it is granted independently (#199).
+  spyglass.salvage:
+    default: op
   spyglass.tool:
     default: op
   spyglass.worldedit:
