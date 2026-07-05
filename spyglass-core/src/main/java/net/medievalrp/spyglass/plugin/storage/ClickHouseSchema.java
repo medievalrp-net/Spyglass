@@ -88,17 +88,26 @@ final class ClickHouseSchema {
         // Storage codecs (#21), idempotent for tables created before
         // them: ids are time-ordered v7 now, so a shared-prefix-aware
         // codec halves the column that used to be incompressible v4
-        // noise — measured the single largest consumer of store disk,
-        // twice over (the by_player projection duplicates every
-        // column). Coordinates are spatially clustered, so storing
-        // row-to-row differences compresses ~4x. MODIFY COLUMN with an
-        // unchanged codec is a cheap metadata no-op; with a new codec
-        // it applies to new parts immediately and old parts converge
-        // as merges churn them.
+        // noise - measured the single largest consumer of store disk,
+        // twice over (the by_player projection duplicates every column).
+        // Coordinate codecs (#155): the table sorts by (event, occurred,
+        // id), NOT by position, so consecutive rows jump around the map
+        // and Delta on the dense location_* columns underperforms - often
+        // worse than plain ZSTD. T64 bit-packs the narrow Minecraft
+        // coordinate range order-independently and is ~32% smaller on
+        // real scattered/organic coordinate data, with no read-path
+        // regression (measured on CH 24.8). The sparse Nullable coord
+        // columns (teleport_*, source_command_block_*) are ~95% NULL, so
+        // the null-map dominates and plain ZSTD beats any transform.
+        // MODIFY COLUMN with an unchanged codec is a cheap metadata
+        // no-op; with a new codec it applies to new parts immediately
+        // and old parts converge as merges churn them.
         for (String coordinate : COORDINATE_CODEC_COLUMNS) {
-            String type = coordinate.startsWith("location_") ? "Int32" : "Nullable(Int32)";
+            boolean dense = coordinate.startsWith("location_");
+            String type = dense ? "Int32" : "Nullable(Int32)";
+            String codec = dense ? "CODEC(T64, ZSTD(1))" : "CODEC(ZSTD(1))";
             execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
-                    + " MODIFY COLUMN " + coordinate + " " + type + " CODEC(Delta, ZSTD(1))");
+                    + " MODIFY COLUMN " + coordinate + " " + type + " " + codec);
         }
 
         // Storage v2 (#44) cannot be reached by ALTER from the v1
@@ -237,15 +246,15 @@ final class ClickHouseSchema {
                 + "    source_plugin_name Nullable(String),\n"
                 + "    source_command_block_world_id Nullable(UUID),\n"
                 + "    source_command_block_world_name Nullable(String),\n"
-                + "    source_command_block_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    source_command_block_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    source_command_block_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    source_command_block_x Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    source_command_block_y Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    source_command_block_z Nullable(Int32) CODEC(ZSTD(1)),\n"
                 + "    source_description Nullable(String),\n"
                 + "    location_world_id UUID,\n"
                 + "    location_world_name LowCardinality(String),\n"
-                + "    location_x Int32 CODEC(Delta, ZSTD(1)),\n"
-                + "    location_y Int32 CODEC(Delta, ZSTD(1)),\n"
-                + "    location_z Int32 CODEC(Delta, ZSTD(1)),\n"
+                + "    location_x Int32 CODEC(T64, ZSTD(1)),\n"
+                + "    location_y Int32 CODEC(T64, ZSTD(1)),\n"
+                + "    location_z Int32 CODEC(T64, ZSTD(1)),\n"
                 + "    server LowCardinality(String) DEFAULT '',\n"
                 + "    target Nullable(String),\n"
                 // --- Block events (Break / Place / Use) ---
@@ -286,14 +295,14 @@ final class ClickHouseSchema {
                 // --- Teleport ---
                 + "    teleport_from_world_id Nullable(UUID),\n"
                 + "    teleport_from_world_name Nullable(String),\n"
-                + "    teleport_from_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    teleport_from_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    teleport_from_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_from_x Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    teleport_from_y Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    teleport_from_z Nullable(Int32) CODEC(ZSTD(1)),\n"
                 + "    teleport_to_world_id Nullable(UUID),\n"
                 + "    teleport_to_world_name Nullable(String),\n"
-                + "    teleport_to_x Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    teleport_to_y Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
-                + "    teleport_to_z Nullable(Int32) CODEC(Delta, ZSTD(1)),\n"
+                + "    teleport_to_x Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    teleport_to_y Nullable(Int32) CODEC(ZSTD(1)),\n"
+                + "    teleport_to_z Nullable(Int32) CODEC(ZSTD(1)),\n"
                 + "    teleport_cause LowCardinality(Nullable(String)),\n"
                 // --- Entity events (Death / Hit / Mount / Name) ---
                 + "    entity_type LowCardinality(Nullable(String)),\n"
