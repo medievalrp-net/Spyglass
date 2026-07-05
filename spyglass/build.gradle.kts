@@ -34,6 +34,7 @@ java {
 }
 
 repositories {
+    maven("https://repo.xenondevs.xyz/releases")
     maven("https://maven.enginehub.org/repo/")
 }
 
@@ -79,6 +80,14 @@ dependencies {
     // requires relocation to avoid clashing with other plugins' copies. It is
     // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
     implementation("org.bstats:bstats-bukkit:$bstatsVersion")
+    // InvUI 1.49 (last multi-version line; MC 1.14-1.21.x, Java 21). Shaded +
+    // relocated into BOTH jars like bStats (library-loader can't relocate,
+    // and InvUI's reflective adapter lookup needs its package string rewritten
+    // in place). Powers the 1.21.x salvage GUI; on 26.x (no InvUI) salvage is
+    // command-only and these classes are never loaded. The aggregator bundles
+    // adapters for MC 1.14-1.21.x; trimming to the 1.21.x set to slim the lean
+    // jar is a follow-up (needs the rXX->MC map, verified in-game).
+    implementation("xyz.xenondevs.invui:invui:1.49")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -180,7 +189,7 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
     // through `libraries:` (the loader can't relocate it), so it travels bundled
     // and relocated in the lean jar too - it's tiny.
     dependencies {
-        exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" }
+        exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" && it.moduleGroup != "xyz.xenondevs.invui" }
     }
 }
 
@@ -191,6 +200,8 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
 // keeps the rule in one place.
 tasks.withType<ShadowJar>().configureEach {
     relocate("org.bstats", "net.medievalrp.spyglass.libs.bstats")
+    relocate("xyz.xenondevs.invui", "net.medievalrp.spyglass.libs.invui")
+    relocate("xyz.xenondevs.inventoryaccess", "net.medievalrp.spyglass.libs.inventoryaccess")
 }
 
 tasks.build {

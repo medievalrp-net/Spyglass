@@ -16,7 +16,8 @@ Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases to
 | `/sg restore <query>` | `rs`, `rst` | `spyglass.rollback` | Re-apply previously-rolled-back events |
 | `/sg undo` | `u` | `spyglass.rollback` | Undo your most recent rollback or restore |
 | `/sg rbqueue [...]` | `queue`, `rbq` | `spyglass.rollback` | List, cancel, or resume rollback jobs |
-| `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed |
+| `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
+| `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg tele <world> <x> <y> <z>` | - | `spyglass.tele` | Teleport (used by clickable search results) |
 
@@ -142,7 +143,9 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 When a force-overwrite rollback destroys a container that had items in it - a chest someone filled after the grief, restored back to stone - those items are **not lost**. The rollback captures the destroyed inventory first and files it under `/sg inventory`, gated behind its own `spyglass.salvage` node (granted independently of `spyglass.rollback`).
 
-`/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. Each withdrawal is logged as a `salvage-withdraw` event (find them with `/sg search a:salvage-withdraw`); a container disappears from the GUI once emptied. From the console or RCON the command prints a flat text listing instead.
+On Minecraft 1.21.x, `/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. A container disappears from the GUI once emptied.
+
+On servers without the GUI (Minecraft 26.x) and from the console or RCON, `/sg inventory` prints a text listing instead. Each captured container shows an id; recover it with `/sg inventory <id>` (in-game players only), or click the `[Recover]` prompt next to a listing line. The command withdraws that container's items straight into your inventory server-side, with no inventory-drag surface. Either way, every withdrawal is logged as a `salvage-withdraw` event (find them with `/sg search a:salvage-withdraw`).
 
 Only containers the rollback *actually* destroys are salvaged - a chest in the rolled region that the rollback leaves untouched is never captured, so items are never duplicated. Salvage snapshots are kept for 30 days.
 
