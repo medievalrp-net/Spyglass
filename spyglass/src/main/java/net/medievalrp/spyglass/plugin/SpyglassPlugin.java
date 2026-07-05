@@ -120,9 +120,11 @@ import net.medievalrp.spyglass.plugin.salvage.MariaDbSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.MongoSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SqliteSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
-import net.medievalrp.spyglass.plugin.salvage.SalvageGui;
 import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.SalvageView;
+import net.medievalrp.spyglass.plugin.salvage.SalvageViews;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
+import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawals;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MariaDbToolStateStore;
@@ -606,14 +608,19 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageCtx, "salvage-withdraw", taken.getType().name(),
                     snap.containerType(), 0, amount, salvageStored, null));
         };
-        SalvageGui salvageGui = salvageStore == null ? null
-                : new SalvageGui(salvageStore, queryExecutor, serviceSupport::onMainThread,
-                        salvageWithdrawLogger, config.limits().searchResult(), getLogger());
-        if (salvageGui != null) {
-            getServer().getPluginManager().registerEvents(salvageGui, this);
-        }
+        // One shared, dupe-guarded extract engine behind both the GUI and the
+        // command. On versions InvUI 1.49 supports (1.x) we build the InvUI GUI;
+        // on 26.x SalvageViews returns null and salvage is command-only (no
+        // unverified inventory-click surface). The InvUI view manages its own
+        // click listeners, so no registerEvents here.
+        SalvageWithdrawals salvageWithdrawals = salvageStore == null ? null
+                : new SalvageWithdrawals(salvageStore, queryExecutor, salvageWithdrawLogger, getLogger());
+        SalvageView salvageView = salvageStore == null ? null
+                : SalvageViews.guiOrNull(this, getServer().getBukkitVersion(), salvageStore,
+                        queryExecutor, serviceSupport::onMainThread, salvageWithdrawals,
+                        config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
-                salvageStore, salvageGui, config.limits().searchResult(), serviceSupport);
+                salvageStore, salvageView, salvageWithdrawals, config.limits().searchResult(), serviceSupport);
         // #168: /spyglass stats. Null ingestStats (analytics off) => the command
         // explains how to enable it.
         StatsService statsService = new StatsService(ingestStats, recorder::spillSnapshot);

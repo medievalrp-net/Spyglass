@@ -179,9 +179,18 @@ public final class SpyglassCommands {
                 // of a rollback-destroyed container is a distinct capability from
                 // running a rollback, so an operator can grant recovery without
                 // granting rollback (and vice versa). See plugin.yml (#199).
+                // No args: open the GUI (InvUI, supported versions) or print the
+                // listing (26.x / console).
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.salvage")
                         .handler(ctx -> salvage.execute(ctx.sender())));
+                // /sg inventory <id>: recover a container's items via command
+                // (players only). The only recovery path on versions without the
+                // GUI, and always available for the clickable [Recover] listing.
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("id", StringParser.stringParser())
+                        .permission("spyglass.salvage")
+                        .handler(ctx -> salvage.withdraw(ctx.sender(), ctx.get("id"))));
             }
 
             // /spyglass tele <world> <x> <y> <z> — wired to search-result click
