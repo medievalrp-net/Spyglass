@@ -65,6 +65,7 @@ Values are plain terms. Wrap in double quotes to search for a value that contain
 | `m:` | `message:` | `m:hello` | Chat, sign, or book text (substring) |
 | `rcp:` | `recipient:` | `rcp:Steve` | Private-message recipient |
 | `r:` | `radius:` | `r:50` | Search radius around you in blocks. Default applies if omitted; use `-g` for global |
+| `cr:` | `chunkradius:` | `cr:1` · `cr:3` | Search radius in chunks, full height. `cr:1` = your chunk, `cr:2` = 3x3. Overrides the default radius |
 | `t:` | `since:` | `t:1d`, `t:30m`, `t:2w` | Lower time bound (how far back). Default is 4h |
 | `before:` | - | `t:12h before:6h` | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago |
 | `w:` | `world:` | `w:world_nether` | Restrict to one world |

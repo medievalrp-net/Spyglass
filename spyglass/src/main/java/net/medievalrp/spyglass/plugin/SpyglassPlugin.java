@@ -20,6 +20,7 @@ import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
 import net.medievalrp.spyglass.plugin.command.param.CauseParam;
+import net.medievalrp.spyglass.plugin.command.param.ChunkRadiusParam;
 import net.medievalrp.spyglass.plugin.command.param.CustomItemParam;
 import net.medievalrp.spyglass.plugin.command.param.EnchantParam;
 import net.medievalrp.spyglass.plugin.command.param.EntityParam;
@@ -448,6 +449,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         apiImpl.registerQueryParamHandler(new PlayerParam());
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
+        apiImpl.registerQueryParamHandler(new ChunkRadiusParam());
         apiImpl.registerQueryParamHandler(new TimeParam());
         apiImpl.registerQueryParamHandler(new BeforeParam());
         apiImpl.registerQueryParamHandler(new BlockParam());
