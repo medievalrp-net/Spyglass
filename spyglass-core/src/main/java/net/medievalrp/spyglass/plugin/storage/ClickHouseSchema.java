@@ -96,7 +96,15 @@ final class ClickHouseSchema {
         // worse than plain ZSTD. T64 bit-packs the narrow Minecraft
         // coordinate range order-independently and is ~32% smaller on
         // real scattered/organic coordinate data, with no read-path
-        // regression (measured on CH 24.8). The sparse Nullable coord
+        // regression (measured on CH 24.8). ZSTD(3) rather than (1)
+        // behind it: identical bytes and read speed on scattered data,
+        // but 14-19% smaller on WorldEdit scan-shaped runs, the one
+        // regime where T64 loses ground to Delta; the extra compress
+        // cost lands on ClickHouse merge threads and is negligible at
+        // coordinate-column volumes. Chaining Delta before T64 is not
+        // an option: 24.8 rejects it at INSERT (T64 needs element-
+        // aligned input), and on 26.5, where it runs, it gave the
+        // whole scattered-data win back. The sparse Nullable coord
         // columns (teleport_*, source_command_block_*) are ~95% NULL, so
         // the null-map dominates and plain ZSTD beats any transform.
         // MODIFY COLUMN with an unchanged codec is a cheap metadata
@@ -105,7 +113,7 @@ final class ClickHouseSchema {
         for (String coordinate : COORDINATE_CODEC_COLUMNS) {
             boolean dense = coordinate.startsWith("location_");
             String type = dense ? "Int32" : "Nullable(Int32)";
-            String codec = dense ? "CODEC(T64, ZSTD(1))" : "CODEC(ZSTD(1))";
+            String codec = dense ? "CODEC(T64, ZSTD(3))" : "CODEC(ZSTD(1))";
             execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
                     + " MODIFY COLUMN " + coordinate + " " + type + " " + codec);
         }
@@ -252,9 +260,9 @@ final class ClickHouseSchema {
                 + "    source_description Nullable(String),\n"
                 + "    location_world_id UUID,\n"
                 + "    location_world_name LowCardinality(String),\n"
-                + "    location_x Int32 CODEC(T64, ZSTD(1)),\n"
-                + "    location_y Int32 CODEC(T64, ZSTD(1)),\n"
-                + "    location_z Int32 CODEC(T64, ZSTD(1)),\n"
+                + "    location_x Int32 CODEC(T64, ZSTD(3)),\n"
+                + "    location_y Int32 CODEC(T64, ZSTD(3)),\n"
+                + "    location_z Int32 CODEC(T64, ZSTD(3)),\n"
                 + "    server LowCardinality(String) DEFAULT '',\n"
                 + "    target Nullable(String),\n"
                 // --- Block events (Break / Place / Use) ---
