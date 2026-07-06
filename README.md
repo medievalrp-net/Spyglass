@@ -96,7 +96,7 @@ Root command is `/spyglass`, aliased to `/sg`. The full reference - every comman
 
 ## Modules
 
-- `spyglass-api/` is the public API. Third-party plugins depend on this only.
+- `spyglass-api/` is the public API. Third-party plugins depend on this only. Published to Maven Central as `net.medievalrp:spyglass-api`; see [API.md](API.md).
 - `spyglass-core/` holds the shared internals (codecs, storage glue).
 - `spyglass/` is the Paper plugin.
 - `spyglass-velocity/` is an optional Velocity proxy companion for cross-server search. It is read-only by design: it never writes records and never rolls back.
