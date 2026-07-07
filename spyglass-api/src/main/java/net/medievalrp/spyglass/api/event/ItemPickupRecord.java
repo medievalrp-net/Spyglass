@@ -18,8 +18,19 @@ public record ItemPickupRecord(
         StoredItem item) implements EventRecord {
 
     public static ItemPickupRecord of(RecordContext ctx, String target, int amount, StoredItem item) {
+        return of(ctx, "pickup", target, amount, item);
+    }
+
+    /**
+     * Same shape with an explicit event name, for events that reuse the pickup
+     * record without being a world "pickup" - e.g. the destination side of an
+     * automated hopper/dropper transfer ("transfer-in", #226). Keeps
+     * EventCatalog's name to record-class mapping honest with no codec change.
+     */
+    public static ItemPickupRecord of(RecordContext ctx, String event, String target, int amount,
+            StoredItem item) {
         return new ItemPickupRecord(
-                ctx.id(), "pickup", ctx.occurred(), ctx.expiresAt(),
+                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target, amount, item);
     }
 }
