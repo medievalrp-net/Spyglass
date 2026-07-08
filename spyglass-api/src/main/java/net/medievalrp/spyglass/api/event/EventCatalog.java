@@ -64,6 +64,14 @@ public final class EventCatalog {
         // (transfer-in).
         m.put("transfer-out", ItemDropRecord.class);
         m.put("transfer-in", ItemPickupRecord.class);
+        // Bucket-placed / bucket-picked-up fluid (#228). A poured water/lava/
+        // powder-snow source fires no BlockPlaceEvent, so without these it is
+        // invisible and unrollbackable. They reuse the block place/break record
+        // shapes - already rollbackable and persisted by every backend, no
+        // codec/schema change - so bucket-empty rolls back like a place (removes
+        // the fluid) and bucket-fill like a break (restores it).
+        m.put("bucket-empty", BlockPlaceRecord.class);
+        m.put("bucket-fill", BlockBreakRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
         // Killer-perspective mirror of a death. Reuses EntityHitRecord

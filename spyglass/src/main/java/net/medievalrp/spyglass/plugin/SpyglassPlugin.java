@@ -55,6 +55,7 @@ import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockBreakListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceListener;
+import net.medievalrp.spyglass.plugin.listener.block.BucketListener;
 import net.medievalrp.spyglass.plugin.listener.block.ContainerDropListener;
 import net.medievalrp.spyglass.plugin.listener.block.DependantBreakListener;
 import net.medievalrp.spyglass.plugin.listener.block.FallingBlockLandListener;
@@ -392,6 +393,10 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockBurnListener(recorder, support, this),
                 new BlockPlaceListener(recorder, support, deferredSerializer),
                 new BlockMultiPlaceListener(recorder, support),
+                // Bucket-placed / -removed fluid (#228). Reuses the block
+                // place/break records; per-event gated on enabledEvents like the
+                // hopper listener since one listener carries both toggles.
+                new BucketListener(recorder, support, deferredSerializer, enabledEvents),
                 new FallingBlockLandListener(recorder, support),
                 new ContainerTransactionListener(recorder, support, deferredSerializer),
                 new ContainerDragListener(recorder, support),
