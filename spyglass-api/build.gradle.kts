@@ -1,6 +1,13 @@
 plugins {
     `java-library`
     `maven-publish`
+    signing
+    // Marks this module as a Central Portal publishable unit. nmcp 1.x has no
+    // per-module publish task; the root aggregation plugin owns the upload task
+    // (publishAggregationToCentralPortal). Version comes from the root
+    // aggregation plugin's classpath, so it is omitted here. See the root
+    // build.gradle.kts.
+    id("com.gradleup.nmcp")
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -44,12 +51,25 @@ publishing {
             artifactId = "spyglass-api"
             pom {
                 name.set("Spyglass API")
-                description.set("Public record / query / rollback types for the Spyglass forensics plugin.")
+                description.set("Public record, query, and rollback types for the Spyglass forensics plugin.")
                 url.set("https://github.com/medievalrp-net/Spyglass")
                 licenses {
                     license {
-                        name.set("MIT")
+                        name.set("Apache License 2.0")
+                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
                     }
+                }
+                developers {
+                    developer {
+                        id.set("medievalrp")
+                        name.set("MedievalRP")
+                        url.set("https://medievalrp.net")
+                    }
+                }
+                scm {
+                    connection.set("scm:git:https://github.com/medievalrp-net/Spyglass.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/medievalrp-net/Spyglass.git")
+                    url.set("https://github.com/medievalrp-net/Spyglass")
                 }
             }
         }
@@ -59,5 +79,18 @@ publishing {
             name = "local"
             url = uri(rootProject.layout.buildDirectory.dir("repo"))
         }
+    }
+}
+
+signing {
+    // Central requires every artifact be GPG-signed. CI supplies an
+    // ASCII-armored key and its passphrase via env; sign only when they are
+    // present so a local `build` / `publishToMavenLocal` still works keyless.
+    val signingKey = providers.environmentVariable("SIGNING_KEY").orNull
+    val signingPassword = providers.environmentVariable("SIGNING_PASSWORD").orNull
+    isRequired = signingKey != null
+    if (signingKey != null) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign(publishing.publications["api"])
     }
 }

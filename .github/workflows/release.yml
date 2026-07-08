@@ -18,6 +18,10 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      release_exists: ${{ steps.exists.outputs.exists }}
+      has_central: ${{ steps.guard.outputs.has_central }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +39,21 @@ jobs:
             echo "Release v${{ steps.ver.outputs.version }} already exists - nothing to do."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Gate the Maven Central publish on the credentials existing, so releases
+      # keep working before the one-time Central setup is done (see PUBLISHING.md).
+      # secrets can't be read in a job-level `if`, so surface presence as an output.
+      - name: Detect Central Portal credentials
+        id: guard
+        env:
+          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+        run: |
+          if [ -n "$CENTRAL_PORTAL_USERNAME" ]; then
+            echo "has_central=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_central=false" >> "$GITHUB_OUTPUT"
+            echo "CENTRAL_PORTAL_USERNAME not set - the Maven Central publish will be skipped."
           fi
 
       - name: Set up JDK 21
@@ -95,3 +114,31 @@ jobs:
             dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
             --title "Spyglass ${{ steps.ver.outputs.version }}" \
             --notes-file dist/NOTES.md
+
+  # Publishes spyglass-api (Apache-2.0) to Maven Central, aligned with the
+  # GitHub release above. Runs only when a new release was just cut and the
+  # Central credentials are configured; otherwise it is skipped, not failed.
+  # One-time setup (account, namespace, signing key, secrets) is in PUBLISHING.md.
+  publish-maven-central:
+    needs: release
+    if: needs.release.outputs.release_exists == 'false' && needs.release.outputs.has_central == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish spyglass-api to Maven Central
+        env:
+          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace
