@@ -26,3 +26,6 @@ docs/superpowers/
 
 # Stray run/boot logs
 *.log
+
+# Local reference data + analysis (production DB samples, codec experiments) - never published
+workspace/
