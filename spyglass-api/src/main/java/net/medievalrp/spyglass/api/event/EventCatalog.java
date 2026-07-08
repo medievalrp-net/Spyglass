@@ -55,6 +55,15 @@ public final class EventCatalog {
         m.put("drop", ItemDropRecord.class);
         m.put("pickup", ItemPickupRecord.class);
         m.put("clone", ItemPickupRecord.class);
+        // Automated container-to-container movement by a hopper / dropper /
+        // dispenser (InventoryMoveItemEvent, #226). Informational only, so it
+        // reuses the item drop/pickup record shapes - both storage backends
+        // already persist those, no codec/schema change. Both endpoints are
+        // logged so inspecting either container surfaces the flow: the source
+        // loses items (transfer-out) and the destination gains them
+        // (transfer-in).
+        m.put("transfer-out", ItemDropRecord.class);
+        m.put("transfer-in", ItemPickupRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
         // Killer-perspective mirror of a death. Reuses EntityHitRecord
