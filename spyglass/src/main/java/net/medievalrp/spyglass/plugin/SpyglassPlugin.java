@@ -644,6 +644,45 @@ public final class SpyglassPlugin extends JavaPlugin {
                         java.time.Duration.ofSeconds(config.storage().retention().seconds()),
                         config.limits().rollbackBatchSize(), importHistory, getLogger());
 
+        // /spyglass migrate <backend>: copy the active backend's records into
+        // another configured backend. The factory opens the TARGET store from
+        // the same config blocks the boot switch reads; MigrateService owns
+        // its lifecycle (opened per run, closed after).
+        net.medievalrp.spyglass.plugin.migrate.MigrateService migrateService =
+                new net.medievalrp.spyglass.plugin.migrate.MigrateService(
+                        recordStore, config.database().backend(), config.database(),
+                        serviceSupport,
+                        target -> switch (target) {
+                            case MONGO -> new MongoRecordStore(
+                                    config.database().uri(), config.database().name(),
+                                    config.database().collection(), new IndexManager(),
+                                    retentionPolicy);
+                            case CLICKHOUSE -> {
+                                SpyglassConfig.ClickHouse ch = config.database().clickhouse();
+                                yield new ClickHouseRecordStore(
+                                        ch.host(), ch.port(), ch.database(), ch.table(),
+                                        ch.user(), ch.password(), ch.ssl(), retentionPolicy);
+                            }
+                            case SQLITE -> {
+                                java.nio.file.Path configured =
+                                        java.nio.file.Path.of(config.database().sqlite().path());
+                                yield new SqliteRecordStore(
+                                        configured.isAbsolute()
+                                                ? configured
+                                                : getDataFolder().toPath().resolve(configured),
+                                        false, retentionPolicy);
+                            }
+                            case MARIADB -> {
+                                SpyglassConfig.MariaDb maria = config.database().mariadb();
+                                yield new MariaDbRecordStore(
+                                        maria.host(), maria.port(), maria.database(),
+                                        maria.user(), maria.password(), maria.ssl(),
+                                        retentionPolicy);
+                            }
+                        },
+                        importService::isRunning,
+                        config.limits().rollbackBatchSize(), getLogger());
+
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl, importConfig, importDir);
 
         // Container salvage GUI + command (#76). The withdraw logger records a
@@ -694,7 +733,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 suggestions,
                 importService,
                 importConfig,
-                importDir);
+                importDir,
+                migrateService);
         commands.register();
 
         if (isWorldEditInstalled()) {
