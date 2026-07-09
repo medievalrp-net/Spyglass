@@ -163,6 +163,7 @@ public final class ImportService {
                                 String serverName, SourceOpener opener) throws IOException {
         String senderName = sender.getName();
         try (CoreProtectSource source = opener.open()) {
+            warnIfHistoryOlderThanRetention(sender, source);
             WorldMap worldMap = ImportPipeline.resolveWorlds(source, worldContainer);
             MappingContext ctx = new MappingContext(worldMap, serverName, retention, Instant.now());
             RecordStoreSink sink = new RecordStoreSink(store, batchSize);
@@ -240,6 +241,46 @@ public final class ImportService {
         } catch (Exception ex) {
             throw new RuntimeException("ClickHouse async-insert flush failed: " + ex.getMessage(), ex);
         }
+    }
+
+    /**
+     * Pre-flight transparency (#1): if part of the source history predates
+     * the configured retention, warn the operator up front — before the
+     * heavy streaming pass — that those events will be aged out after import
+     * (immediately on ClickHouse via {@code OPTIMIZE FINAL}, on the next
+     * prune sweep otherwise), and how far back it goes. Informational only:
+     * the import proceeds; the operator can raise {@code storage.retention}
+     * (or set it {@code "never"}) and re-import to keep the full history.
+     * Best-effort — a preview query failure skips the warning, never fails
+     * an otherwise-valid import.
+     */
+    private void warnIfHistoryOlderThanRetention(CommandSender sender, CoreProtectSource source) {
+        CoreProtectSource.RetentionPreview preview;
+        long cutoffSec;
+        try {
+            cutoffSec = Instant.now().minus(retention).getEpochSecond();
+            preview = source.retentionPreview(cutoffSec);
+        } catch (IOException | RuntimeException ex) {
+            logger.log(Level.WARNING, "Retention preview failed; skipping the pre-import warning", ex);
+            return;
+        }
+        if (!preview.hasAgedOutRows()) {
+            return;
+        }
+        long aged = preview.rowsBeforeCutoff();
+        long total = preview.totalRows();
+        double pct = 100.0 * aged / total;
+        java.time.LocalDate cutoff = java.time.LocalDate.ofInstant(
+                Instant.ofEpochSecond(cutoffSec), java.time.ZoneOffset.UTC);
+        java.time.LocalDate oldest = java.time.LocalDate.ofInstant(
+                Instant.ofEpochSecond(preview.oldestEpochSeconds()), java.time.ZoneOffset.UTC);
+        tell(sender, String.format(java.util.Locale.ROOT,
+                "WARNING: %,d of %,d events (%.1f%%) are older than your retention cutoff "
+                        + "%s (retention %dd) and will be aged out after import - immediately "
+                        + "on ClickHouse, on the next prune sweep otherwise. Oldest source "
+                        + "event: %s. To keep the full history, raise storage.retention (or "
+                        + "set it \"never\") and re-import.",
+                aged, total, pct, cutoff, retention.toDays(), oldest));
     }
 
     private String blankToDefault(String serverName) {
