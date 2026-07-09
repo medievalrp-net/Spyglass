@@ -173,6 +173,23 @@ public interface RecordStore extends AutoCloseable {
     }
 
     /**
+     * Best-effort player-name -> UUID lookup against the store's OWN data,
+     * for players this server has never seen. The Bukkit user cache only
+     * knows players who joined here, but a CoreProtect import (or a store
+     * shared across servers) holds records for players who never did -
+     * exactly the griefers an operator wants to {@code /sg rollback p:<name>}.
+     * Backends whose schema can't filter on {@code source.playerName}
+     * (SQLite / MariaDB palette-interned layouts) override this so the
+     * player param can turn an unknown name into a {@code source.playerId}
+     * predicate instead. Default: unknown ({@code null}), which preserves
+     * the verbatim-name fallback.
+     */
+    @Nullable
+    default UUID resolvePlayerId(String playerName) {
+        return null;
+    }
+
+    /**
      * Display-only query: hydrates just the fields the search renderer
      * needs (event, origin, source, location, target, scalar extras like
      * amount/damage/recipients/commandLine/address).

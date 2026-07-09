@@ -27,5 +27,7 @@ docs/superpowers/
 # Stray run/boot logs
 *.log
 
+# Local reference data + analysis (production DB samples, codec experiments) - never published
+workspace/
 # CoreProtect importer test fixtures (large DBs, world data)
 coreprotect-test/

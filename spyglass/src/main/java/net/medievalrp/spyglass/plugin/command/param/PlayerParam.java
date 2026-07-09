@@ -24,6 +24,24 @@ public final class PlayerParam implements QueryParamHandler {
         this.nameResolver = nameResolver;
     }
 
+    /**
+     * Bukkit-cache-first resolution with a store-backed fallback. The
+     * Bukkit user cache only knows players who joined THIS server; a
+     * CoreProtect-imported history is full of players who never did, and
+     * "roll back the old griefer by name" is the core migration use case.
+     * When the cache misses, ask the record store's own intern data
+     * ({@link net.medievalrp.spyglass.plugin.storage.RecordStore#resolvePlayerId})
+     * before falling back to a verbatim-name match - which the SQLite /
+     * MariaDB rollback readers cannot evaluate at all. The store lookup is
+     * a single tiny indexed-table SELECT, safe on the command thread.
+     */
+    public static PlayerParam withStoreFallback(Function<String, UUID> storeLookup) {
+        return new PlayerParam(name -> {
+            UUID viaBukkit = resolveViaBukkit(name);
+            return viaBukkit != null ? viaBukkit : storeLookup.apply(name);
+        });
+    }
+
     @Override
     public List<String> aliases() {
         return List.of("p", "player");

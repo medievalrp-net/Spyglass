@@ -93,6 +93,61 @@ class PlayerParamResolveTest {
         }
     }
 
+    // ===== Store fallback (imported-history players) ==================
+    // A CoreProtect import fills the store with players Bukkit never saw;
+    // "roll back the old griefer by name" must resolve them to a playerId
+    // predicate via RecordStore.resolvePlayerId, not a playerName match
+    // the SQLite/MariaDB rollback readers reject.
+
+    @Test
+    void bukkitMissFallsBackToStoreLookup() throws Exception {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            bukkit.when(() -> Bukkit.getPlayerExact(anyString())).thenReturn(null);
+            bukkit.when(() -> Bukkit.getOfflinePlayerIfCached(anyString())).thenReturn(null);
+
+            PlayerParam param = PlayerParam.withStoreFallback(
+                    name -> "ItzSh4rkyz".equals(name) ? ALICE : null);
+            QueryPredicate predicate = param.parse("p", "ItzSh4rkyz", ctx());
+
+            QueryPredicate.Eq eq = (QueryPredicate.Eq) predicate;
+            assertThat(eq.field()).isEqualTo("source.playerId");
+            assertThat(eq.value()).isEqualTo(ALICE);
+            bukkit.verify(() -> Bukkit.getOfflinePlayer(anyString()), never());
+        }
+    }
+
+    @Test
+    void bukkitAndStoreMissKeepsVerbatimNameFallback() throws Exception {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            bukkit.when(() -> Bukkit.getPlayerExact(anyString())).thenReturn(null);
+            bukkit.when(() -> Bukkit.getOfflinePlayerIfCached(anyString())).thenReturn(null);
+
+            PlayerParam param = PlayerParam.withStoreFallback(name -> null);
+            QueryPredicate predicate = param.parse("p", "NeverAnywhere", ctx());
+
+            QueryPredicate.Eq eq = (QueryPredicate.Eq) predicate;
+            assertThat(eq.field()).isEqualTo("source.playerName");
+            assertThat(eq.value()).isEqualTo("NeverAnywhere");
+        }
+    }
+
+    @Test
+    void bukkitHitNeverConsultsTheStore() throws Exception {
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            Player online = mock(Player.class);
+            when(online.getUniqueId()).thenReturn(ALICE);
+            bukkit.when(() -> Bukkit.getPlayerExact("Alice")).thenReturn(online);
+
+            boolean[] storeAsked = {false};
+            PlayerParam param = PlayerParam.withStoreFallback(name -> {
+                storeAsked[0] = true;
+                return null;
+            });
+            param.parse("p", "Alice", ctx());
+            assertThat(storeAsked[0]).as("store fallback consulted despite Bukkit hit").isFalse();
+        }
+    }
+
     private static ParamContext ctx() {
         return new ParamContext(null, null, 100);
     }

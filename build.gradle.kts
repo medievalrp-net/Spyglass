@@ -1,5 +1,29 @@
 plugins {
     base
+    // Aggregates module publications and uploads them to the Maven Central
+    // Portal. Only :spyglass-api is included (see the dependencies block below),
+    // so spyglass-core / spyglass / spyglass-velocity stay unpublished GPL
+    // internals. Publish task: publishAggregationToCentralPortal.
+    id("com.gradleup.nmcp.aggregation") version "1.6.1"
+}
+
+nmcpAggregation {
+    // Root project "Spyglass" and module "spyglass" collide under nmcp's
+    // case-insensitive duplicate-name guard. We aggregate exactly one project
+    // by path (:spyglass-api) below, so the name overlap is harmless here.
+    allowDuplicateProjectNames.set(true)
+    centralPortal {
+        username = System.getenv("CENTRAL_PORTAL_USERNAME")
+        password = System.getenv("CENTRAL_PORTAL_PASSWORD")
+        // USER_MANAGED: CI uploads and validates the deployment, then a human
+        // clicks "Publish" in the Central Portal (releases are immutable once
+        // published). Switch to "AUTOMATIC" to release without that step.
+        publishingType = "USER_MANAGED"
+    }
+}
+
+dependencies {
+    nmcpAggregation(project(":spyglass-api"))
 }
 
 val paperApiVersion = "1.21.8-R0.1-SNAPSHOT"

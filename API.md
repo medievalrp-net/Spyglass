@@ -12,20 +12,22 @@ access to the Spyglass plugin source.
 
 ## 1. Adding the dependency
 
-The API artifact is `net.medievalrp:spyglass-api:1.0.0`. Mark it
-`compileOnly` (Gradle) or `provided` (Maven) — at runtime the
-Spyglass plugin supplies the classes. Bundling them into your
+The API artifact is `net.medievalrp:spyglass-api`, published on
+Maven Central. Use the version matching the Spyglass release you
+build against (see the [releases page](https://github.com/medievalrp-net/Spyglass/releases)).
+Mark it `compileOnly` (Gradle) or `provided` (Maven): at runtime
+the Spyglass plugin supplies the classes. Bundling them into your
 shaded jar will cause classloader conflicts.
 
 ### Gradle (Kotlin DSL)
 
 ```kotlin
 repositories {
-    maven("https://repo.medievalrp.net/releases") // or wherever it's published
+    mavenCentral()
 }
 
 dependencies {
-    compileOnly("net.medievalrp:spyglass-api:1.0.0")
+    compileOnly("net.medievalrp:spyglass-api:1.0.7")
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
 }
 ```
@@ -34,7 +36,7 @@ dependencies {
 
 ```groovy
 dependencies {
-    compileOnly 'net.medievalrp:spyglass-api:1.0.0'
+    compileOnly 'net.medievalrp:spyglass-api:1.0.7'
     compileOnly 'io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT'
 }
 ```
@@ -45,18 +47,18 @@ dependencies {
 <dependency>
     <groupId>net.medievalrp</groupId>
     <artifactId>spyglass-api</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.7</version>
     <scope>provided</scope>
 </dependency>
 ```
 
 ### Local jar (for prototyping)
 
-Drop `spyglass-api-1.0.0.jar` into a `libs/` folder and:
+Drop `spyglass-api-1.0.7.jar` into a `libs/` folder and:
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/spyglass-api-1.0.0.jar"))
+    compileOnly(files("libs/spyglass-api-1.0.7.jar"))
 }
 ```
 

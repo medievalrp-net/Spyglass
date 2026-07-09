@@ -257,6 +257,49 @@ public final class JdbcCoreProtectSource implements CoreProtectSource {
                 parseUuidOrNull(rs.getString("uuid")))), "co_item");
     }
 
+    @Override
+    public RetentionPreview retentionPreview(long cutoffEpochSeconds) throws IOException {
+        // Aggregate MIN/MAX/COUNT and a before-cutoff tally across the tables
+        // the importer streams. Same missing-table tolerance as worldNames():
+        // an operator who disabled an event type just contributes nothing.
+        String[] tables = {"co_block", "co_session", "co_chat",
+                "co_command", "co_container", "co_item"};
+        long oldest = Long.MAX_VALUE;
+        long newest = Long.MIN_VALUE;
+        long rowsBeforeCutoff = 0;
+        long totalRows = 0;
+        for (String t : tables) {
+            String sql = "SELECT MIN(time), MAX(time), COUNT(*), "
+                    + "SUM(CASE WHEN time < ? THEN 1 ELSE 0 END) "
+                    + "FROM " + t + " WHERE time > 0";
+            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+                ps.setLong(1, cutoffEpochSeconds);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        continue;
+                    }
+                    long count = rs.getLong(3);
+                    if (count == 0) {
+                        continue;
+                    }
+                    oldest = Math.min(oldest, rs.getLong(1));
+                    newest = Math.max(newest, rs.getLong(2));
+                    rowsBeforeCutoff += rs.getLong(4);
+                    totalRows += count;
+                }
+            } catch (SQLException ex) {
+                if (!isMissingTable(ex)) {
+                    throw new IOException("Failed retention preview on " + t
+                            + " from " + label + ": " + ex.getMessage(), ex);
+                }
+            }
+        }
+        if (totalRows == 0) {
+            return new RetentionPreview(0, 0, 0, 0);
+        }
+        return new RetentionPreview(oldest, newest, rowsBeforeCutoff, totalRows);
+    }
+
     @FunctionalInterface
     private interface RowHandler {
         void accept(ResultSet rs) throws SQLException;

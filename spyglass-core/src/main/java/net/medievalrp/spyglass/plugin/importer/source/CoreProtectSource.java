@@ -35,6 +35,33 @@ public interface CoreProtectSource extends AutoCloseable {
     void streamItemRows(Consumer<CoreProtectItemRow> consumer) throws IOException;
 
     /**
+     * Pre-flight retention preview over the tables the importer actually
+     * reads: the oldest and newest event time (epoch seconds) and how many
+     * rows predate {@code cutoffEpochSeconds} — i.e. how many would be aged
+     * out by the configured retention right after import. Rows with a
+     * non-positive time are ignored. Lets {@code /spyglass import} warn the
+     * operator, before doing the heavy streaming pass, that part of their
+     * history is older than {@code storage.retention} and will not be kept.
+     */
+    RetentionPreview retentionPreview(long cutoffEpochSeconds) throws IOException;
+
+    /**
+     * Time span + how much of it predates the retention cutoff.
+     *
+     * @param oldestEpochSeconds  oldest event time across imported tables (0 if none)
+     * @param newestEpochSeconds  newest event time across imported tables (0 if none)
+     * @param rowsBeforeCutoff    rows older than the cutoff (would be aged out)
+     * @param totalRows           total rows across imported tables (with time &gt; 0)
+     */
+    record RetentionPreview(long oldestEpochSeconds, long newestEpochSeconds,
+                            long rowsBeforeCutoff, long totalRows) {
+
+        public boolean hasAgedOutRows() {
+            return rowsBeforeCutoff > 0;
+        }
+    }
+
+    /**
      * <strong>Not currently exposed as a stream.</strong> CoreProtect's
      * {@code co_sign} table records sign edits made in-place (right-click
      * a placed sign and rewrite a line). Spyglass has no sealed

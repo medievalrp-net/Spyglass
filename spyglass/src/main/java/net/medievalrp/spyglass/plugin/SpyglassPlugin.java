@@ -20,6 +20,7 @@ import net.medievalrp.spyglass.plugin.command.SpyglassSuggestions;
 import net.medievalrp.spyglass.plugin.command.PageCache;
 import net.medievalrp.spyglass.plugin.command.param.BlockParam;
 import net.medievalrp.spyglass.plugin.command.param.CauseParam;
+import net.medievalrp.spyglass.plugin.command.param.ChunkRadiusParam;
 import net.medievalrp.spyglass.plugin.command.param.CustomItemParam;
 import net.medievalrp.spyglass.plugin.command.param.EnchantParam;
 import net.medievalrp.spyglass.plugin.command.param.EntityParam;
@@ -54,6 +55,7 @@ import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockBreakListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockMultiPlaceListener;
 import net.medievalrp.spyglass.plugin.listener.block.BlockPlaceListener;
+import net.medievalrp.spyglass.plugin.listener.block.BucketListener;
 import net.medievalrp.spyglass.plugin.listener.block.ContainerDropListener;
 import net.medievalrp.spyglass.plugin.listener.block.DependantBreakListener;
 import net.medievalrp.spyglass.plugin.listener.block.FallingBlockLandListener;
@@ -82,8 +84,10 @@ import net.medievalrp.spyglass.plugin.listener.environment.EntityExplodeListener
 import net.medievalrp.spyglass.plugin.listener.environment.LeavesDecayListener;
 import net.medievalrp.spyglass.plugin.listener.environment.StructureGrowListener;
 import net.medievalrp.spyglass.plugin.listener.item.CreativeCloneListener;
+import net.medievalrp.spyglass.plugin.listener.item.HopperTransferListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemDropListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
+import net.medievalrp.spyglass.plugin.listener.item.TransferDedup;
 import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BrushListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BundleTransactionListener;
@@ -120,9 +124,11 @@ import net.medievalrp.spyglass.plugin.salvage.MariaDbSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.MongoSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SqliteSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
-import net.medievalrp.spyglass.plugin.salvage.SalvageGui;
 import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
+import net.medievalrp.spyglass.plugin.salvage.SalvageView;
+import net.medievalrp.spyglass.plugin.salvage.SalvageViews;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
+import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawals;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MariaDbToolStateStore;
@@ -370,6 +376,10 @@ public final class SpyglassPlugin extends JavaPlugin {
         net.medievalrp.spyglass.api.util.EventIds.bindInstance(config.server().name().hashCode());
         RecordingSupport support = new RecordingSupport(config.storage().retention(), config.server().name());
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
+        // #226: shared between the hopper-transfer listener and the purge timer
+        // below. Collapses repeating automated hopper flow so a farm line does
+        // not flood the store; holds no Bukkit state.
+        TransferDedup transferDedup = new TransferDedup();
 
         // Every recording listener in one list. `events()` declares the event
         // names each emits; we register with Bukkit only when at least one is
@@ -383,6 +393,10 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockBurnListener(recorder, support, this),
                 new BlockPlaceListener(recorder, support, deferredSerializer),
                 new BlockMultiPlaceListener(recorder, support),
+                // Bucket-placed / -removed fluid (#228). Reuses the block
+                // place/break records; per-event gated on enabledEvents like the
+                // hopper listener since one listener carries both toggles.
+                new BucketListener(recorder, support, deferredSerializer, enabledEvents),
                 new FallingBlockLandListener(recorder, support),
                 new ContainerTransactionListener(recorder, support, deferredSerializer),
                 new ContainerDragListener(recorder, support),
@@ -402,9 +416,11 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new BlockIgniteListener(recorder, support, this),
                 new ItemDropListener(recorder, support),
                 new ItemPickupListener(recorder, support, deferredSerializer),
+                new HopperTransferListener(recorder, support, deferredSerializer,
+                        enabledEvents, transferDedup),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
-                new EntityDeathListener(recorder, support, enabledEvents),
+                new EntityDeathListener(recorder, support, enabledEvents, deferredSerializer),
                 new EntityDamageListener(recorder, support),
                 new EntityMountListener(recorder, support),
                 new EntityDismountListener(recorder, support),
@@ -443,9 +459,14 @@ public final class SpyglassPlugin extends JavaPlugin {
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(
                 recorder, recordStore, queryExecutor, enabledEvents, apiLimits,
                 config.server().name(), getLogger());
-        apiImpl.registerQueryParamHandler(new PlayerParam());
+        // Store-backed name fallback: resolves players the Bukkit cache never
+        // saw (imported histories, shared stores) into playerId predicates so
+        // rollback-by-name works on the SQLite/MariaDB lean readers.
+        apiImpl.registerQueryParamHandler(
+                PlayerParam.withStoreFallback(recordStore::resolvePlayerId));
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
+        apiImpl.registerQueryParamHandler(new ChunkRadiusParam());
         apiImpl.registerQueryParamHandler(new TimeParam());
         apiImpl.registerQueryParamHandler(new BeforeParam());
         apiImpl.registerQueryParamHandler(new BlockParam());
@@ -623,6 +644,45 @@ public final class SpyglassPlugin extends JavaPlugin {
                         java.time.Duration.ofSeconds(config.storage().retention().seconds()),
                         config.limits().rollbackBatchSize(), importHistory, getLogger());
 
+        // /spyglass migrate <backend>: copy the active backend's records into
+        // another configured backend. The factory opens the TARGET store from
+        // the same config blocks the boot switch reads; MigrateService owns
+        // its lifecycle (opened per run, closed after).
+        net.medievalrp.spyglass.plugin.migrate.MigrateService migrateService =
+                new net.medievalrp.spyglass.plugin.migrate.MigrateService(
+                        recordStore, config.database().backend(), config.database(),
+                        serviceSupport,
+                        target -> switch (target) {
+                            case MONGO -> new MongoRecordStore(
+                                    config.database().uri(), config.database().name(),
+                                    config.database().collection(), new IndexManager(),
+                                    retentionPolicy);
+                            case CLICKHOUSE -> {
+                                SpyglassConfig.ClickHouse ch = config.database().clickhouse();
+                                yield new ClickHouseRecordStore(
+                                        ch.host(), ch.port(), ch.database(), ch.table(),
+                                        ch.user(), ch.password(), ch.ssl(), retentionPolicy);
+                            }
+                            case SQLITE -> {
+                                java.nio.file.Path configured =
+                                        java.nio.file.Path.of(config.database().sqlite().path());
+                                yield new SqliteRecordStore(
+                                        configured.isAbsolute()
+                                                ? configured
+                                                : getDataFolder().toPath().resolve(configured),
+                                        false, retentionPolicy);
+                            }
+                            case MARIADB -> {
+                                SpyglassConfig.MariaDb maria = config.database().mariadb();
+                                yield new MariaDbRecordStore(
+                                        maria.host(), maria.port(), maria.database(),
+                                        maria.user(), maria.password(), maria.ssl(),
+                                        retentionPolicy);
+                            }
+                        },
+                        importService::isRunning,
+                        config.limits().rollbackBatchSize(), getLogger());
+
         SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl, importConfig, importDir);
 
         // Container salvage GUI + command (#76). The withdraw logger records a
@@ -640,14 +700,19 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageCtx, "salvage-withdraw", taken.getType().name(),
                     snap.containerType(), 0, amount, salvageStored, null));
         };
-        SalvageGui salvageGui = salvageStore == null ? null
-                : new SalvageGui(salvageStore, queryExecutor, serviceSupport::onMainThread,
-                        salvageWithdrawLogger, config.limits().searchResult(), getLogger());
-        if (salvageGui != null) {
-            getServer().getPluginManager().registerEvents(salvageGui, this);
-        }
+        // One shared, dupe-guarded extract engine behind both the GUI and the
+        // command. On versions InvUI 1.49 supports (1.x) we build the InvUI GUI;
+        // on 26.x SalvageViews returns null and salvage is command-only (no
+        // unverified inventory-click surface). The InvUI view manages its own
+        // click listeners, so no registerEvents here.
+        SalvageWithdrawals salvageWithdrawals = salvageStore == null ? null
+                : new SalvageWithdrawals(salvageStore, queryExecutor, salvageWithdrawLogger, getLogger());
+        SalvageView salvageView = salvageStore == null ? null
+                : SalvageViews.guiOrNull(this, getServer().getBukkitVersion(), salvageStore,
+                        queryExecutor, serviceSupport::onMainThread, salvageWithdrawals,
+                        config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
-                salvageStore, salvageGui, config.limits().searchResult(), serviceSupport);
+                salvageStore, salvageView, salvageWithdrawals, config.limits().searchResult(), serviceSupport);
         // #168: /spyglass stats. Null ingestStats (analytics off) => the command
         // explains how to enable it.
         StatsService statsService = new StatsService(ingestStats, recorder::spillSnapshot);
@@ -668,7 +733,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 suggestions,
                 importService,
                 importConfig,
-                importDir);
+                importDir,
+                migrateService);
         commands.register();
 
         if (isWorldEditInstalled()) {
@@ -709,10 +775,15 @@ public final class SpyglassPlugin extends JavaPlugin {
         // is 2x the TTL (30 s), meaning every cohort of cascade cells is guaranteed
         // at least one full sweep opportunity before a second TTL window elapses.
         // Delay matches the period so the first pass is not immediately at boot.
+        // #226: the transfer dedup is a ConcurrentHashMap on the same 30 s
+        // window, so it piggybacks on this sweep - same off-main, no
+        // Bukkit-access safety as the falling-block purge.
         final long PURGE_PERIOD_TICKS = 1200L; // 60 s at 20 TPS
         this.fallingBlockPurgeTask = getServer().getScheduler()
-                .runTaskTimerAsynchronously(this, FallingBlockTracker::purgeExpired,
-                        PURGE_PERIOD_TICKS, PURGE_PERIOD_TICKS);
+                .runTaskTimerAsynchronously(this, () -> {
+                    FallingBlockTracker.purgeExpired();
+                    transferDedup.purgeExpired();
+                }, PURGE_PERIOD_TICKS, PURGE_PERIOD_TICKS);
 
         // #168: periodic ingest analytics report (off the main thread; only
         // reads concurrent counters + cheap gauges). Off unless analytics.enabled.

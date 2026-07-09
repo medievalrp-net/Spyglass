@@ -1027,6 +1027,35 @@ public final class SqliteRecordStore implements RecordStore {
 
     // ===== Read pool ===========================================
 
+    /**
+     * Name -> UUID against the {@code uuids} intern palette, so the player
+     * param can resolve players Bukkit never saw (CoreProtect-imported
+     * histories) into a {@code source.playerId} predicate - this schema has
+     * no {@code player_name} column to filter on, and the lean rollback
+     * reader can't post-filter in memory. Case-insensitive to match
+     * Minecraft name semantics. The palette also interns world UUIDs; a
+     * player named exactly like a world is a theoretical false hit we
+     * accept (same verbatim-name tradeoff v1 made).
+     */
+    @Override
+    public UUID resolvePlayerId(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        Connection conn = borrow();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT hi, lo FROM uuids WHERE name = ? COLLATE NOCASE LIMIT 1")) {
+            ps.setString(1, playerName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new UUID(rs.getLong(1), rs.getLong(2)) : null;
+            }
+        } catch (SQLException ex) {
+            return null; // best-effort: caller falls back to the verbatim-name match
+        } finally {
+            giveBack(conn);
+        }
+    }
+
     private Connection borrow() {
         try {
             return readPool.take();

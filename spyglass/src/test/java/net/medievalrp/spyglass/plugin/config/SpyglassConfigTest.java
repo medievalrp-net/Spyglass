@@ -35,6 +35,25 @@ class SpyglassConfigTest {
         assertThat(SpyglassConfig.parseEventRetention("forever", "command", LOG)).isEqualTo(never);
     }
 
+    // Found live during the CoreProtect-import battery: the per-event docs
+    // bless "never", but global storage.retention fed it straight to
+    // Duration.parse -> IllegalArgumentException -> plugin hard-disabled on
+    // boot. The global parse must accept the same keep-forever tokens.
+    @Test
+    void globalRetentionAcceptsKeepForeverTokens() {
+        long never = net.medievalrp.spyglass.plugin.storage.RetentionPolicy.NEVER_SECONDS;
+        assertThat(SpyglassConfig.parseGlobalRetention("never").seconds()).isEqualTo(never);
+        assertThat(SpyglassConfig.parseGlobalRetention("0").seconds()).isEqualTo(never);
+        assertThat(SpyglassConfig.parseGlobalRetention("NEVER").seconds()).isEqualTo(never);
+        assertThat(SpyglassConfig.parseGlobalRetention("off").seconds()).isEqualTo(never);
+    }
+
+    @Test
+    void globalRetentionStillParsesPlainDurations() {
+        assertThat(SpyglassConfig.parseGlobalRetention("26w").seconds())
+                .isEqualTo(26L * 7 * 24 * 60 * 60);
+    }
+
     @Test
     void invalidPerEventRetentionFallsBackToTheGlobal() {
         // Unparseable -> warn + null (inherit), never a crash.

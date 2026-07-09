@@ -2,18 +2,23 @@ package net.medievalrp.spyglass.plugin.command;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
 import net.medievalrp.spyglass.plugin.imports.ImportConfig;
 import org.bukkit.command.CommandSender;
+import org.mockito.ArgumentCaptor;
 import org.incendo.cloud.CommandManager;
 import org.incendo.cloud.execution.ExecutionCoordinator;
 import org.incendo.cloud.internal.CommandRegistrationHandler;
@@ -38,18 +43,26 @@ class SpyglassSuggestionsTest {
 
     private CommandManager<CommandSender> manager;
     private CommandSender sender;
+    private QueryParamHandler action;
 
     @BeforeEach
     void setUp() {
-        QueryParamHandler action = mock(QueryParamHandler.class);
+        action = mock(QueryParamHandler.class);
         QueryParamHandler player = mock(QueryParamHandler.class);
         when(action.aliases()).thenReturn(List.of("action", "a"));
         when(player.aliases()).thenReturn(List.of("player", "p"));
-        when(player.suggestions(any(), any())).thenReturn(List.of("Steve", "Alex"));
+        // Input-sensitive stubs (mirroring the real params' prefix match) so the
+        // multi-value tests below prove the handler is asked to complete only the
+        // trailing entry, not the whole comma span.
+        when(action.suggestions(any(), any()))
+                .thenAnswer(inv -> prefixMatch(inv.getArgument(1), "break", "place", "pickup", "drop"));
+        when(player.suggestions(any(), any()))
+                .thenAnswer(inv -> prefixMatch(inv.getArgument(1), "Steve", "Alex"));
 
         SpyglassApi api = mock(SpyglassApi.class);
         when(api.queryParams()).thenReturn(List.of(action, player));
         when(api.flags()).thenReturn(List.<FlagHandler>of());
+        when(api.queryParam("action")).thenReturn(Optional.of(action));
         when(api.queryParam("player")).thenReturn(Optional.of(player));
 
         SpyglassSuggestions suggestions = new SpyglassSuggestions(
@@ -58,6 +71,13 @@ class SpyglassSuggestionsTest {
         manager.command(manager.commandBuilder("search")
                 .required("params", suggestions.paramsParser(), suggestions.paramsProvider()));
         sender = mock(CommandSender.class);
+    }
+
+    private static List<String> prefixMatch(String input, String... values) {
+        String lower = input.toLowerCase(Locale.ROOT);
+        return Stream.of(values)
+                .filter(v -> v.toLowerCase(Locale.ROOT).startsWith(lower))
+                .toList();
     }
 
     private List<String> complete(String input) {
@@ -91,6 +111,59 @@ class SpyglassSuggestionsTest {
     void suggestsValuesForALaterParam() {
         assertThat(complete("search action:break player:"))
                 .contains("action:break player:Steve", "action:break player:Alex");
+    }
+
+    // ── #189: comma-separated list values complete every entry ──────────
+
+    @Test
+    void completesSecondActionInACommaList() {
+        // Before the fix the handler saw the whole "break,pl" span and matched
+        // nothing, so only the first action was completable.
+        List<String> out = complete("search action:break,pl");
+        assertThat(out).contains("action:break,place");
+        // The earlier entry is preserved on every suggestion.
+        assertThat(out).allMatch(s -> s.startsWith("action:break,"));
+    }
+
+    @Test
+    void trailingCommaOffersAllNextActions() {
+        assertThat(complete("search action:break,"))
+                .contains("action:break,break", "action:break,place",
+                        "action:break,pickup", "action:break,drop");
+    }
+
+    @Test
+    void completesSecondPlayerKeepingTheFirst() {
+        List<String> out = complete("search player:Steve,Al");
+        assertThat(out).contains("player:Steve,Alex");
+        // Only the entry being typed is completed; the first name is not
+        // re-offered as the second entry.
+        assertThat(out).doesNotContain("player:Steve,Steve");
+    }
+
+    @Test
+    void completesAcrossAnEarlierParamAndAList() {
+        assertThat(complete("search player:Steve action:break,pl"))
+                .contains("player:Steve action:break,place");
+    }
+
+    @Test
+    void completesAnExcludeEntry() {
+        // `!`-prefixed excludes (#30) complete too: the `!` is peeled before the
+        // handler sees the bare entry, then re-attached.
+        assertThat(complete("search action:!pl")).contains("action:!place");
+        assertThat(complete("search action:break,!pl")).contains("action:break,!place");
+    }
+
+    @Test
+    void handlerReceivesOnlyTheBareTrailingEntry() {
+        complete("search action:break,!pla");
+
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        verify(action, atLeastOnce()).suggestions(any(), captor.capture());
+        // Not "break,!pla" and not "!pla" — the comma prefix and the `!` are
+        // stripped so the param only ever completes a single bare entry.
+        assertThat(captor.getValue()).isEqualTo("pla");
     }
 
     /** Headless cloud-core manager — no Bukkit server, just the suggestion engine. */

@@ -55,6 +55,23 @@ public final class EventCatalog {
         m.put("drop", ItemDropRecord.class);
         m.put("pickup", ItemPickupRecord.class);
         m.put("clone", ItemPickupRecord.class);
+        // Automated container-to-container movement by a hopper / dropper /
+        // dispenser (InventoryMoveItemEvent, #226). Informational only, so it
+        // reuses the item drop/pickup record shapes - both storage backends
+        // already persist those, no codec/schema change. Both endpoints are
+        // logged so inspecting either container surfaces the flow: the source
+        // loses items (transfer-out) and the destination gains them
+        // (transfer-in).
+        m.put("transfer-out", ItemDropRecord.class);
+        m.put("transfer-in", ItemPickupRecord.class);
+        // Bucket-placed / bucket-picked-up fluid (#228). A poured water/lava/
+        // powder-snow source fires no BlockPlaceEvent, so without these it is
+        // invisible and unrollbackable. They reuse the block place/break record
+        // shapes - already rollbackable and persisted by every backend, no
+        // codec/schema change - so bucket-empty rolls back like a place (removes
+        // the fluid) and bucket-fill like a break (restores it).
+        m.put("bucket-empty", BlockPlaceRecord.class);
+        m.put("bucket-fill", BlockBreakRecord.class);
         m.put("teleport", TeleportRecord.class);
         m.put("death", EntityDeathRecord.class);
         // Killer-perspective mirror of a death. Reuses EntityHitRecord
