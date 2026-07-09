@@ -459,7 +459,11 @@ public final class SpyglassPlugin extends JavaPlugin {
         SpyglassApiImpl apiImpl = new SpyglassApiImpl(
                 recorder, recordStore, queryExecutor, enabledEvents, apiLimits,
                 config.server().name(), getLogger());
-        apiImpl.registerQueryParamHandler(new PlayerParam());
+        // Store-backed name fallback: resolves players the Bukkit cache never
+        // saw (imported histories, shared stores) into playerId predicates so
+        // rollback-by-name works on the SQLite/MariaDB lean readers.
+        apiImpl.registerQueryParamHandler(
+                PlayerParam.withStoreFallback(recordStore::resolvePlayerId));
         apiImpl.registerQueryParamHandler(new EventParam(enabledEvents));
         apiImpl.registerQueryParamHandler(new RadiusParam());
         apiImpl.registerQueryParamHandler(new ChunkRadiusParam());

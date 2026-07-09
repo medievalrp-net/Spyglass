@@ -1097,6 +1097,31 @@ public final class MariaDbRecordStore implements RecordStore {
         }
     }
 
+    /**
+     * Name -> UUID against the {@code uuids} intern palette (same rationale
+     * as the SQLite override: no {@code player_name} column to filter on,
+     * so imported-player names must resolve to a playerId predicate).
+     * utf8mb4_unicode_ci makes the equality case-insensitive already.
+     */
+    @Override
+    public java.util.UUID resolvePlayerId(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        Connection conn = borrow();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT hi, lo FROM uuids WHERE name = ? LIMIT 1")) {
+            ps.setString(1, playerName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new java.util.UUID(rs.getLong(1), rs.getLong(2)) : null;
+            }
+        } catch (SQLException ex) {
+            return null; // best-effort: caller falls back to the verbatim-name match
+        } finally {
+            giveBack(conn);
+        }
+    }
+
     // ===== Read pool ===========================================
 
     private Connection borrow() {
