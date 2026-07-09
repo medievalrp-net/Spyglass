@@ -27,7 +27,12 @@ class ImportPathsTest {
     @Test
     void resolvesValidInDirectoryFile() throws IOException {
         Path result = ImportPaths.resolveInside(importDir, "test1.db");
-        assertThat(result).isEqualTo(importDir.resolve("test1.db"));
+        // resolveInside builds its result from the CANONICAL import dir
+        // (toRealPath), so compare against the canonical expectation - on
+        // macOS @TempDir lives under /var/folders/..., a symlink to
+        // /private/var/..., and the raw importDir.resolve() would not match
+        // (green on Linux CI, red on every Mac).
+        assertThat(result).isEqualTo(importDir.toRealPath().resolve("test1.db"));
         assertThat(Files.isRegularFile(result)).isTrue();
     }
 
