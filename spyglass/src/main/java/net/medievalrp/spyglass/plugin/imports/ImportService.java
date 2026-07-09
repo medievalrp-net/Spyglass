@@ -85,7 +85,7 @@ public final class ImportService {
 
     public ImportOutcome importSqlite(CommandSender sender, Path dbFile, boolean confirm) {
         if (running.get()) {
-            tell(sender, "An import is already running; try again once it finishes.");
+            tellError(sender, "An import is already running; try again once it finishes.");
             return ImportOutcome.ALREADY_RUNNING;
         }
         support.onAsyncThread(() -> runImportSqlite(sender, dbFile, confirm));
@@ -95,7 +95,7 @@ public final class ImportService {
     public ImportOutcome importMysql(CommandSender sender, String sourceName,
                             ImportConfig.MysqlSourceSpec spec, boolean confirm) {
         if (running.get()) {
-            tell(sender, "An import is already running; try again once it finishes.");
+            tellError(sender, "An import is already running; try again once it finishes.");
             return ImportOutcome.ALREADY_RUNNING;
         }
         support.onAsyncThread(() -> runImportMysql(sender, sourceName, spec, confirm));
@@ -106,7 +106,7 @@ public final class ImportService {
 
     ImportOutcome runImportSqlite(CommandSender sender, Path dbFile, boolean confirm) {
         if (!running.compareAndSet(false, true)) {
-            tell(sender, "An import is already running; try again once it finishes.");
+            tellError(sender, "An import is already running; try again once it finishes.");
             return ImportOutcome.ALREADY_RUNNING;
         }
         String displayName = dbFile.getFileName().toString();
@@ -120,7 +120,7 @@ public final class ImportService {
                     () -> SqliteSource.open(dbFile));
         } catch (IOException | RuntimeException ex) {
             logger.log(Level.SEVERE, "Spyglass import failed for " + displayName, ex);
-            tell(sender, "Import failed: " + ex.getMessage());
+            tellError(sender, "Import failed: " + ex.getMessage());
             return ImportOutcome.FAILED;
         } finally {
             running.set(false);
@@ -130,7 +130,7 @@ public final class ImportService {
     ImportOutcome runImportMysql(CommandSender sender, String sourceName,
                                  ImportConfig.MysqlSourceSpec spec, boolean confirm) {
         if (!running.compareAndSet(false, true)) {
-            tell(sender, "An import is already running; try again once it finishes.");
+            tellError(sender, "An import is already running; try again once it finishes.");
             return ImportOutcome.ALREADY_RUNNING;
         }
         try {
@@ -145,7 +145,7 @@ public final class ImportService {
                             spec.host(), spec.port(), spec.database(), spec.user(), spec.password())));
         } catch (IOException | RuntimeException ex) {
             logger.log(Level.SEVERE, "Spyglass import failed for " + sourceName, ex);
-            tell(sender, "Import failed: " + ex.getMessage());
+            tellError(sender, "Import failed: " + ex.getMessage());
             return ImportOutcome.FAILED;
         } finally {
             running.set(false);
@@ -188,7 +188,7 @@ public final class ImportService {
             history.record(new ImportRecord(identity, displayName, System.currentTimeMillis(),
                     senderName, summary.totalRead(), summary.totalWritten(), summary.totalSkipped()));
 
-            tell(sender, "Import complete for " + displayName + ": read=" + summary.totalRead()
+            tellSuccess(sender, "Import complete for " + displayName + ": read=" + summary.totalRead()
                     + " written=" + summary.totalWritten() + " skipped=" + summary.totalSkipped());
             return ImportOutcome.DONE;
         }
@@ -208,13 +208,13 @@ public final class ImportService {
             return null;
         }
         if (backend == Backend.MONGO) {
-            tell(sender, "This source was already imported and re-importing into MongoDB "
+            tellError(sender, "This source was already imported and re-importing into MongoDB "
                     + "is not supported; switch backends or restore from a MongoDB backup.");
             return ImportOutcome.MONGO_REIMPORT_BLOCKED;
         }
         if (!confirm) {
             ImportRecord p = prior.get();
-            tell(sender, "This source was already imported on " + Instant.ofEpochMilli(p.importedAtEpochMs())
+            tellError(sender, "This source was already imported on " + Instant.ofEpochMilli(p.importedAtEpochMs())
                     + " by " + p.importedBy() + " (read=" + p.read() + ", written=" + p.written()
                     + ", skipped=" + p.skipped() + "). Re-run with --confirm to import again.");
             return ImportOutcome.NEEDS_CONFIRM;
@@ -274,8 +274,8 @@ public final class ImportService {
                 Instant.ofEpochSecond(cutoffSec), java.time.ZoneOffset.UTC);
         java.time.LocalDate oldest = java.time.LocalDate.ofInstant(
                 Instant.ofEpochSecond(preview.oldestEpochSeconds()), java.time.ZoneOffset.UTC);
-        tell(sender, String.format(java.util.Locale.ROOT,
-                "WARNING: %,d of %,d events (%.1f%%) are older than your retention cutoff "
+        tellWarn(sender, String.format(java.util.Locale.ROOT,
+                "%,d of %,d events (%.1f%%) are older than your retention cutoff "
                         + "%s (retention %dd) and will be aged out after import - immediately "
                         + "on ClickHouse, on the next prune sweep otherwise. Oldest source "
                         + "event: %s. To keep the full history, raise storage.retention (or "
@@ -287,7 +287,25 @@ public final class ImportService {
         return (serverName == null || serverName.isBlank()) ? defaultServerName : serverName;
     }
 
+    // House-styled sender feedback (#252): imports frame like every other
+    // Spyglass message instead of a bare "[import] " string.
     private void tell(CommandSender sender, String message) {
-        support.onMainThread(() -> sender.sendMessage("[import] " + message));
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.info(message)));
+    }
+
+    private void tellWarn(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.warn(message)));
+    }
+
+    private void tellError(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.error(message)));
+    }
+
+    private void tellSuccess(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.success(message)));
     }
 }

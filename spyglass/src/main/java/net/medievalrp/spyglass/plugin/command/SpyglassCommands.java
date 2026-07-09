@@ -116,9 +116,13 @@ public final class SpyglassCommands {
                     .handler(ctx -> help.send(ctx.sender())));
 
             for (String name : HELP_ALIASES) {
+                // Optional page (#249): the full command list overflows chat,
+                // so /sg help paginates and /sg help <n> jumps to a page.
                 manager.command(manager.commandBuilder(root).literal(name)
+                        .optional("page", IntegerParser.integerParser(1))
                         .permission("spyglass.use")
-                        .handler(ctx -> help.send(ctx.sender())));
+                        .handler(ctx -> help.send(ctx.sender(),
+                                ctx.<Integer>optional("page").orElse(1))));
             }
 
             for (String name : EVENTS_ALIASES) {
