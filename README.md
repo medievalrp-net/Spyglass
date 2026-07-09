@@ -4,6 +4,8 @@ Forensic logging and rollback for Paper 1.21.x. Spyglass records block, containe
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
+A standalone CLI imports existing CoreProtect databases into Spyglass — see [`docs/importer.md`](docs/importer.md) and [Migrating from CoreProtect](#migrating-from-coreprotect).
+
 Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
 **Docs:** [Commands & query reference](COMMANDS.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
@@ -94,12 +96,34 @@ Root command is `/spyglass`, aliased to `/sg`. The full reference - every comman
 /sg tool                                       # toggle the inspector wand
 ```
 
+## Migrating from CoreProtect
+
+Step-by-step operator runbook: [`docs/migration-from-coreprotect.md`](docs/migration-from-coreprotect.md). Quick summary: build the importer jar, run `import` against your CoreProtect database, run `validate` to audit row parity, then swap the plugin jar.
+
+```sh
+./gradlew :spyglass-importer:shadowJar
+java -jar spyglass-importer/build/libs/spyglass-importer-1.0.0.jar import \
+    --source ./database.db \
+    --worlds-dir ./world-data \
+    --server-name my-server \
+    --clickhouse-host localhost
+java -jar spyglass-importer/build/libs/spyglass-importer-1.0.0.jar validate \
+    --coreprotect-sqlite ./database.db \
+    --clickhouse-host localhost \
+    --server-name my-server
+```
+
+Or run the whole rig (ClickHouse + importer + validate + bench + interactive client) via Docker: see [`docker/README.md`](docker/README.md).
+
+Imports cover blocks, kills, sessions, chat, commands, container deposits/withdraws, and item drops/pickups. Re-runs are idempotent (deterministic UUIDs collapse via ClickHouse `ReplacingMergeTree`). Full table coverage and known gaps are documented in [`docs/importer.md`](docs/importer.md).
+
 ## Modules
 
 - `spyglass-api/` is the public API. Third-party plugins depend on this only. Published to Maven Central as `net.medievalrp:spyglass-api`; see [API.md](API.md).
 - `spyglass-core/` holds the shared internals (codecs, storage glue).
 - `spyglass/` is the Paper plugin.
 - `spyglass-velocity/` is an optional Velocity proxy companion for cross-server search. It is read-only by design: it never writes records and never rolls back.
+- `spyglass-importer/` is a standalone CLI for migrating CoreProtect databases into Spyglass, plus a side-by-side query bench. See [`docs/importer.md`](docs/importer.md).
 
 ## AI policy
 
@@ -113,3 +137,5 @@ Spyglass is open source under a split license, mapped in [LICENSING.md](LICENSIN
 - The plugin and its internals (`spyglass-core`, `spyglass`, `spyglass-velocity`) are licensed under the [GNU General Public License v3.0](LICENSE).
 
 Contributions are covered by the [CLA](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The CoreProtect importer keeps a clean-room discipline against CoreProtect's GPL source: schemas and on-disk formats are paraphrased from upstream into [`docs/importer.md`](docs/importer.md), and the implementation is written fresh.

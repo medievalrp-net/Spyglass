@@ -1,6 +1,9 @@
 package net.medievalrp.spyglass.plugin.command;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.plugin.command.render.Feedback;
@@ -14,6 +17,9 @@ import net.medievalrp.spyglass.plugin.command.service.StatsService;
 import net.medievalrp.spyglass.plugin.command.service.TeleportService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.command.service.UndoService;
+import net.medievalrp.spyglass.plugin.imports.ImportConfig;
+import net.medievalrp.spyglass.plugin.imports.ImportPaths;
+import net.medievalrp.spyglass.plugin.imports.ImportService;
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.incendo.cloud.CommandManager;
@@ -43,6 +49,9 @@ public final class SpyglassCommands {
     private final SalvageService salvage;
     private final StatsService stats;
     private final SpyglassSuggestions suggestions;
+    private final ImportService imports;
+    private final ImportConfig importConfig;
+    private final Path importDir;
 
     public SpyglassCommands(JavaPlugin plugin,
                         SpyglassApi api,
@@ -56,7 +65,10 @@ public final class SpyglassCommands {
                         TeleportService teleport,
                         SalvageService salvage,
                         StatsService stats,
-                        SpyglassSuggestions suggestions) {
+                        SpyglassSuggestions suggestions,
+                        ImportService imports,
+                        ImportConfig importConfig,
+                        Path importDir) {
         this.plugin = plugin;
         this.api = api;
         this.help = help;
@@ -70,6 +82,9 @@ public final class SpyglassCommands {
         this.salvage = salvage;
         this.stats = stats;
         this.suggestions = suggestions;
+        this.imports = imports;
+        this.importConfig = importConfig;
+        this.importDir = importDir;
     }
 
     // v1-compat subcommand aliases. Operators have years of muscle memory
@@ -203,8 +218,53 @@ public final class SpyglassCommands {
                     .permission("spyglass.tele")
                     .handler(ctx -> teleport.execute(ctx.sender(),
                             ctx.get("world"), ctx.get("x"), ctx.get("y"), ctx.get("z"))));
+
+            // /spyglass import <file> — SQLite import from plugins/Spyglass/import/
+            manager.command(manager.commandBuilder(root).literal("import")
+                    .required("file", StringParser.stringParser(), suggestions.importFileProvider())
+                    .flag(manager.flagBuilder("confirm").build())
+                    .permission("spyglass.import")
+                    .handler(ctx -> handleImportFile(ctx.sender(),
+                            ctx.get("file"), ctx.flags().isPresent("confirm"))));
+
+            // /spyglass import mysql <source> — live MySQL import from import.conf
+            manager.command(manager.commandBuilder(root).literal("import").literal("mysql")
+                    .required("source", StringParser.stringParser(), suggestions.importSourceProvider())
+                    .flag(manager.flagBuilder("confirm").build())
+                    .permission("spyglass.import")
+                    .handler(ctx -> handleImportMysql(ctx.sender(),
+                            ctx.get("source"), ctx.flags().isPresent("confirm"))));
         }
         return manager;
+    }
+
+    // /spyglass import <file>: resolve inside the import dir (guards path
+    // traversal) then hand off to ImportService, which messages the sender
+    // asynchronously for every guard/finish outcome. Only the synchronous
+    // "bad file" failure is reported here.
+    private void handleImportFile(CommandSender sender, String file, boolean confirm) {
+        Path resolved;
+        try {
+            resolved = ImportPaths.resolveInside(importDir, file);
+        } catch (IOException ex) {
+            sender.sendMessage(Feedback.error(ex.getMessage()));
+            return;
+        }
+        imports.importSqlite(sender, resolved, confirm);
+    }
+
+    // /spyglass import mysql <source>: look the name up in import.conf; an
+    // unknown source is reported here, everything else is ImportService's job.
+    private void handleImportMysql(CommandSender sender, String source, boolean confirm) {
+        Optional<ImportConfig.MysqlSourceSpec> spec = importConfig.source(source);
+        if (spec.isEmpty()) {
+            String available = importConfig.sources().keySet().stream().sorted()
+                    .reduce((a, b) -> a + ", " + b).orElse("(none configured)");
+            sender.sendMessage(Feedback.error(
+                    "Unknown import source '" + source + "'. Available: " + available));
+            return;
+        }
+        imports.importMysql(sender, source, spec.get(), confirm);
     }
 
     private void sendEnabledEvents(CommandSender sender) {

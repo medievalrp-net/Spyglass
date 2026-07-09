@@ -610,7 +610,41 @@ public final class SpyglassPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new WandInteractListener(toolService, searchService, config), this);
         TeleportService teleportService = new TeleportService();
-        SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl);
+
+        // CoreProtect import (Task 9): a separate credentials file
+        // (import.conf, data-folder root) + import history cache + async
+        // service. .db files to import live in import/. Constructed here,
+        // after recordStore/config/serviceSupport exist, so the command
+        // layer below can wire /spyglass import.
+        java.nio.file.Path importDir = getDataFolder().toPath().resolve("import");
+        try {
+            java.nio.file.Files.createDirectories(importDir);
+        } catch (java.io.IOException ex) {
+            getLogger().log(Level.WARNING, "Spyglass: could not create the import directory "
+                    + importDir + "; /spyglass import file listing may be unavailable.", ex);
+        }
+        java.nio.file.Path importConfPath = getDataFolder().toPath().resolve("import.conf");
+        if (java.nio.file.Files.notExists(importConfPath)) {
+            saveResource("import.conf", false);
+        }
+        net.medievalrp.spyglass.plugin.imports.ImportConfig importConfig;
+        try {
+            importConfig = net.medievalrp.spyglass.plugin.imports.ImportConfig.loadFrom(importConfPath);
+        } catch (java.io.IOException ex) {
+            getLogger().log(Level.WARNING, "Spyglass: failed to load import.conf; MySQL import "
+                    + "sources will be unavailable until this is fixed.", ex);
+            importConfig = new net.medievalrp.spyglass.plugin.imports.ImportConfig(Map.of());
+        }
+        net.medievalrp.spyglass.plugin.imports.ImportHistoryStore importHistory =
+                new net.medievalrp.spyglass.plugin.imports.ImportHistoryStore(getDataFolder().toPath());
+        net.medievalrp.spyglass.plugin.imports.ImportService importService =
+                new net.medievalrp.spyglass.plugin.imports.ImportService(
+                        recordStore, config.database().backend(), serviceSupport,
+                        Bukkit.getWorldContainer().toPath(), config.server().name(),
+                        java.time.Duration.ofSeconds(config.storage().retention().seconds()),
+                        config.limits().rollbackBatchSize(), importHistory, getLogger());
+
+        SpyglassSuggestions suggestions = new SpyglassSuggestions(apiImpl, importConfig, importDir);
 
         // Container salvage GUI + command (#76). The withdraw logger records a
         // salvage-withdraw event (reusing ContainerWithdrawRecord) so every
@@ -657,7 +691,10 @@ public final class SpyglassPlugin extends JavaPlugin {
                 teleportService,
                 salvageService,
                 statsService,
-                suggestions);
+                suggestions,
+                importService,
+                importConfig,
+                importDir);
         commands.register();
 
         if (isWorldEditInstalled()) {

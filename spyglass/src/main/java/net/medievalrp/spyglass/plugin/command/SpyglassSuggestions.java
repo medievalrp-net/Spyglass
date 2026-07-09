@@ -1,11 +1,14 @@
 package net.medievalrp.spyglass.plugin.command;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.extension.FlagHandler;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
+import net.medievalrp.spyglass.plugin.imports.ImportConfig;
+import net.medievalrp.spyglass.plugin.imports.ImportPaths;
 import org.bukkit.command.CommandSender;
 import org.incendo.cloud.parser.ParserDescriptor;
 import org.incendo.cloud.parser.standard.StringParser;
@@ -22,9 +25,25 @@ public final class SpyglassSuggestions {
             "-nod=r", "-nod=t");
 
     private final SpyglassApi api;
+    private final ImportConfig importConfig;
+    private final Path importDir;
 
-    public SpyglassSuggestions(SpyglassApi api) {
+    public SpyglassSuggestions(SpyglassApi api, ImportConfig importConfig, Path importDir) {
         this.api = api;
+        this.importConfig = importConfig;
+        this.importDir = importDir;
+    }
+
+    /** Tab-completes {@code .db} files in the import directory for {@code /spyglass import <file>}. */
+    public BlockingSuggestionProvider<CommandSender> importFileProvider() {
+        return (ctx, input) -> ImportPaths.listDbFiles(importDir).stream()
+                .map(Suggestion::suggestion).toList();
+    }
+
+    /** Tab-completes configured {@code import.conf} source names for {@code /spyglass import mysql <source>}. */
+    public BlockingSuggestionProvider<CommandSender> importSourceProvider() {
+        return (ctx, input) -> importConfig.sources().keySet().stream()
+                .map(Suggestion::suggestion).toList();
     }
 
     public ParserDescriptor<CommandSender, String> paramsParser() {

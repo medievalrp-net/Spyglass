@@ -29,3 +29,5 @@ docs/superpowers/
 
 # Local reference data + analysis (production DB samples, codec experiments) - never published
 workspace/
+# CoreProtect importer test fixtures (large DBs, world data)
+coreprotect-test/
