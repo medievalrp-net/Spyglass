@@ -46,6 +46,13 @@ public final class SpyglassSuggestions {
                 .map(Suggestion::suggestion).toList();
     }
 
+    /** Tab-completes storage backend tokens for {@code /spyglass migrate <backend>} (#258). */
+    public BlockingSuggestionProvider<CommandSender> migrateBackendProvider() {
+        return (ctx, input) -> java.util.stream.Stream
+                .of("sqlite", "mongo", "clickhouse", "mariadb", "mysql")
+                .map(Suggestion::suggestion).toList();
+    }
+
     public ParserDescriptor<CommandSender, String> paramsParser() {
         return StringParser.greedyStringParser();
     }

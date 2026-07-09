@@ -255,7 +255,8 @@ public final class SpyglassCommands {
             // Validation (unknown/active/unconfigured target) happens inside
             // MigrateService, which messages the sender for every outcome.
             manager.command(manager.commandBuilder(root).literal("migrate")
-                    .required("backend", StringParser.stringParser())
+                    .required("backend", StringParser.stringParser(),
+                            suggestions.migrateBackendProvider())
                     .flag(manager.flagBuilder("confirm").build())
                     .permission("spyglass.migrate")
                     .handler(ctx -> migrate.migrate(ctx.sender(),
