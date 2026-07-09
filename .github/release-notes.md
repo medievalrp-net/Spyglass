@@ -1,7 +1,7 @@
-The CoreProtect migration release: bring your CoreProtect history into Spyglass, and move it between storage backends.
+Command UX polish and two stability fixes, on top of 1.0.8's CoreProtect import and backend migration.
 
-- Import: /spyglass import loads a CoreProtect 20+ database (SQLite file or live MySQL) into whatever backend you run, with dedup-safe re-imports. It warns up front when part of the history is older than storage.retention and would age out after import.
-- Migrate: /spyglass migrate <backend> copies every record from the active backend into another configured one - fill in the target's block in config.conf, migrate, flip database.backend, restart.
-- Config: storage.retention now accepts "never" (and 0/forever/off) instead of disabling the plugin on boot.
-- Search/rollback: p:<name> resolves players this server never saw (imported histories, shared stores), so rolling back the old griefer by name works.
-- Fix: imported expiries are clamped below ClickHouse's TTL ceiling; unclamped they wrapped past 2106 and OPTIMIZE deleted the rows.
+- Help: /sg help now lists every command (import, migrate, inventory, stats, rbqueue...) and paginates, with the same red clickable page arrows as search results.
+- Consistency: /sg import and /sg migrate output now use the standard "Spyglass" chat styling, /sg version spacing is fixed, and /sg migrate tab-completes its backend argument.
+- /s alias: register /s as a third root command next to /spyglass and /sg (opt in with commands.s-alias, off by default).
+- Fix: a null-location record no longer wedges the ClickHouse ingest drain. Such a record is stored with a sentinel location and rejected at the API boundary, so one bad third-party event can't stop the audit log.
+- Fix: a capture whose world just unloaded no longer throws on the block break/place path; it records with a worldless sentinel instead.
