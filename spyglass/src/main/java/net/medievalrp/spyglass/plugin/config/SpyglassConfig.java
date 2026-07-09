@@ -98,7 +98,7 @@ public record SpyglassConfig(
                                 root.node("database", "mariadb", "password").getString(""),
                                 root.node("database", "mariadb", "ssl").getBoolean(false))),
                 new Storage(
-                        Duration.parse(root.node("storage", "retention").getString("26w")),
+                        parseGlobalRetention(root.node("storage", "retention").getString("26w")),
                         root.node("storage", "queue-capacity").getInt(100_000),
                         root.node("storage", "queue-max").getInt(500_000),
                         root.node("storage", "spill-to-disk").getBoolean(true),
@@ -377,6 +377,24 @@ public record SpyglassConfig(
     static Long readEventRetention(ConfigurationNode eventNode, String event,
             java.util.logging.Logger logger) {
         return parseEventRetention(eventNode.node("retention").getString(), event, logger);
+    }
+
+    /**
+     * Parse the global {@code storage.retention}, accepting the same
+     * keep-forever tokens as per-event retention ({@code "0"} / {@code "never"}
+     * / {@code "forever"} / {@code "off"} -> {@link
+     * net.medievalrp.spyglass.plugin.storage.RetentionPolicy#NEVER_SECONDS}).
+     * Before this, "never" was valid per-event but hard-disabled the plugin
+     * (config-load failure) when used globally - a trap the per-event docs
+     * invited operators into, and exactly what a CoreProtect migration wants
+     * to set so imported history is kept.
+     */
+    static Duration parseGlobalRetention(String raw) {
+        String v = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.equals("0") || v.equals("never") || v.equals("forever") || v.equals("off")) {
+            return new Duration(net.medievalrp.spyglass.plugin.storage.RetentionPolicy.NEVER_SECONDS);
+        }
+        return Duration.parse(raw);
     }
 
     /**
