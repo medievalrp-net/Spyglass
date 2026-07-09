@@ -45,9 +45,21 @@ public final class HelpService {
     public void send(CommandSender sender, int page) {
         int pages = (ENTRIES.length + PAGE_SIZE - 1) / PAGE_SIZE;
         int clamped = Math.min(Math.max(page, 1), pages);
-        sender.sendMessage(Component.text(
-                " -======= Spyglass (" + clamped + "/" + pages + ") =======-",
-                NamedTextColor.AQUA));
+        // Same red clickable nav controls the search-result header uses
+        // (#260), clicking through /spyglass help <n>.
+        net.kyori.adventure.text.TextComponent.Builder header = Component.text()
+                .append(Component.text(
+                        " -======= Spyglass (" + clamped + "/" + pages + ") =======-",
+                        NamedTextColor.AQUA));
+        if (clamped > 1) {
+            header.append(Component.text(" ", NamedTextColor.WHITE))
+                    .append(navButton("←", clamped - 1));
+        }
+        if (clamped < pages) {
+            header.append(Component.text(" ", NamedTextColor.WHITE))
+                    .append(navButton("→", clamped + 1));
+        }
+        sender.sendMessage(header.asComponent());
         sender.sendMessage(Component.text("For Powerful Searching", NamedTextColor.DARK_GRAY)
                 .decoration(TextDecoration.ITALIC, true));
         int from = (clamped - 1) * PAGE_SIZE;
@@ -63,11 +75,19 @@ public final class HelpService {
                     .asComponent();
             sender.sendMessage(line);
         }
-        if (pages > 1) {
-            sender.sendMessage(Component.text(
-                            "/spyglass help " + (clamped % pages + 1) + " for the next page",
-                            NamedTextColor.DARK_GRAY)
-                    .decoration(TextDecoration.ITALIC, true));
-        }
+    }
+
+    /** Mirrors ResultRenderer.navButton, targeting /spyglass help instead. */
+    private static Component navButton(String arrow, int targetPage) {
+        Component label = Component.text()
+                .append(Component.text("[", NamedTextColor.RED))
+                .append(Component.text(arrow, NamedTextColor.RED))
+                .append(Component.text("]", NamedTextColor.RED))
+                .asComponent();
+        return label
+                .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand(
+                        "/spyglass help " + targetPage))
+                .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                        Component.text("Page " + targetPage, NamedTextColor.RED)));
     }
 }

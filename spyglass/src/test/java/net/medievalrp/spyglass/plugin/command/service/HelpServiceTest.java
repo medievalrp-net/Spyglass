@@ -63,15 +63,17 @@ class HelpServiceTest {
 
         new HelpService().send(sender, 1);
         List<String> pageOne = ServiceTestSupport.plainTexts(captured);
-        assertThat(pageOne.get(0)).contains("(1/2)");
-        // header + tagline + 8 entries + next-page hint
-        assertThat(pageOne).hasSize(11);
-        assertThat(pageOne.get(pageOne.size() - 1)).contains("help 2");
+        // Header carries the red clickable next-page arrow (#260), same
+        // control as the search-result header.
+        assertThat(pageOne.get(0)).contains("(1/2)").contains("[→]").doesNotContain("[←]");
+        // header + tagline + 8 entries
+        assertThat(pageOne).hasSize(10);
 
         captured.clear();
         new HelpService().send(sender, 99);
         List<String> clamped = ServiceTestSupport.plainTexts(captured);
-        assertThat(clamped.get(0)).as("out-of-range page clamps to the last page").contains("(2/2)");
+        assertThat(clamped.get(0)).as("out-of-range page clamps to the last page")
+                .contains("(2/2)").contains("[←]").doesNotContain("[→]");
 
         captured.clear();
         new HelpService().send(sender, -5);
