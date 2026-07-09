@@ -29,6 +29,9 @@ permissions:
   spyglass.import:
     description: Import a CoreProtect database into Spyglass.
     default: op
+  spyglass.migrate:
+    description: Migrate Spyglass records between storage backends.
+    default: op
 
 # Externalized at runtime via Paper's library loader (Maven Central, cached
 # under <server>/libraries/); versions injected from Gradle at build time. The
