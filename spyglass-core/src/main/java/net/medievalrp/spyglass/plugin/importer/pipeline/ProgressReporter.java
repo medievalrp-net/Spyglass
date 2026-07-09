@@ -27,7 +27,7 @@ public final class ProgressReporter {
     }
 
     public void endTable(String label, long rowsInTable) {
-        out.printf(Locale.ROOT, "  %s done — %,d rows%n", label, rowsInTable);
+        out.printf(Locale.ROOT, "  %s done - %,d rows%n", label, rowsInTable);
     }
 
     public void onRow(long readSoFar) {
