@@ -21,7 +21,8 @@ public record SpyglassConfig(
         Tool tool,
         Server server,
         Metrics metrics,
-        Analytics analytics) {
+        Analytics analytics,
+        Commands commands) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -129,7 +130,10 @@ public record SpyglassConfig(
                 new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
                 new Server(root.node("server", "name").getString("default")),
                 parseMetrics(root),
-                parseAnalytics(root));
+                parseAnalytics(root),
+                // #250: /s as a third root alias, opt-in - single-letter
+                // roots collide with other plugins, so off by default.
+                new Commands(root.node("commands", "s-alias").getBoolean(false)));
     }
 
     /**
@@ -479,6 +483,9 @@ public record SpyglassConfig(
      * Configured under {@code server.name} in {@code config.conf}; defaults
      * to {@code "default"} for a single-server deployment.
      */
+    public record Commands(boolean sAlias) {
+    }
+
     public record Server(String name) {
         public Server {
             name = name == null ? "default" : name.trim();

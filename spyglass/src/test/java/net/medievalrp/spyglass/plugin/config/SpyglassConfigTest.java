@@ -80,6 +80,15 @@ class SpyglassConfigTest {
                 .isEqualTo(3L * 24 * 60 * 60);
     }
 
+    // #250: /s root alias is opt-in; absent key must read as disabled.
+    @Test
+    void sAliasDefaultsOffAndReadsExplicitTrue() throws SerializationException {
+        BasicConfigurationNode root = BasicConfigurationNode.root();
+        assertThat(root.node("commands", "s-alias").getBoolean(false)).isFalse();
+        root.node("commands", "s-alias").set(true);
+        assertThat(root.node("commands", "s-alias").getBoolean(false)).isTrue();
+    }
+
     @Test
     void absentRedactKeyFallsBackToDefaultAuthSet() throws SerializationException {
         BasicConfigurationNode root = BasicConfigurationNode.root();
