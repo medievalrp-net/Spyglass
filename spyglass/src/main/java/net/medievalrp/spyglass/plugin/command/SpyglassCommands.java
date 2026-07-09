@@ -52,6 +52,7 @@ public final class SpyglassCommands {
     private final ImportService imports;
     private final ImportConfig importConfig;
     private final Path importDir;
+    private final net.medievalrp.spyglass.plugin.migrate.MigrateService migrate;
 
     public SpyglassCommands(JavaPlugin plugin,
                         SpyglassApi api,
@@ -68,7 +69,8 @@ public final class SpyglassCommands {
                         SpyglassSuggestions suggestions,
                         ImportService imports,
                         ImportConfig importConfig,
-                        Path importDir) {
+                        Path importDir,
+                        net.medievalrp.spyglass.plugin.migrate.MigrateService migrate) {
         this.plugin = plugin;
         this.api = api;
         this.help = help;
@@ -85,6 +87,7 @@ public final class SpyglassCommands {
         this.imports = imports;
         this.importConfig = importConfig;
         this.importDir = importDir;
+        this.migrate = migrate;
     }
 
     // v1-compat subcommand aliases. Operators have years of muscle memory
@@ -234,6 +237,17 @@ public final class SpyglassCommands {
                     .permission("spyglass.import")
                     .handler(ctx -> handleImportMysql(ctx.sender(),
                             ctx.get("source"), ctx.flags().isPresent("confirm"))));
+
+            // /spyglass migrate <backend> — copy the active backend's records
+            // into another configured backend (internal storage migration).
+            // Validation (unknown/active/unconfigured target) happens inside
+            // MigrateService, which messages the sender for every outcome.
+            manager.command(manager.commandBuilder(root).literal("migrate")
+                    .required("backend", StringParser.stringParser())
+                    .flag(manager.flagBuilder("confirm").build())
+                    .permission("spyglass.migrate")
+                    .handler(ctx -> migrate.migrate(ctx.sender(),
+                            ctx.get("backend"), ctx.flags().isPresent("confirm"))));
         }
         return manager;
     }
