@@ -20,6 +20,9 @@ Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases to
 | `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg tele <world> <x> <y> <z>` | - | `spyglass.tele` | Teleport (used by clickable search results) |
+| `/sg import <file>` | - | `spyglass.import` | Import a CoreProtect SQLite database from `plugins/Spyglass/import/` |
+| `/sg import mysql <source>` | - | `spyglass.import` | Import a live CoreProtect MySQL database (sources defined in `import.conf`) |
+| `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
 
 ## Permissions
 
@@ -35,6 +38,8 @@ All default to `op`.
 | `spyglass.tool` | inspection wand |
 | `spyglass.tele` | teleport (used by clickable result rows) |
 | `spyglass.worldedit` | allows the `-we` flag to use your WorldEdit selection as the search region |
+| `spyglass.import` | `/sg import` - CoreProtect imports |
+| `spyglass.migrate` | `/sg migrate` - moving records between storage backends |
 
 ## Query syntax
 
@@ -149,6 +154,16 @@ On Minecraft 1.21.x, `/sg inventory` (alias `inv`) opens a paginated GUI, groupe
 On servers without the GUI (Minecraft 26.x) and from the console or RCON, `/sg inventory` prints a text listing instead. Each captured container shows an id; recover it with `/sg inventory <id>` (in-game players only), or click the `[Recover]` prompt next to a listing line. The command withdraws that container's items straight into your inventory server-side, with no inventory-drag surface. Either way, every withdrawal is logged as a `salvage-withdraw` event (find them with `/sg search a:salvage-withdraw`).
 
 Only containers the rollback *actually* destroys are salvaged - a chest in the rolled region that the rollback leaves untouched is never captured, so items are never duplicated. Salvage snapshots are kept for 30 days.
+
+## Importing and migrating
+
+**`/sg import <file>`** imports a CoreProtect (20+) SQLite database. Drop the `.db` file in `plugins/Spyglass/import/` and run the command - the filename tab-completes. **`/sg import mysql <source>`** imports a live CoreProtect MySQL database instead; define sources (host, credentials) in `plugins/Spyglass/import.conf`, kept deliberately separate from Spyglass's own `database.*` config.
+
+Imports run async off the main thread and stream progress to you and the console. Records get deterministic ids, so re-importing a known source is refused unless you pass `--confirm` - and with it, re-imports dedup rather than duplicate (except into MongoDB, where re-import is blocked). If part of the source history is older than `storage.retention`, the import warns up front how much would age out after import and how far back the source goes - raise the retention (or set it `"never"`) first if you want it all kept. Every world the source references must exist on this server (resolved via `<world>/uid.dat`); the import fails cleanly before writing anything if one is missing.
+
+**`/sg migrate <sqlite|mongo|clickhouse|mariadb>`** copies every record from the active backend into another configured one - for switching storage without losing history. Fill in the target backend's block in `config.conf`, run the migrate, then flip `database.backend` and restart. A non-empty target requires `--confirm` (re-runs dedup by record id, except into MongoDB). One migration runs at a time, and it refuses to start while an import is running. Undo history, wand state, and salvage snapshots are operational state and start fresh on the new backend.
+
+The full operator runbook, including the standalone CLI importer and parity validation, is [`docs/migration-from-coreprotect.md`](docs/migration-from-coreprotect.md).
 
 ## Event names
 
