@@ -53,6 +53,16 @@ public final class SynthesizingRecordStore implements RecordStore {
     }
 
     @Override
+    public java.util.UUID resolvePlayerId(String playerName) {
+        // MUST delegate explicitly: this method has an interface default
+        // (returns null = "unknown"), so a decorator that doesn't forward it
+        // silently disables the backend's imported-player name resolution -
+        // exactly what happened live (the plugin wraps every store in this
+        // decorator when rolled-audit=synthesized, which is the default).
+        return delegate.resolvePlayerId(playerName);
+    }
+
+    @Override
     public QueryPage.Cursor streamRollback(QueryRequest request, QueryPage.Cursor cursor,
                                            int windowLimit, RecordSink sink) {
         // Rollback reads the real recorded events, never the synthesized
