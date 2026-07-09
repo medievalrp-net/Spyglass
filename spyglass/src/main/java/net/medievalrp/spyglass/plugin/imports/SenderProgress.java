@@ -23,15 +23,27 @@ final class SenderProgress extends PrintStream {
 
         @Override
         public synchronized void flush() {
+            // The autoflushing PrintStream flushes per printf SEGMENT, not per
+            // line - forwarding the raw buffer sent fragments ("co_block",
+            // " done - 17,103", " rows") as separate chat messages (#252).
+            // Forward complete lines only; keep any trailing partial buffered.
             String text = toString(StandardCharsets.UTF_8);
-            if (text.isEmpty()) {
+            int lastNewline = text.lastIndexOf('\n');
+            if (lastNewline < 0) {
                 return;
             }
+            String remainder = text.substring(lastNewline + 1);
+            String complete = text.substring(0, lastNewline);
             reset();
-            for (String line : text.split("\n", -1)) {
+            if (!remainder.isEmpty()) {
+                byte[] keep = remainder.getBytes(StandardCharsets.UTF_8);
+                write(keep, 0, keep.length);
+            }
+            for (String line : complete.split("\n", -1)) {
                 if (!line.isBlank()) {
                     String msg = line.stripTrailing();
-                    support.onMainThread(() -> sender.sendMessage("[import] " + msg));
+                    support.onMainThread(() -> sender.sendMessage(
+                            net.medievalrp.spyglass.plugin.command.render.Feedback.info(msg)));
                 }
             }
         }

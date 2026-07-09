@@ -82,4 +82,41 @@ class BlockLocationsTest {
         assertThat(BlockLocations.fromBlock(block))
                 .isEqualTo(BlockLocations.from(world, 3, 7, 11));
     }
+
+    // ===== #232: null world (entity observed mid world-unload) =========
+    // The factories must yield the worldless sentinel instead of NPEing on
+    // the tick - and must NOT return null, which would ripple a null
+    // location into the record (the #230 drain-poison shape).
+
+    @Test
+    void nullWorldLocationYieldsWorldlessSentinelNotThrow() {
+        Location stale = mock(Location.class);
+        when(stale.getWorld()).thenReturn(null);
+        when(stale.getBlockX()).thenReturn(17);
+        when(stale.getBlockY()).thenReturn(65);
+        when(stale.getBlockZ()).thenReturn(-4);
+
+        BlockLocation loc = BlockLocations.fromLocation(stale);
+
+        assertThat(loc).isNotNull();
+        assertThat(loc.worldId()).isEqualTo(new UUID(0L, 0L));
+        assertThat(loc.worldName()).isEmpty();
+        assertThat(loc.x()).isEqualTo(17);
+        assertThat(loc.y()).isEqualTo(65);
+        assertThat(loc.z()).isEqualTo(-4);
+    }
+
+    @Test
+    void nullWorldCoordsAndBlockYieldTheSameSentinel() {
+        BlockLocation viaCoords = BlockLocations.from(null, 1, 2, 3);
+        assertThat(viaCoords).isNotNull();
+        assertThat(viaCoords.worldId()).isEqualTo(new UUID(0L, 0L));
+
+        Block orphan = mock(Block.class);
+        when(orphan.getWorld()).thenReturn(null);
+        when(orphan.getX()).thenReturn(1);
+        when(orphan.getY()).thenReturn(2);
+        when(orphan.getZ()).thenReturn(3);
+        assertThat(BlockLocations.fromBlock(orphan)).isEqualTo(viaCoords);
+    }
 }

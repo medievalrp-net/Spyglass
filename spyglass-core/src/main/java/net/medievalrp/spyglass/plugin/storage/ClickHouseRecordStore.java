@@ -344,6 +344,9 @@ public final class ClickHouseRecordStore implements RecordStore {
                 record instanceof RollbackOpRecord op ? op.reference() : null);
     }
 
+    /** Worldless sentinel for a null location (#230); columns are non-nullable. */
+    private static final java.util.UUID NULL_WORLD_ID = new java.util.UUID(0L, 0L);
+
     private void writeCommon(RowBinaryFormatWriter writer, EventRecord record) throws IOException {
         Origin origin = record.origin();
         Source source = record.source();
@@ -373,11 +376,20 @@ public final class ClickHouseRecordStore implements RecordStore {
         writer.setValue("source_command_block_y", cmdLoc == null ? null : cmdLoc.y());
         writer.setValue("source_command_block_z", cmdLoc == null ? null : cmdLoc.z());
         writer.setValue("source_description", source == null ? null : source.description());
-        writer.setValue("location_world_id", location.worldId());
-        writer.setString("location_world_name", nullToEmpty(location.worldName()));
-        writer.setInteger("location_x", location.x());
-        writer.setInteger("location_y", location.y());
-        writer.setInteger("location_z", location.z());
+        // #230: a null location must not poison the drain - this exact
+        // dereference wedged a production ingest for 1.5h (the drain retried
+        // the same poisoned batch forever). Maria/Sqlite write NULL columns;
+        // this schema deliberately makes location non-nullable, so write the
+        // worldless sentinel instead (same zero-UUID BlockLocations uses for
+        // a vanished world). Intake validation in SpyglassApiImpl rejects
+        // third-party null locations up front; this is the defense in depth.
+        writer.setValue("location_world_id",
+                location == null ? NULL_WORLD_ID : location.worldId());
+        writer.setString("location_world_name",
+                nullToEmpty(location == null ? null : location.worldName()));
+        writer.setInteger("location_x", location == null ? 0 : location.x());
+        writer.setInteger("location_y", location == null ? 0 : location.y());
+        writer.setInteger("location_z", location == null ? 0 : location.z());
         writer.setString("server", nullToEmpty(record.server()));
         writer.setValue("target", record.target());
         // Extension fields ride on every row (empty map for records that don't

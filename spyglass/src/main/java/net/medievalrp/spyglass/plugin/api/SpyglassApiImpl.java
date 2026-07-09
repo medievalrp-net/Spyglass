@@ -61,6 +61,16 @@ public final class SpyglassApiImpl implements SpyglassApi {
 
     @Override
     public void record(EventRecord record) {
+        // #230: a null location poisons storage drains downstream (ClickHouse's
+        // location columns are non-nullable; one bad record wedged production
+        // ingest for 1.5h before a restart). No built-in listener can produce
+        // one - reject third-party records at the boundary with an error that
+        // names the offender instead of failing silently at drain time.
+        if (record.location() == null) {
+            throw new IllegalArgumentException("Spyglass records are positional: event '"
+                    + record.event() + "' arrived with a null location. Use a sentinel "
+                    + "location (zero coords in a real world) for global events.");
+        }
         recorder.record(record);
     }
 

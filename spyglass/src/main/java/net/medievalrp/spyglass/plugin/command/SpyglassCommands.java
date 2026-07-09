@@ -34,7 +34,13 @@ public final class SpyglassCommands {
 
     // /sg is the short backend alias; /sgv on the Velocity proxy stays
     // namespace-distinct so the proxy never shadows the Paper command.
-    private static final List<String> ROOT_ALIASES = List.of("spyglass", "sg");
+    // /s joins when commands.s-alias is enabled in config (#250) - opt-in
+    // because single-letter roots collide with other plugins.
+    private final List<String> rootAliases;
+
+    static List<String> rootAliases(boolean sAlias) {
+        return sAlias ? List.of("spyglass", "sg", "s") : List.of("spyglass", "sg");
+    }
 
     private final JavaPlugin plugin;
     private final SpyglassApi api;
@@ -70,7 +76,8 @@ public final class SpyglassCommands {
                         ImportService imports,
                         ImportConfig importConfig,
                         Path importDir,
-                        net.medievalrp.spyglass.plugin.migrate.MigrateService migrate) {
+                        net.medievalrp.spyglass.plugin.migrate.MigrateService migrate,
+                        boolean sAlias) {
         this.plugin = plugin;
         this.api = api;
         this.help = help;
@@ -88,6 +95,7 @@ public final class SpyglassCommands {
         this.importConfig = importConfig;
         this.importDir = importDir;
         this.migrate = migrate;
+        this.rootAliases = rootAliases(sAlias);
     }
 
     // v1-compat subcommand aliases. Operators have years of muscle memory
@@ -110,15 +118,19 @@ public final class SpyglassCommands {
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
                 plugin, ExecutionCoordinator.simpleCoordinator());
-        for (String root : ROOT_ALIASES) {
+        for (String root : rootAliases) {
             manager.command(manager.commandBuilder(root)
                     .permission("spyglass.use")
                     .handler(ctx -> help.send(ctx.sender())));
 
             for (String name : HELP_ALIASES) {
+                // Optional page (#249): the full command list overflows chat,
+                // so /sg help paginates and /sg help <n> jumps to a page.
                 manager.command(manager.commandBuilder(root).literal(name)
+                        .optional("page", IntegerParser.integerParser(1))
                         .permission("spyglass.use")
-                        .handler(ctx -> help.send(ctx.sender())));
+                        .handler(ctx -> help.send(ctx.sender(),
+                                ctx.<Integer>optional("page").orElse(1))));
             }
 
             for (String name : EVENTS_ALIASES) {
@@ -243,7 +255,8 @@ public final class SpyglassCommands {
             // Validation (unknown/active/unconfigured target) happens inside
             // MigrateService, which messages the sender for every outcome.
             manager.command(manager.commandBuilder(root).literal("migrate")
-                    .required("backend", StringParser.stringParser())
+                    .required("backend", StringParser.stringParser(),
+                            suggestions.migrateBackendProvider())
                     .flag(manager.flagBuilder("confirm").build())
                     .permission("spyglass.migrate")
                     .handler(ctx -> migrate.migrate(ctx.sender(),

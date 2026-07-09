@@ -1,12 +1,48 @@
 # Migrating from CoreProtect to Spyglass
 
 End-to-end runbook for an operator who has a CoreProtect-on-Paper
-server and wants to switch to Spyglass-on-ClickHouse, **keeping all
-historical forensic data**.
+server and wants to switch to Spyglass, **keeping all historical
+forensic data**.
 
 The migration is a one-shot, scriptable process: import history, audit
 parity, then swap the plugin jar. Both plugins can co-exist during the
 import so there's no logging blackout window.
+
+## The in-plugin path (start here)
+
+Since 1.0.8 the importer is built into the plugin - for most servers
+this replaces everything below except the parity `validate` step:
+
+1. Install Spyglass alongside CoreProtect and pick your backend in
+   `config.conf`. Check `storage.retention`: records older than it are
+   aged out after import, so set it `"never"` (or long enough to cover
+   your history) BEFORE importing. The import warns you up front if
+   part of the source predates the cutoff.
+2. Copy CoreProtect's `database.db` into `plugins/Spyglass/import/`
+   and run `/sg import database.db` - or, for a MySQL-backed
+   CoreProtect, define the source in `plugins/Spyglass/import.conf`
+   and run `/sg import mysql <source>`.
+3. Watch the progress in chat or console. Re-running the same source
+   is refused unless you pass `--confirm`; with it, re-imports dedup
+   rather than duplicate (MongoDB is the exception - re-import there
+   is blocked).
+4. Done - search and rollback work on the imported history, including
+   `p:<name>` for players who never joined this server. Remove
+   CoreProtect whenever you're comfortable.
+
+Sizing the window: on the same hardware a ~29M-event history imported
+into ClickHouse in minutes and into SQLite in hours - the import runs
+async and does not lag the main thread either way, but plan the SQLite
+case as an overnight job. Every world the source references must exist
+on the server (`<world>/uid.dat`); a missing one fails the import
+cleanly before anything is written.
+
+Switching storage backends later (say SQLite to ClickHouse once you
+outgrow the file): fill in the target's block in `config.conf`, run
+`/sg migrate <backend>`, flip `database.backend`, restart.
+
+The CLI below remains for offline imports (no server running) and for
+the row-parity `validate` audit, which has no in-plugin equivalent yet.
 
 ## Before you start
 

@@ -97,7 +97,7 @@ public final class MigrateService {
     /** Async entry point: cheap checks inline, the job itself off-thread. */
     public Outcome migrate(CommandSender sender, String targetName, boolean confirm) {
         if (running.get()) {
-            tell(sender, "A migration is already running; try again once it finishes.");
+            tellError(sender, "A migration is already running; try again once it finishes.");
             return Outcome.ALREADY_RUNNING;
         }
         support.onAsyncThread(() -> runMigrate(sender, targetName, confirm));
@@ -109,27 +109,27 @@ public final class MigrateService {
     Outcome runMigrate(CommandSender sender, String targetName, boolean confirm) {
         Backend target = parseBackend(targetName);
         if (target == null) {
-            tell(sender, "Unknown backend '" + targetName
+            tellError(sender, "Unknown backend '" + targetName
                     + "' (expected sqlite, mongo, clickhouse, or mariadb).");
             return Outcome.INVALID_TARGET;
         }
         if (target == active) {
-            tell(sender, capitalize(targetName) + " is already the active backend; "
+            tellError(sender, capitalize(targetName) + " is already the active backend; "
                     + "nothing to migrate.");
             return Outcome.INVALID_TARGET;
         }
         String configError = validateTargetConfig(databaseConfig, target);
         if (configError != null) {
-            tell(sender, "Target backend '" + targetName + "' is not configured: "
+            tellError(sender, "Target backend '" + targetName + "' is not configured: "
                     + configError + " Fill in the block in config.conf first.");
             return Outcome.INVALID_TARGET;
         }
         if (importRunning.getAsBoolean()) {
-            tell(sender, "A CoreProtect import is running; wait for it before migrating.");
+            tellError(sender, "A CoreProtect import is running; wait for it before migrating.");
             return Outcome.IMPORT_RUNNING;
         }
         if (!running.compareAndSet(false, true)) {
-            tell(sender, "A migration is already running; try again once it finishes.");
+            tellError(sender, "A migration is already running; try again once it finishes.");
             return Outcome.ALREADY_RUNNING;
         }
         long startNanos = System.nanoTime();
@@ -138,7 +138,7 @@ public final class MigrateService {
             targetStore = targetFactory.open(target);
 
             if (!confirm && !targetIsEmpty(targetStore)) {
-                tell(sender, "The " + targetName + " target already contains records. "
+                tellError(sender, "The " + targetName + " target already contains records. "
                         + "Re-run with --confirm to migrate anyway"
                         + (target == Backend.MONGO
                                 ? " (NOT recommended on MongoDB - it cannot dedup by id, "
@@ -153,7 +153,7 @@ public final class MigrateService {
             finalizeClickHouse(targetStore);
 
             double secs = (System.nanoTime() - startNanos) / 1e9;
-            tell(sender, String.format(Locale.ROOT,
+            tellSuccess(sender, String.format(Locale.ROOT,
                     "Migration complete: %,d records copied to %s in %.1fs. "
                             + "Set database.backend = \"%s\" in config.conf and restart "
                             + "to switch. (Undo history / wand state / salvage are "
@@ -162,7 +162,7 @@ public final class MigrateService {
             return Outcome.DONE;
         } catch (Exception ex) {
             logger.log(Level.SEVERE, "Spyglass migration to " + targetName + " failed", ex);
-            tell(sender, "Migration failed: " + ex.getMessage());
+            tellError(sender, "Migration failed: " + ex.getMessage());
             return Outcome.FAILED;
         } finally {
             if (targetStore != null) {
@@ -206,8 +206,8 @@ public final class MigrateService {
         }
         sink.flush();
         if (alreadyExpired > 0) {
-            tell(sender, String.format(Locale.ROOT,
-                    "WARNING: %,d copied records are already past their retention expiry "
+            tellWarn(sender, String.format(Locale.ROOT,
+                    "%,d copied records are already past their retention expiry "
                             + "and will be aged out on the target (immediately on ClickHouse). "
                             + "Raise storage.retention (or set it \"never\") before migrating "
                             + "if you want them kept.", alreadyExpired));
@@ -317,7 +317,24 @@ public final class MigrateService {
                 : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
+    // House-styled sender feedback (#252), mirroring ImportService.
     private void tell(CommandSender sender, String message) {
-        support.onMainThread(() -> sender.sendMessage("[migrate] " + message));
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.info(message)));
+    }
+
+    private void tellWarn(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.warn(message)));
+    }
+
+    private void tellError(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.error(message)));
+    }
+
+    private void tellSuccess(CommandSender sender, String message) {
+        support.onMainThread(() -> sender.sendMessage(
+                net.medievalrp.spyglass.plugin.command.render.Feedback.success(message)));
     }
 }

@@ -8,11 +8,27 @@ import org.bukkit.block.Block;
 
 public final class BlockLocations {
 
+    /**
+     * Sentinel world id for a capture whose world was already gone (#232).
+     * A stale {@link Location} - an entity observed mid world-unload, some
+     * async contexts - can legitimately return a null world; before this,
+     * every factory below NPE'd on the tick, on the high-frequency
+     * break/place path. A sentinel beats both throwing (kills the capture
+     * AND the listener) and returning null (a null location rippling into
+     * a record is the #230 drain-poison failure). The record persists with
+     * time/player/action intact; {@link #resolveWorld} finds nothing for
+     * it, so rollback skips it.
+     */
+    private static final java.util.UUID NULL_WORLD_ID = new java.util.UUID(0L, 0L);
+
     private BlockLocations() {
     }
 
     public static net.medievalrp.spyglass.api.util.BlockLocation fromLocation(Location location) {
         World world = location.getWorld();
+        if (world == null) {
+            return worldless(location.getBlockX(), location.getBlockY(), location.getBlockZ());
+        }
         return new net.medievalrp.spyglass.api.util.BlockLocation(
                 world.getUID(),
                 world.getName(),
@@ -40,12 +56,19 @@ public final class BlockLocations {
      * {@link Location} allocation.
      */
     public static net.medievalrp.spyglass.api.util.BlockLocation from(World world, int x, int y, int z) {
+        if (world == null) {
+            return worldless(x, y, z);
+        }
         return new net.medievalrp.spyglass.api.util.BlockLocation(
                 world.getUID(),
                 world.getName(),
                 x,
                 y,
                 z);
+    }
+
+    private static net.medievalrp.spyglass.api.util.BlockLocation worldless(int x, int y, int z) {
+        return new net.medievalrp.spyglass.api.util.BlockLocation(NULL_WORLD_ID, "", x, y, z);
     }
 
     public static Optional<World> resolveWorld(net.medievalrp.spyglass.api.util.BlockLocation location) {

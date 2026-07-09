@@ -47,10 +47,16 @@ public final class Feedback {
                 .asComponent();
     }
 
-    /** `«Spyglass»<green>message</green>` — matches v1's Formatter.success. */
+    /**
+     * `«Spyglass» <green>message</green>`. v1's Formatter.success had no
+     * space after the prefix - the only category that didn't - which
+     * rendered as `«Spyglass»Spyglass version x.y.z` on /sg version (#251).
+     * All four categories now frame identically.
+     */
     public static Component success(String message) {
         return Component.text()
                 .append(PREFIX)
+                .append(Component.text(" ", NamedTextColor.WHITE))
                 .append(Component.text(message, NamedTextColor.GREEN))
                 .asComponent();
     }

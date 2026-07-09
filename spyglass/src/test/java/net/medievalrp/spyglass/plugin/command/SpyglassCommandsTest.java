@@ -33,4 +33,11 @@ class SpyglassCommandsTest {
                 .contains("on Paper 26.2")
                 .doesNotContain("by ");
     }
+
+    // #250: /s is opt-in and must never displace the two canonical roots.
+    @Test
+    void sAliasTogglesTheThirdRoot() {
+        assertThat(SpyglassCommands.rootAliases(false)).containsExactly("spyglass", "sg");
+        assertThat(SpyglassCommands.rootAliases(true)).containsExactly("spyglass", "sg", "s");
+    }
 }

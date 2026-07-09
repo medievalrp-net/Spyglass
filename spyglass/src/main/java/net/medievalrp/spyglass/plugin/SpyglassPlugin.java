@@ -734,7 +734,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 importService,
                 importConfig,
                 importDir,
-                migrateService);
+                migrateService,
+                config.commands().sAlias());
         commands.register();
 
         if (isWorldEditInstalled()) {

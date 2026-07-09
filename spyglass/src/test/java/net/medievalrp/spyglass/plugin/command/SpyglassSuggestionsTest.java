@@ -178,4 +178,17 @@ class SpyglassSuggestionsTest {
             return true;
         }
     }
+
+    // #258: /sg migrate <backend> completes the storage tokens like every
+    // other completed argument.
+    @Test
+    void migrateBackendProviderSuggestsAllTokens() throws Exception {
+        SpyglassSuggestions suggestions = new SpyglassSuggestions(
+                mock(SpyglassApi.class), new ImportConfig(Map.of()), Path.of("import"));
+        var out = new java.util.ArrayList<String>();
+        suggestions.migrateBackendProvider().suggestions(null, null)
+                .forEach(s -> out.add(s.suggestion()));
+        assertThat(out)
+                .containsExactlyInAnyOrder("sqlite", "mongo", "clickhouse", "mariadb", "mysql");
+    }
 }

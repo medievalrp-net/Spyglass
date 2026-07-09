@@ -30,4 +30,53 @@ class HelpServiceTest {
                 .contains("/spyglass tool")
                 .contains("/spyglass events");
     }
+
+    // ===== #249: every command discoverable, across pages ==============
+
+    @Test
+    void everyRegisteredCommandAppearsAcrossThePages() {
+        CommandSender sender = mock(CommandSender.class);
+        List<Component> captured = ServiceTestSupport.captureMessages(sender);
+
+        HelpService help = new HelpService();
+        help.send(sender, 1);
+        help.send(sender, 2);
+
+        String combined = String.join("\n", ServiceTestSupport.plainTexts(captured));
+        assertThat(combined)
+                .contains("/spyglass help")
+                .contains("/spyglass events")
+                .contains("/spyglass rbqueue")
+                .contains("/spyglass inventory")
+                .contains("/spyglass stats")
+                .contains("/spyglass import <file>")
+                .contains("/spyglass import mysql")
+                .contains("/spyglass migrate")
+                .contains("/spyglass tele")
+                .contains("/spyglass version");
+    }
+
+    @Test
+    void paginatesWithHeaderCountAndClampsOutOfRangePages() {
+        CommandSender sender = mock(CommandSender.class);
+        List<Component> captured = ServiceTestSupport.captureMessages(sender);
+
+        new HelpService().send(sender, 1);
+        List<String> pageOne = ServiceTestSupport.plainTexts(captured);
+        // Header carries the red clickable next-page arrow (#260), same
+        // control as the search-result header.
+        assertThat(pageOne.get(0)).contains("(1/2)").contains("[→]").doesNotContain("[←]");
+        // header + tagline + 8 entries
+        assertThat(pageOne).hasSize(10);
+
+        captured.clear();
+        new HelpService().send(sender, 99);
+        List<String> clamped = ServiceTestSupport.plainTexts(captured);
+        assertThat(clamped.get(0)).as("out-of-range page clamps to the last page")
+                .contains("(2/2)").contains("[←]").doesNotContain("[→]");
+
+        captured.clear();
+        new HelpService().send(sender, -5);
+        assertThat(ServiceTestSupport.plainTexts(captured).get(0)).contains("(1/2)");
+    }
 }

@@ -94,28 +94,26 @@ Root command is `/spyglass`, aliased to `/sg`. The full reference - every comman
 /sg rollback p:griefer t:6h r:100             # revert a griefer's last 6h nearby
 /sg undo                                       # reverse your last rollback
 /sg tool                                       # toggle the inspector wand
+/sg import database.db                         # import a CoreProtect history
+/sg migrate clickhouse                         # move all records to another backend
 ```
 
 ## Migrating from CoreProtect
 
-Step-by-step operator runbook: [`docs/migration-from-coreprotect.md`](docs/migration-from-coreprotect.md). Quick summary: build the importer jar, run `import` against your CoreProtect database, run `validate` to audit row parity, then swap the plugin jar.
+Drop your CoreProtect `database.db` in `plugins/Spyglass/import/` and run it in-game - no separate tooling:
 
-```sh
-./gradlew :spyglass-importer:shadowJar
-java -jar spyglass-importer/build/libs/spyglass-importer-1.0.0.jar import \
-    --source ./database.db \
-    --worlds-dir ./world-data \
-    --server-name my-server \
-    --clickhouse-host localhost
-java -jar spyglass-importer/build/libs/spyglass-importer-1.0.0.jar validate \
-    --coreprotect-sqlite ./database.db \
-    --clickhouse-host localhost \
-    --server-name my-server
+```
+/sg import database.db          # CoreProtect SQLite, into whatever backend you run
+/sg import mysql old-survival   # live CoreProtect MySQL (sources in import.conf)
 ```
 
-Or run the whole rig (ClickHouse + importer + validate + bench + interactive client) via Docker: see [`docker/README.md`](docker/README.md).
+Imports run async, stream progress, and warn up front if part of the history is older than your `storage.retention` (set it `"never"` first to keep everything). Re-imports dedup instead of duplicating. Once imported, everything works on the old data - search, and rolling back a griefer by name even if they never joined the new server.
 
-Imports cover blocks, kills, sessions, chat, commands, container deposits/withdraws, and item drops/pickups. Re-runs are idempotent (deterministic UUIDs collapse via ClickHouse `ReplacingMergeTree`). Full table coverage and known gaps are documented in [`docs/importer.md`](docs/importer.md).
+Switching storage later? `/sg migrate <backend>` copies every record from the active backend into another configured one - fill in the target's block in `config.conf`, migrate, flip `database.backend`, restart.
+
+The standalone CLI importer still exists for offline runs and row-parity auditing (`validate`); the step-by-step operator runbook is [`docs/migration-from-coreprotect.md`](docs/migration-from-coreprotect.md), and the whole rig (ClickHouse + importer + validate + bench) runs via Docker: [`docker/README.md`](docker/README.md).
+
+Imports cover blocks, kills, sessions, chat, commands, container deposits/withdraws, and item drops/pickups. Full table coverage and known gaps are documented in [`docs/importer.md`](docs/importer.md).
 
 ## Modules
 

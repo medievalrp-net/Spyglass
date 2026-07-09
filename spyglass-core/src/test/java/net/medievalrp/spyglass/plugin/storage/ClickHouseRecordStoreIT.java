@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import net.medievalrp.spyglass.api.event.CustomRecord;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
@@ -513,6 +515,27 @@ class ClickHouseRecordStoreIT {
         assertThat(deposit.afterItem().name()).isEqualTo("Storm Caller");
         assertThat(deposit.afterItem().lore()).contains("Forged in the primordial deep");
         assertThat(deposit.afterItem().enchants()).contains("protection=4");
+    }
+
+    // #230: a record with a null location must persist with the worldless
+    // sentinel instead of throwing while building the RowBinary buffer -
+    // the poison-pill that wedged the whole drain (one bad record stopped
+    // every subsequent record until restart).
+    @Test
+    void nullLocationRecordWritesWorldlessSentinelInsteadOfPoisoningTheBatch() throws Exception {
+        Instant now = Instant.now().minusSeconds(30);
+        CustomRecord poison = new CustomRecord(
+                UUID.randomUUID(), "custom", now, now.plusSeconds(3600),
+                Origin.plugin("third-party"), Source.plugin("third-party"),
+                null /* the poison */, "test", null, "global event", Map.of());
+
+        long before = store.count();
+        store.save(List.of(poison));
+        flushAsyncInserts();
+
+        assertThat(store.count())
+                .as("the null-location record persists instead of wedging the batch")
+                .isEqualTo(before + 1);
     }
 
     @Test
