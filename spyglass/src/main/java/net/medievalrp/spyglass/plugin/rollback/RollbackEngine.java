@@ -1,6 +1,5 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -23,21 +22,13 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.kyori.adventure.text.Component;
-import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
-import net.medievalrp.spyglass.api.event.BlockUseRecord;
-import net.medievalrp.spyglass.api.event.EventRecord;
-import net.medievalrp.spyglass.api.event.Origin;
-import net.medievalrp.spyglass.api.event.RecordContext;
-import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.rollback.RollbackEffectHandler;
 import net.medievalrp.spyglass.api.rollback.RollbackReason;
 import net.medievalrp.spyglass.api.rollback.RollbackResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
-import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
 import net.medievalrp.spyglass.plugin.util.ChunkResender;
@@ -73,8 +64,6 @@ public final class RollbackEngine {
     private static final Logger LOGGER =
             Logger.getLogger(RollbackEngine.class.getName());
 
-    private final Recorder recorder;
-    private final RecordingSupport support;
     private Function<String, Optional<RollbackEffectHandler>> handlerLookup =
             type -> Optional.empty();
     private RollbackPhysicsBlocker physicsBlocker;
@@ -239,15 +228,6 @@ public final class RollbackEngine {
     }
 
     public RollbackEngine() {
-        this(null, null);
-    }
-
-    // With a non-null recorder/support, every applied effect also
-    // emits a lightweight ROLLBACK record so the wand reads
-    // "ROLLBACK placed STONE" on the rolled block.
-    public RollbackEngine(Recorder recorder, RecordingSupport support) {
-        this.recorder = recorder;
-        this.support = support;
     }
 
     public void setCustomEffectLookup(Function<String, Optional<RollbackEffectHandler>> lookup) {
@@ -1688,45 +1668,6 @@ public final class RollbackEngine {
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done) {
-        // Audit trail: emit a lightweight rolled-place / rolled-break
-        // record for every block this rollback restored, so the wand
-        // reads "ROLLBACK placed/broke X" and a:rolled-place queries
-        // surface what the rollback touched. recorder/support are null in
-        // unit tests, making this a no-op there. Restores the per-block
-        // emission Spyglass did before the NMS-direct-section rewrite
-        // dropped the call site.
-        //
-        // Building one record per restored block (~hundreds of thousands
-        // on a big rollback) is pure data assembly — no Bukkit calls once
-        // the operator name is captured — so it runs off the main thread.
-        // That was the single largest main-thread cost in the apply
-        // critical path; recordAll bulk-queues without firing the
-        // per-record committed hook, so off-main hand-off is safe and the
-        // rollback completes without waiting on it.
-        if (recorder != null && support != null) {
-            final String operatorName = sender == null ? "console" : sender.getName();
-            final RollbackResult[] applied = resultArray;
-            Runnable buildAndEmit = () -> {
-                List<EventRecord> rolledRecords = new ArrayList<>();
-                // Reference reads are atomic; we only act on already-set
-                // BlockReplace results (stable after the block phase), so
-                // any concurrent leftover-phase writes to other indices
-                // are correctly skipped by the instanceof filter.
-                for (RollbackResult r : applied) {
-                    if (r instanceof RollbackResult.Applied a
-                            && a.effect() instanceof RollbackEffect.BlockReplace br) {
-                        rolledRecords.add(buildRollbackSourceRecord(
-                                operatorName, br.location(), br.expectedCurrent(), br.replacement()));
-                    }
-                }
-                recorder.recordAll(rolledRecords);
-            };
-            if (worldWriteExecutor != null) {
-                worldWriteExecutor.execute(buildAndEmit);
-            } else {
-                buildAndEmit.run();
-            }
-        }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -2075,38 +2016,6 @@ public final class RollbackEngine {
             }
         }
         return best;
-    }
-
-    // Emit a lightweight wand-attribution record on a rolled block so
-    // searches show "ROLLBACK placed STONE". BlockUseRecord avoids
-    // carrying the before/after snapshot blobs that BlockPlaceRecord
-    // would, which mattered: at 150 blocks the snapshot pairs combined
-    // with FAWE's write buffer were enough to tip the heap into OOM.
-    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location,
-                                                   BlockSnapshot destroyed, BlockSnapshot after) {
-        Instant occurred = support.now();
-        Source source = Source.environment("ROLLBACK");
-        Origin origin = Origin.rollback(operatorName);
-        // Skip support.context (which uses SecureRandom) to avoid
-        // entropy reads for every rolled block.
-        RecordContext ctx = new RecordContext(
-                RecordingSupport.fastRandomUUID(),
-                occurred,
-                support.expiresAt(occurred),
-                origin, source, location, support.serverName(), Map.of());
-        boolean toAir = after == null || after.material() == Material.AIR;
-        // Lowercase-hyphenated form matches shulker-open etc. and
-        // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
-        String event = toAir ? "rolled-break" : "rolled-place";
-        // rolled-break names what was DESTROYED, not the air that replaced
-        // it (#269); rolled-place keeps naming what was placed.
-        String target = toAir
-                ? (destroyed == null || destroyed.material() == null
-                        ? Material.AIR : destroyed.material()).name()
-                : after.material().name();
-        return new BlockUseRecord(
-                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
     }
 
     public RollbackResult apply(RollbackEffect effect) {

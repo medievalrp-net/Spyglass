@@ -78,11 +78,7 @@ class RollbackServiceTest {
         final RollbackService subject;
 
         TestFixture() {
-            this(false);
-        }
-
-        TestFixture(boolean rolledAuditSynthesized) {
-            config = sampleConfig(rolledAuditSynthesized);
+            config = sampleConfig();
             when(recorder.flush(any(net.medievalrp.spyglass.api.util.Duration.class)))
                     .thenReturn(true);
             // Empty page → executes the "no results" branch and returns
@@ -128,10 +124,6 @@ class RollbackServiceTest {
         }
 
         private static SpyglassConfig sampleConfig() {
-            return sampleConfig(false);
-        }
-
-        private static SpyglassConfig sampleConfig(boolean rolledAuditSynthesized) {
             SpyglassConfig cfg = mock(SpyglassConfig.class);
             SpyglassConfig.Limits limits = mock(SpyglassConfig.Limits.class);
             when(limits.rollbackBatchSize()).thenReturn(200);
@@ -139,7 +131,6 @@ class RollbackServiceTest {
                     .thenReturn(new net.medievalrp.spyglass.api.util.Duration(30L));
             when(cfg.limits()).thenReturn(limits);
             SpyglassConfig.Storage storage = mock(SpyglassConfig.Storage.class);
-            when(storage.rolledAuditSynthesized()).thenReturn(rolledAuditSynthesized);
             when(storage.retention())
                     .thenReturn(net.medievalrp.spyglass.api.util.Duration.parse("4w"));
             when(cfg.storage()).thenReturn(storage);
@@ -426,8 +417,8 @@ class RollbackServiceTest {
     }
 
     @Test
-    void synthesizedModeEmitsOneDecodableOpRecord() throws Exception {
-        TestFixture fixture = new TestFixture(true);
+    void completedRollbackEmitsOneDecodableOpRecord() throws Exception {
+        TestFixture fixture = new TestFixture();
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
         when(operator.getName()).thenReturn("Operator");
@@ -457,8 +448,10 @@ class RollbackServiceTest {
     }
 
     @Test
-    void receiptsModeEmitsNoOpRecord() throws Exception {
-        TestFixture fixture = new TestFixture(false);
+    void rollbackThatAppliesNothingEmitsNoOpRecord() throws Exception {
+        // The op record is what searches synthesize rolled-* entries from;
+        // a run that changed nothing must not seed a phantom audit trail.
+        TestFixture fixture = new TestFixture();
         org.bukkit.entity.Player operator = mock(org.bukkit.entity.Player.class);
         when(operator.getUniqueId()).thenReturn(UUID.randomUUID());
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
@@ -466,7 +459,7 @@ class RollbackServiceTest {
         BlockBreakRecord r = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
                 .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(r), null));
-        stubColumnarApplied(fixture);
+        stubColumnarBlockChanged(fixture);
         ServiceTestSupport.captureMessages(operator);
 
         fixture.subject.execute(operator, "a:break", RollbackMode.ROLLBACK);

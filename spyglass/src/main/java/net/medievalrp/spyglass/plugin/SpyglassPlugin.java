@@ -271,20 +271,16 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageStore = new MariaDbSalvageStore(mariaStore, 30L);
                 }
             }
-            if (config.storage().rolledAuditSynthesized()) {
-                // #22: searches synthesize per-block rolled-* entries
-                // from rollback-op records instead of reading persisted
-                // receipts. Wrapping here puts every read path — plugin
-                // search, the public API, IP resolution — behind the
-                // same merge; writes and the rollback's streaming page
-                // reads delegate untouched.
-                recordStore = new SynthesizingRecordStore(recordStore, true,
-                        net.medievalrp.spyglass.plugin.rollback.RollbackEngine
-                                .containerMaterialNames());
-            }
-            getLogger().info("Spyglass: backend = " + config.database().backend()
-                    + (config.storage().rolledAuditSynthesized()
-                            ? " (rolled audit: synthesized)" : " (rolled audit: receipts)"));
+            // #22: searches synthesize per-block rolled-* entries
+            // from rollback-op records instead of reading persisted
+            // receipts. Wrapping here puts every read path - plugin
+            // search, the public API, IP resolution - behind the
+            // same merge; writes and the rollback's streaming page
+            // reads delegate untouched.
+            recordStore = new SynthesizingRecordStore(recordStore, true,
+                    net.medievalrp.spyglass.plugin.rollback.RollbackEngine
+                            .containerMaterialNames());
+            getLogger().info("Spyglass: backend = " + config.database().backend());
         } catch (Exception ex) {
             getLogger().severe("Failed to initialize record store ("
                     + config.database().backend() + "): " + ex.getMessage());
@@ -505,13 +501,11 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
-        // Synthesized rolled audit (#22): the engine's per-block
-        // receipt emission is the recorder hook — a null recorder is
-        // its documented no-emit mode (unit tests rely on it). The
-        // operation record that searches synthesize from is emitted by
-        // RollbackService at completion instead.
-        RollbackEngine engine = new RollbackEngine(
-                config.storage().rolledAuditSynthesized() ? null : recorder, support);
+        // Synthesized rolled audit (#22): the engine never emits
+        // per-block receipts. The operation record that searches
+        // synthesize the rolled-* entries from is emitted by
+        // RollbackService at completion.
+        RollbackEngine engine = new RollbackEngine();
         engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
         RollbackPhysicsBlocker physicsBlocker = new RollbackPhysicsBlocker();
         getServer().getPluginManager().registerEvents(physicsBlocker, this);

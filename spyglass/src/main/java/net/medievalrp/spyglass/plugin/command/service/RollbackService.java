@@ -774,11 +774,10 @@ public final class RollbackService {
                 undoUnavailable = true;
             }
         }
-        // Only in synthesized mode: receipts mode persists the per-block
-        // trail itself, and emitting op records there too would make a
-        // later mode flip double-render those operations (receipt rows
-        // plus synthesis from the same op).
-        if (totalApplied > 0 && config.storage().rolledAuditSynthesized()) {
+        // The rollback-op record is the audit trail: searches synthesize
+        // the per-block rolled-* entries from it (#22), so a no-op run
+        // (nothing applied) emits nothing.
+        if (totalApplied > 0) {
             try {
                 java.time.Instant opOccurred = java.time.Instant.now();
                 BlockLocation opLocation = boxes.isEmpty()
