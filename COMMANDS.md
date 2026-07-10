@@ -125,6 +125,8 @@ Rollback and restore **force-overwrite**: each matched block is set back to its 
 
 The trade-off: a rollback does not skip a cell just because someone changed it afterward, so a rollback scoped to one player can overwrite a *legitimate* later edit by another player in those exact cells. Scope the query by player, region `r:`, and time `t:` to the grief you mean to revert; review with `/sg search` first if unsure. Items in a container the rollback overwrites are recoverable - see [Container salvage](#container-salvage).
 
+**Water and lava re-flow, they are not replayed.** After the writes land, Spyglass re-arms the fluid engine over the rolled cells and their border, and the water settles to its natural level for the restored terrain. Fluid flow itself is never logged (the volume would rival hopper traffic), so the result is the equilibrium state, which for water is almost always indistinguishable from what stood at the timestamp - but it is a re-simulation, not a replay.
+
 ### Undo and restore
 
 ```
