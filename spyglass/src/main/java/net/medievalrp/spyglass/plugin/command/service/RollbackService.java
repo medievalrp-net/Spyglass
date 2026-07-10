@@ -235,9 +235,21 @@ public final class RollbackService {
         pendingContexts.put(job.id, new JobContext(request, mode));
 
         // Persist before queueing so pending jobs also survive a
-        // restart and show up as resumable.
+        // restart and show up as resumable. An unencodable request (a
+        // predicate value the envelope doesn't know, e.g. from a
+        // third-party param) must not kill the command (#301): degrade
+        // to a non-resumable marker and run the job anyway.
+        String resumeRequest;
+        try {
+            resumeRequest = encodeResumeRequest(request, job.mode);
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass could not persist the resume plan for job "
+                    + job.shortId() + " (" + ex.getMessage() + "); the job runs but"
+                    + " will not be resumable after a restart.");
+            resumeRequest = null;
+        }
         resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode,
-                encodeResumeRequest(request, job.mode));
+                resumeRequest);
 
         int position = jobQueue.submit(job);
         if (position > 0) {

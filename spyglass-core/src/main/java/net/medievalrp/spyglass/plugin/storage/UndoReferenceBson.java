@@ -261,6 +261,11 @@ public final class UndoReferenceBson {
             case Boolean b -> new BsonDocument("b", new BsonBoolean(b));
             case UUID u -> new BsonDocument("u", new BsonBinary(u, UuidRepresentation.STANDARD));
             case Instant t -> new BsonDocument("ts", new BsonDateTime(t.toEpochMilli()));
+            // Substring params (trg:, iname:, ilore:, itags:, m:, ench:, cu:)
+            // parse to Pattern values; without this envelope every such key
+            // killed rollback/restore at the resume-store persist (#301).
+            case java.util.regex.Pattern p -> new BsonDocument("re", new BsonString(p.pattern()))
+                    .append("rf", new BsonInt32(p.flags()));
             default -> throw new IllegalStateException(
                     "Unsupported predicate value type: " + value.getClass().getName());
         };
@@ -280,6 +285,8 @@ public final class UndoReferenceBson {
             case "b" -> doc.getBoolean("b").getValue();
             case "u" -> doc.getBinary("u").asUuid(UuidRepresentation.STANDARD);
             case "ts" -> Instant.ofEpochMilli(doc.getDateTime("ts").getValue());
+            case "re" -> java.util.regex.Pattern.compile(doc.getString("re").getValue(),
+                    doc.getInt32("rf").getValue());
             default -> throw new IllegalStateException("Unknown value envelope: " + key);
         };
     }
