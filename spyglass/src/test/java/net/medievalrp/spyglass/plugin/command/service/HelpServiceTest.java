@@ -31,7 +31,7 @@ class HelpServiceTest {
                 .contains("/spyglass events");
     }
 
-    // ===== #249: every command discoverable, across pages ==============
+    // ===== #249/#281: every operator command discoverable, across pages ===
 
     @Test
     void everyRegisteredCommandAppearsAcrossThePages() {
@@ -49,11 +49,19 @@ class HelpServiceTest {
                 .contains("/spyglass rbqueue")
                 .contains("/spyglass inventory")
                 .contains("/spyglass stats")
-                .contains("/spyglass import <file>")
-                .contains("/spyglass import mysql")
+                .contains("/spyglass import")
                 .contains("/spyglass migrate")
-                .contains("/spyglass tele")
                 .contains("/spyglass version");
+        // #281: mysql is an option on the single import entry, not its own
+        // command; tele is internal (backs clickable rows) and stays out of
+        // the operator-facing help.
+        assertThat(combined)
+                .as("mysql shown as an import mode")
+                .contains("mysql <source>");
+        assertThat(combined)
+                .as("no standalone import-mysql entry, no tele entry")
+                .doesNotContain("/spyglass import mysql")
+                .doesNotContain("/spyglass tele");
     }
 
     @Test
