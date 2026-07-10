@@ -214,7 +214,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 case MONGO -> {
                     SpyglassConfig.Database db = config.database();
                     MongoRecordStore mongoStore = new MongoRecordStore(
-                            db.uri(), db.name(), db.collection(), new IndexManager(), retentionPolicy);
+                            db.mongo().uri(), db.mongo().database(), db.mongo().collection(),
+                            new IndexManager(), retentionPolicy);
                     recordStore = mongoStore;
                     undoStack = new MongoUndoStack(
                             mongoStore.database(), mongoStore.codecRegistry());
@@ -658,8 +659,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                         serviceSupport,
                         target -> switch (target) {
                             case MONGO -> new MongoRecordStore(
-                                    config.database().uri(), config.database().name(),
-                                    config.database().collection(), new IndexManager(),
+                                    config.database().mongo().uri(), config.database().mongo().database(),
+                                    config.database().mongo().collection(), new IndexManager(),
                                     retentionPolicy);
                             case CLICKHOUSE -> {
                                 SpyglassConfig.ClickHouse ch = config.database().clickhouse();

@@ -275,11 +275,11 @@ public final class MigrateService {
     public static String validateTargetConfig(SpyglassConfig.Database db, Backend target) {
         switch (target) {
             case MONGO -> {
-                if (isBlank(db.uri())) {
-                    return "database.uri is blank.";
+                if (isBlank(db.mongo().uri())) {
+                    return "database.mongo.uri is blank.";
                 }
-                if (isBlank(db.name()) || isBlank(db.collection())) {
-                    return "database.name / database.collection are blank.";
+                if (isBlank(db.mongo().database()) || isBlank(db.mongo().collection())) {
+                    return "database.mongo.database / database.mongo.collection are blank.";
                 }
             }
             case CLICKHOUSE -> {

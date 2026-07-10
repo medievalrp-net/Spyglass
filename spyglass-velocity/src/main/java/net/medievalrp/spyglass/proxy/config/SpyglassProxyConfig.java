@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.storage.MongoConnectionString;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.hocon.HoconConfigurationLoader;
 
@@ -45,9 +46,16 @@ public record SpyglassProxyConfig(
         return new SpyglassProxyConfig(
                 new Database(
                         backend,
-                        root.node("database", "uri").getString("mongodb://localhost:27017"),
-                        root.node("database", "name").getString("Spyglass"),
-                        root.node("database", "collection").getString("EventRecords"),
+                        new Mongo(
+                                MongoConnectionString.resolve(
+                                        mongoSetting(root, "uri", "uri", ""),
+                                        root.node("database", "mongo", "host").getString("localhost"),
+                                        root.node("database", "mongo", "port").getInt(27017),
+                                        root.node("database", "mongo", "user").getString(""),
+                                        root.node("database", "mongo", "password").getString(""),
+                                        root.node("database", "mongo", "ssl").getBoolean(false)),
+                                mongoSetting(root, "database", "name", "Spyglass"),
+                                mongoSetting(root, "collection", "collection", "EventRecords")),
                         new ClickHouse(
                                 root.node("database", "clickhouse", "host").getString("localhost"),
                                 root.node("database", "clickhouse", "port").getInt(8123),
@@ -81,12 +89,21 @@ public record SpyglassProxyConfig(
 
     public record Database(
             Backend backend,
-            String uri,
-            String name,
-            String collection,
+            Mongo mongo,
             ClickHouse clickhouse,
             Sqlite sqlite,
             MariaDb mariadb) {
+    }
+
+    /**
+     * Resolved MongoDB connection (used when {@code backend = "mongo"}); the uri
+     * is the operator's override or one assembled from the discrete fields by
+     * {@link net.medievalrp.spyglass.plugin.storage.MongoConnectionString}.
+     */
+    public record Mongo(
+            String uri,
+            String database,
+            String collection) {
     }
 
     /**
@@ -143,6 +160,15 @@ public record SpyglassProxyConfig(
     public record Limits(int searchResult, int pageSize) {
     }
 
+    // Reads a mongo setting from the new database.mongo.<key> location, falling
+    // back to the pre-v2 top-level database.<oldKey> for a proxy config an
+    // operator hasn't restructured yet. The proxy config is hand-maintained, so
+    // it keeps this fallback rather than running the plugin's config migrator.
+    private static String mongoSetting(ConfigurationNode root, String key, String oldKey, String def) {
+        ConfigurationNode current = root.node("database", "mongo", key);
+        return (current.virtual() ? root.node("database", oldKey) : current).getString(def);
+    }
+
     private static String defaultConfig() {
         return """
                 # Spyglass proxy plugin - Velocity-side companion to the Paper
@@ -154,9 +180,18 @@ public record SpyglassProxyConfig(
                   backend = "mongo"
 
                   # Mongo (used when backend = "mongo")
-                  uri = "mongodb://localhost:27017"
-                  name = "Spyglass"
-                  collection = "EventRecords"
+                  mongo {
+                    host = "localhost"
+                    port = 27017
+                    database = "Spyglass"
+                    user = ""
+                    password = ""
+                    ssl = false
+                    collection = "EventRecords"
+                    # Optional full connection string (replica set / Atlas /
+                    # advanced TLS); overrides the fields above when set.
+                    uri = ""
+                  }
 
                   # ClickHouse (used when backend = "clickhouse")
                   clickhouse {

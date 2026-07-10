@@ -102,7 +102,7 @@ public final class SpyglassProxy {
             case MONGO -> new MongoRecordStore(
                     // Read-only companion: skip collection-create, backfill, and
                     // index writes. The backend plugin owns schema and migrations.
-                    db.uri(), db.name(), db.collection(), new IndexManager(), false);
+                    db.mongo().uri(), db.mongo().database(), db.mongo().collection(), new IndexManager(), false);
             case CLICKHOUSE -> {
                 SpyglassProxyConfig.ClickHouse ch = db.clickhouse();
                 yield new ClickHouseRecordStore(
