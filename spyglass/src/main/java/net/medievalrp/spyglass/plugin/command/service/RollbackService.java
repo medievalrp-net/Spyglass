@@ -530,6 +530,10 @@ public final class RollbackService {
                 // effects via the object path. Both run their writes off-main
                 // and yield by tick, so TPS stays at ~20.
                 long tApply = System.nanoTime();
+                // Materials the operator excluded with block:!x - the live-
+                // state guard skips any cell whose live block is one (#264).
+                java.util.Set<String> protectedMaterials =
+                        net.medievalrp.spyglass.plugin.rollback.ExcludedMaterials.of(request.predicates());
                 RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
                 List<RollbackResult> complexResults = List.of();
                 try {
@@ -541,24 +545,28 @@ public final class RollbackService {
                         UUID worldId = worldCols.getKey();
                         java.util.concurrent.CompletableFuture<RollbackEngine.ApplyCounts> fut =
                                 new java.util.concurrent.CompletableFuture<>();
-                        support.onMainThread(() ->
+                        support.onMainThread(() -> {
+                                engine.protectMaterials(protectedMaterials);
                                 engine.applyColumnsChunked(worldId, cols, sender, support, batchSize, cancelFlag)
                                         .whenComplete((c, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
                                             else fut.complete(c);
-                                        }));
+                                        });
+                        });
                         counts.add(fut.join());
                     }
                     if (!window.complex().isEmpty()) {
                         java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
                                 new java.util.concurrent.CompletableFuture<>();
                         List<RollbackEffect> complex = window.complex();
-                        support.onMainThread(() ->
+                        support.onMainThread(() -> {
+                                engine.protectMaterials(protectedMaterials);
                                 engine.applyAllChunked(complex, sender, support, batchSize, cancelFlag)
                                         .whenComplete((r, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
                                             else fut.complete(r);
-                                        }));
+                                        });
+                        });
                         complexResults = fut.join();
                     }
                 } catch (java.util.concurrent.CompletionException ex) {
@@ -578,6 +586,7 @@ public final class RollbackService {
                 mergeSkip(skipCounts, "Unparseable blockdata", counts.unparseable);
                 mergeSkip(skipCounts, "invalid location", counts.invalidLocation);
                 mergeSkip(skipCounts, "Cancelled by operator", counts.cancelled);
+                mergeSkip(skipCounts, RollbackEngine.PROTECTED_SKIP, counts.protectedCells);
                 // The rare complex effects' per-cell results.
                 for (RollbackResult r : complexResults) {
                     if (r instanceof RollbackResult.Applied) {
