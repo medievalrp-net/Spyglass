@@ -1965,8 +1965,11 @@ public final class RollbackEngine {
             }, null);
         }
         if (state instanceof org.bukkit.inventory.BlockInventoryHolder holder) {
-            // Decorated pot / chiseled bookshelf: their Bukkit states are
-            // snapshots, so writes flush through update() (#300).
+            // Decorated pot / chiseled bookshelf (#300). getInventory() on a
+            // placed holder is LIVE, same as Container - and following it
+            // with state.update(true) re-wrote the block entity from the
+            // stale snapshot, resurrecting exactly what the write removed
+            // (the shulker lesson from #298 again). Write live, no flush.
             Inventory inventory = holder.getInventory();
             return new SurfaceOrSkip(new SlotSurface() {
                 @Override
@@ -1982,11 +1985,6 @@ public final class RollbackEngine {
                 @Override
                 public void set(int slot, ItemStack stack) {
                     inventory.setItem(slot, stack);
-                }
-
-                @Override
-                public void flush() {
-                    state.update(true, false);
                 }
             }, null);
         }
