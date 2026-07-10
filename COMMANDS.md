@@ -132,6 +132,14 @@ The trade-off: a rollback does not skip a cell just because someone changed it a
 
 `/sg undo` reverses your most recent operation. Run it again to keep walking back, newest first. Undo references the last 24 hours.
 
+Undo's limits, spelled out:
+
+- **Per player, player only.** It walks *your* operations; console-run rollbacks never enter the ledger and console cannot invoke undo.
+- **24 hour window.** Older operations age out of the ledger (the records themselves keep `storage.retention`).
+- **No redo.** An undo cannot itself be undone; to re-apply, run `/sg restore` with the original query.
+- **It replays the query, not the world.** Undo re-runs the stored query in the opposite direction. Container items the rollback destroyed come back only via [Container salvage](#container-salvage), and a cell someone legitimately edited *after* the original window replays to its recorded state, not to that later edit.
+- An unreadable ledger entry is discarded on contact; run `/sg undo` again to reach the operation beneath it.
+
 ## Queue
 
 Rollbacks run one at a time and the rest wait in line. Manage them with `/sg rbqueue`:
