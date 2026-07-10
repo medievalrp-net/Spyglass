@@ -1765,7 +1765,7 @@ public final class RollbackEngine {
             ItemStack current = inventory.getItem(slot);
             if (!matches(csw.expectedCurrent(), slot, current)) {
                 resultArray[indices.get(i)] = new RollbackResult.Skipped(csw,
-                        new RollbackReason.Error("Container slot changed."));
+                        new RollbackReason.Guarded("Container slot changed."));
                 continue;
             }
             StoredItem replacement = csw.replacement();
@@ -2000,7 +2000,7 @@ public final class RollbackEngine {
 
         ItemStack current = container.getInventory().getItem(slot);
         if (!matches(effect.expectedCurrent(), effect.slot(), current)) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.Error("Container slot changed."));
+            return new RollbackResult.Skipped(effect, new RollbackReason.Guarded("Container slot changed."));
         }
 
         StoredItem replacement = effect.replacement();
