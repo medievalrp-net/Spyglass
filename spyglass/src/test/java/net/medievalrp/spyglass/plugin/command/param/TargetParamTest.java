@@ -37,6 +37,33 @@ class TargetParamTest {
                 .isInstanceOf(ParamParseException.class);
     }
 
+    // trg:x,y,z is the coordinate form COMMANDS.md documents (#305):
+    // point ranges on location.*, so the parser's location-bound
+    // detection suppresses the default radius.
+    @Test
+    void coordinateFormPinsTheCell() throws Exception {
+        QueryPredicate predicate = new TargetParam().parse("trg", "100,-60,200", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.And.class);
+        var parts = ((QueryPredicate.And) predicate).predicates();
+        assertThat(parts).containsExactly(
+                new QueryPredicate.Range("location.x", 100, 100),
+                new QueryPredicate.Range("location.y", -60, -60),
+                new QueryPredicate.Range("location.z", 200, 200));
+    }
+
+    @Test
+    void coordinateFormToleratesSpacesAfterCommas() throws Exception {
+        QueryPredicate predicate = new TargetParam().parse("trg", "1, -2, 3", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.And.class);
+    }
+
+    @Test
+    void nonNumericTripleStaysASubstringMatch() throws Exception {
+        // A material-ish value with commas must not be misread as coords.
+        QueryPredicate predicate = new TargetParam().parse("trg", "chest,barrel", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Eq.class);
+    }
+
     private static ParamContext ctx() {
         return new ParamContext(null, null, 100);
     }
