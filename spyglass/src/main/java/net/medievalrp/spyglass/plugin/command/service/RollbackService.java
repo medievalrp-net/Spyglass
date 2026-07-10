@@ -534,6 +534,13 @@ public final class RollbackService {
                 // state guard skips any cell whose live block is one (#264).
                 java.util.Set<String> protectedMaterials =
                         net.medievalrp.spyglass.plugin.rollback.ExcludedMaterials.of(request.predicates());
+                // #287: containers and entities are opt-in. Flags ride the
+                // stored request, so an /sg undo replays with identical
+                // inclusion semantics.
+                boolean includeContainers = request.flags().contains(
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS);
+                boolean includeEntities = request.flags().contains(
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
                 RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
                 List<RollbackResult> complexResults = List.of();
                 try {
@@ -547,6 +554,7 @@ public final class RollbackService {
                                 new java.util.concurrent.CompletableFuture<>();
                         support.onMainThread(() -> {
                                 engine.protectMaterials(protectedMaterials);
+                                engine.includeInRollback(includeContainers, includeEntities);
                                 engine.applyColumnsChunked(worldId, cols, sender, support, batchSize, cancelFlag)
                                         .whenComplete((c, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
@@ -561,6 +569,7 @@ public final class RollbackService {
                         List<RollbackEffect> complex = window.complex();
                         support.onMainThread(() -> {
                                 engine.protectMaterials(protectedMaterials);
+                                engine.includeInRollback(includeContainers, includeEntities);
                                 engine.applyAllChunked(complex, sender, support, batchSize, cancelFlag)
                                         .whenComplete((r, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
@@ -587,6 +596,7 @@ public final class RollbackService {
                 mergeSkip(skipCounts, "invalid location", counts.invalidLocation);
                 mergeSkip(skipCounts, "Cancelled by operator", counts.cancelled);
                 mergeSkip(skipCounts, RollbackEngine.PROTECTED_SKIP, counts.protectedCells);
+                mergeSkip(skipCounts, RollbackEngine.CONTAINERS_SKIP, counts.containerCells);
                 // The rare complex effects' per-cell results.
                 for (RollbackResult r : complexResults) {
                     if (r instanceof RollbackResult.Applied) {
