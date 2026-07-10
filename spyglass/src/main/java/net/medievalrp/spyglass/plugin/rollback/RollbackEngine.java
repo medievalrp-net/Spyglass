@@ -1623,6 +1623,14 @@ public final class RollbackEngine {
         }
         Location location = new Location(world.get(),
                 effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
+        // Hostile mobs are never resurrected (#284), NBT snapshot or not:
+        // nobody rolls back a slain zombie horde on purpose, and the killer
+        // filter upstream still lets player-killed passives (pets, villagers,
+        // livestock) come back.
+        if (isHostile(effect.entityType())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                    "Hostile mobs are not resurrected."));
+        }
         // Full-NBT resurrection when a snapshot exists. In practice it
         // rarely does: Paper's serializeEntity rejects dying entities,
         // so death records ship with null NBT — hence the
@@ -1643,6 +1651,25 @@ public final class RollbackEngine {
             }
         }
         return spawnByType(effect, world.get(), location);
+    }
+
+    // Best-effort hostility check via the entity type's API class. Any
+    // lookup failure (unknown type, registry not ready) resolves to NOT
+    // hostile so the killer filter upstream remains the deciding gate.
+    private static boolean isHostile(String entityTypeName) {
+        if (entityTypeName == null || entityTypeName.isBlank()) {
+            return false;
+        }
+        try {
+            EntityType type = org.bukkit.Registry.ENTITY_TYPE.get(
+                    org.bukkit.NamespacedKey.minecraft(
+                            entityTypeName.toLowerCase(Locale.ROOT)));
+            return type != null && type.getEntityClass() != null
+                    && (org.bukkit.entity.Monster.class.isAssignableFrom(type.getEntityClass())
+                        || org.bukkit.entity.Boss.class.isAssignableFrom(type.getEntityClass()));
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     // Resurrection without a snapshot: a fresh entity of the recorded

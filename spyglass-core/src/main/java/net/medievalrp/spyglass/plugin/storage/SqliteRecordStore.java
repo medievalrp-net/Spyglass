@@ -709,6 +709,12 @@ public final class SqliteRecordStore implements RecordStore {
             return;
         }
         RollbackEffect effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
+        if (effect == null) {
+            // The record declined this direction (e.g. an environment
+            // death is never resurrected, #284) - cursor past it.
+            sink.skip(occurred, id);
+            return;
+        }
         if (effect instanceof RollbackEffect.BlockReplace br
                 && br.replacement() != null && br.replacement().simple()) {
             BlockLocation loc = br.location();
