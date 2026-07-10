@@ -487,7 +487,11 @@ public final class MongoRecordStore implements RecordStore {
                 String nbt = doc.containsKey(RecordFields.ENTITY_NBT)
                         && doc.get(RecordFields.ENTITY_NBT).isString()
                         ? doc.getString(RecordFields.ENTITY_NBT).getValue() : null;
-                sink.complex(new RollbackEffect.EntitySpawn(location, entityType, nbt), occurred, id);
+                UUID originalId = doc.containsKey(RecordFields.ENTITY_ID)
+                        && doc.get(RecordFields.ENTITY_ID).isBinary()
+                        ? readUuid(doc, RecordFields.ENTITY_ID) : null;
+                sink.complex(new RollbackEffect.EntitySpawn(location, entityType, nbt,
+                        originalId == null ? null : originalId.toString()), occurred, id);
             } else {
                 UUID entityId = doc.containsKey(RecordFields.ENTITY_ID)
                         && doc.get(RecordFields.ENTITY_ID).isBinary()

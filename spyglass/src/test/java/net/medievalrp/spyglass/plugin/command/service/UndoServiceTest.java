@@ -215,7 +215,7 @@ class UndoServiceTest {
         ArgumentCaptor<RollbackMode> mode = ArgumentCaptor.forClass(RollbackMode.class);
         ArgumentCaptor<Runnable> onDone = ArgumentCaptor.forClass(Runnable.class);
         verify(rollbacks).executeReplay(eq(player), request.capture(), mode.capture(),
-                any(String.class), onDone.capture());
+                any(String.class), org.mockito.ArgumentMatchers.anyMap(), onDone.capture());
 
         // Opposite direction of the stored op.
         assertThat(mode.getValue()).isEqualTo(RollbackMode.RESTORE);

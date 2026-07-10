@@ -388,6 +388,15 @@ public final class RollbackEngine {
         this.includeEntities = entities;
     }
 
+    // (original dead entity id -> resurrected id) map an undo replay
+    // carries so EntityRemove can find the fresh copy a rollback
+    // spawned (#294). Set per job; the queue serializes jobs.
+    private volatile java.util.Map<UUID, UUID> entityAliases = java.util.Map.of();
+
+    public void entityAliases(java.util.Map<UUID, UUID> aliases) {
+        this.entityAliases = aliases == null ? java.util.Map.of() : java.util.Map.copyOf(aliases);
+    }
+
     private boolean isProtectedLive(World world, int x, int y, int z) {
         return !protectedMaterials.isEmpty()
                 && protectedMaterials.contains(world.getBlockAt(x, y, z).getType().name());
@@ -2228,6 +2237,14 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Invalid entity id."));
         }
         Entity entity = Bukkit.getEntity(entityId);
+        if (entity == null) {
+            // Resurrection almost always minted a fresh uuid; the undo
+            // reference carries the (original -> fresh) pair (#294).
+            UUID resurrected = entityAliases.get(entityId);
+            if (resurrected != null) {
+                entity = Bukkit.getEntity(resurrected);
+            }
+        }
         if (entity == null) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity not found."));
         }

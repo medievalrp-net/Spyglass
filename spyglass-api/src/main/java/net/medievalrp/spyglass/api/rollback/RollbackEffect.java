@@ -31,7 +31,18 @@ public sealed interface RollbackEffect permits
         }
     }
 
-    record EntitySpawn(BlockLocation location, String entityType, String serializedEntity) implements RollbackEffect {
+    /**
+     * Resurrect a dead entity. {@code originalEntityId} is the id the
+     * entity had when it died; spawning almost always mints a fresh
+     * uuid (Paper refuses to serialize dying entities, so the NBT path
+     * rarely runs), and the (original, fresh) pair is what lets a later
+     * undo find and remove the resurrected copy (#294).
+     */
+    record EntitySpawn(BlockLocation location, String entityType, String serializedEntity,
+                       String originalEntityId) implements RollbackEffect {
+        public EntitySpawn(BlockLocation location, String entityType, String serializedEntity) {
+            this(location, entityType, serializedEntity, null);
+        }
     }
 
     record EntityRemove(BlockLocation location, String entityType, String entityId) implements RollbackEffect {

@@ -106,6 +106,27 @@ class UndoReferenceBsonTest {
         assertThat(UndoReferenceBson.decodeBase64(without).salvageGroup()).isNull();
     }
 
+    // (original -> resurrected) entity pairs ride the reference so an
+    // undo can remove entities whose spawn minted a fresh uuid (#294);
+    // blobs without the field decode to an empty map.
+    @Test
+    void roundTripsEntityAliasesAndToleratesTheirAbsence() {
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "death")),
+                Sort.NEWEST_FIRST, 100, EnumSet.of(Flag.NO_GROUP), false);
+        java.util.Map<UUID, UUID> aliases = java.util.Map.of(
+                UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID());
+
+        String with = UndoReferenceBson.encodeBase64(
+                request, "ROLLBACK", Instant.EPOCH, List.of(), 2, 0, null, aliases);
+        assertThat(UndoReferenceBson.decodeBase64(with).entityAliases()).isEqualTo(aliases);
+
+        String without = UndoReferenceBson.encodeBase64(
+                request, "ROLLBACK", Instant.EPOCH, List.of(), 2, 0);
+        assertThat(UndoReferenceBson.decodeBase64(without).entityAliases()).isEmpty();
+    }
+
     @Test
     void rejectsUnknownVersions() {
         QueryRequest request = new QueryRequest(

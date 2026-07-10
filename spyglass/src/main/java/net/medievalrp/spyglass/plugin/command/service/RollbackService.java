@@ -162,16 +162,18 @@ public final class RollbackService {
                               net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                               int initialApplied, int initialSkipped,
                               @org.jetbrains.annotations.Nullable Runnable onDone,
-                              boolean replay) {
+                              boolean replay,
+                              java.util.Map<java.util.UUID, java.util.UUID> entityAliases) {
         JobContext(QueryRequest request, RollbackMode mode) {
-            this(request, mode, null, 0, 0, null, false);
+            this(request, mode, null, 0, 0, null, false, java.util.Map.of());
         }
 
         JobContext(QueryRequest request, RollbackMode mode,
                    @org.jetbrains.annotations.Nullable
                    net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                    int initialApplied, int initialSkipped) {
-            this(request, mode, startCursor, initialApplied, initialSkipped, null, false);
+            this(request, mode, startCursor, initialApplied, initialSkipped, null, false,
+                    java.util.Map.of());
         }
     }
 
@@ -185,13 +187,25 @@ public final class RollbackService {
     // /sg resume — the reference stays poppable and /undo just re-runs.
     public void executeReplay(Player operator, QueryRequest request, RollbackMode mode,
                               String queueLabel, Runnable onDone) {
+        executeReplay(operator, request, mode, queueLabel, java.util.Map.of(), onDone);
+    }
+
+    /**
+     * Replay variant that carries the original op's (dead -> resurrected)
+     * entity pairs so the undo can remove what the rollback spawned (#294).
+     */
+    public void executeReplay(Player operator, QueryRequest request, RollbackMode mode,
+                              String queueLabel,
+                              java.util.Map<java.util.UUID, java.util.UUID> entityAliases,
+                              Runnable onDone) {
         QueryRequest replay = forceNoGroup(request, mode);
         RollbackJob.Mode jobMode = mode == RollbackMode.RESTORE
                 ? RollbackJob.Mode.RESTORE
                 : RollbackJob.Mode.ROLLBACK;
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operator.getUniqueId(),
                 operator.getName(), queueLabel, jobMode, Instant.now(), operator);
-        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true));
+        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true,
+                entityAliases == null ? java.util.Map.of() : entityAliases));
         // No stored request: a crashed replay's recovery path is
         // /spyglass undo (the reference stays poppable), not rbqueue
         // resume — the marker exists for visibility only.
@@ -320,7 +334,7 @@ public final class RollbackService {
                 }
                 streamPagesAndApply(job, ctx.request(), ctx.mode(),
                         ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped(),
-                        ctx.replay());
+                        ctx.replay(), ctx.entityAliases());
                 // Cancellation wins over done if the operator hit
                 // /sg rbqueue cancel mid-flight.
                 jobQueue.finish(job, job.cancelFlag.get()
@@ -348,9 +362,17 @@ public final class RollbackService {
                                      @org.jetbrains.annotations.Nullable
                                      net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                                      int initialApplied, int initialSkipped,
-                                     boolean replayOp) {
+                                     boolean replayOp,
+                                     java.util.Map<java.util.UUID, java.util.UUID> replayEntityAliases) {
         CommandSender sender = job.sender;
         AtomicBoolean cancelFlag = job.cancelFlag;
+        // Arm the engine with the (dead -> resurrected) pairs an undo
+        // replay carries (#294); empty for operator-issued ops.
+        engine.entityAliases(replayEntityAliases);
+        // (original -> fresh) pairs THIS op produces, harvested from the
+        // Applied results so the op's own undo can remove them (#294).
+        java.util.Map<java.util.UUID, java.util.UUID> spawnedAliases =
+                new java.util.HashMap<>();
         // Attribute any containers this rollback salvages to the operator and
         // group them under one rollback id; also resets per-run dedup (#76).
         // The id rides the undo reference so a clean undo can withdraw this
@@ -614,8 +636,21 @@ public final class RollbackService {
                 mergeSkip(skipCounts, RollbackEngine.CONTAINERS_SKIP, counts.containerCells);
                 // The rare complex effects' per-cell results.
                 for (RollbackResult r : complexResults) {
-                    if (r instanceof RollbackResult.Applied) {
+                    if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
+                        if (applied.effect() instanceof RollbackEffect.EntitySpawn spawn
+                                && spawn.originalEntityId() != null
+                                && applied.inverseEffect()
+                                        instanceof RollbackEffect.EntityRemove remove
+                                && remove.entityId() != null) {
+                            try {
+                                spawnedAliases.put(
+                                        java.util.UUID.fromString(spawn.originalEntityId()),
+                                        java.util.UUID.fromString(remove.entityId()));
+                            } catch (IllegalArgumentException ignored) {
+                                // Unparseable id: the undo just misses this one.
+                            }
+                        }
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
                         skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
@@ -723,7 +758,7 @@ public final class RollbackService {
                         .toList();
         String reference = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
                 request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped,
-                salvageGroupId);
+                salvageGroupId, spawnedAliases);
         boolean undoUnavailable = false;
         // Replay ops (undo) do NOT push a reference: the popped reference
         // is consumed on clean completion, so repeated /undo unwinds the

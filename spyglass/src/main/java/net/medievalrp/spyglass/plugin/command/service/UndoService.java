@@ -119,7 +119,7 @@ public final class UndoService {
         String label = "undo " + ref.operationType().toLowerCase(Locale.ROOT)
                 + " " + ref.operationId().toString().substring(0, 8);
         support.onMainThread(() -> rollbackService.executeReplay(
-                player, replay, inverse, label,
+                player, replay, inverse, label, decoded.entityAliases(),
                 () -> support.onAsyncThread(() -> {
                     try {
                         ref.tombstone();
