@@ -83,18 +83,23 @@ public final class UndoService {
         try {
             decoded = UndoReferenceBson.decodeBase64(ref.referenceBase64());
         } catch (RuntimeException ex) {
-            ref.close();
-            support.onMainThread(() -> player.sendMessage(
-                    Feedback.error("Undo reference unreadable: " + ex.getMessage())));
+            // Consume the reference: openLatest always returns the newest
+            // row, so a poison blob left in place blocks every older valid
+            // entry until the TTL ages it out (#266). Unlike a failed
+            // replay (transient, worth retrying), an unreadable blob can
+            // never succeed.
+            discardUnusable(player, ref,
+                    "Undo reference unreadable (" + ex.getMessage()
+                            + "); discarded it - run /sg undo again for the previous operation");
             return;
         }
         RollbackMode original;
         try {
             original = RollbackMode.valueOf(decoded.mode());
         } catch (IllegalArgumentException ex) {
-            ref.close();
-            support.onMainThread(() -> player.sendMessage(
-                    Feedback.error("Undo reference has unknown mode " + decoded.mode())));
+            discardUnusable(player, ref,
+                    "Undo reference has unknown mode " + decoded.mode()
+                            + "; discarded it - run /sg undo again for the previous operation");
             return;
         }
         RollbackMode inverse = original == RollbackMode.ROLLBACK
@@ -122,6 +127,21 @@ public final class UndoService {
                         ref.close();
                     }
                 })));
+    }
+
+    // A reference that can never replay (corrupt blob, unknown mode) is
+    // removed from the ledger so the next /undo reaches the operation
+    // beneath it. Tombstone failure is tolerable: the row then survives
+    // only until its TTL, which is the pre-#266 behavior.
+    private void discardUnusable(Player player, UndoStack.ReplayReference ref, String message) {
+        try {
+            ref.tombstone();
+        } catch (RuntimeException ignored) {
+            // Best effort; see above.
+        } finally {
+            ref.close();
+        }
+        support.onMainThread(() -> player.sendMessage(Feedback.error(message)));
     }
 
     // Pre-reference operation: stream the stored inverse effects chunk

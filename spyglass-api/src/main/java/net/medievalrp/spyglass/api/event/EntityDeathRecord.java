@@ -41,13 +41,31 @@ public record EntityDeathRecord(
                 target, entityType, entityId, killerType, damageCause, entityNbt);
     }
 
+    /**
+     * Only a player kill is worth resurrecting (#284): environment deaths
+     * (FIRE_TICK, LAVA, SUFFOCATION, ...) resurrected en masse on any
+     * generic area rollback - one fresh-world night left 453 burned
+     * zombies waiting to come back. The Mongo and ClickHouse emitEffect
+     * mirrors apply this same rule from their killer column; keep them in
+     * lockstep with this method.
+     */
+    public boolean resurrectable() {
+        return "player".equalsIgnoreCase(killerType);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
+        if (!resurrectable()) {
+            return null;
+        }
         return new RollbackEffect.EntitySpawn(location, entityType, entityNbt);
     }
 
     @Override
     public RollbackEffect restoreEffect() {
+        if (!resurrectable()) {
+            return null;
+        }
         return new RollbackEffect.EntityRemove(location, entityType,
                 entityId == null ? null : entityId.toString());
     }

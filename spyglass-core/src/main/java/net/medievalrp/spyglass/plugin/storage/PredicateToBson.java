@@ -25,7 +25,12 @@ final class PredicateToBson {
             case QueryPredicate.In in -> Filters.in(in.field(), new ArrayList<>(in.values()));
             case QueryPredicate.Range range -> translateRange(range);
             case QueryPredicate.Exists exists -> Filters.exists(exists.field(), exists.expected());
-            case QueryPredicate.Not not -> Filters.not(translate(not.predicate()));
+            // $nor, not Filters.not: a top-level $not is rejected by the
+            // server for compound children ("unknown top level operator:
+            // $not") - first hit by the container-aware b: exclude (#263),
+            // whose Not wraps an Or. A single-clause $nor is NOT for every
+            // shape, simple or compound.
+            case QueryPredicate.Not not -> Filters.nor(translate(not.predicate()));
             case QueryPredicate.And and -> Filters.and(and.predicates().stream().map(this::translate).toList());
             case QueryPredicate.Or or -> Filters.or(or.predicates().stream().map(this::translate).toList());
         };

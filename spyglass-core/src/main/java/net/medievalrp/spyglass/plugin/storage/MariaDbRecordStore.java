@@ -614,12 +614,17 @@ public final class MariaDbRecordStore implements RecordStore {
         return runQuery(request, false);
     }
 
-    private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
-        List<QueryPredicate> predicates = new ArrayList<>(request.predicates());
-        String where;
-        List<QueryPredicate> residual = List.of();
+    /** SQL for the pushable predicates plus the in-memory residual rest. */
+    private record SqlSplit(String where, List<QueryPredicate> residual) {
+    }
+
+    // Push what translates, post-filter the rest through PredicateEvaluator.
+    // Shared by the query, page, and rollback-stream paths so an unpushable
+    // predicate (e.g. the container-aware b: filter, #263) degrades to a
+    // slower scan everywhere instead of throwing on some paths.
+    private SqlSplit splitTranslate(List<QueryPredicate> predicates) {
         try {
-            where = predicateToSql.translate(predicates);
+            return new SqlSplit(predicateToSql.translate(predicates), List.of());
         } catch (MariaDbPredicateToSql.UnsupportedPredicateException unsupported) {
             List<QueryPredicate> pushable = new ArrayList<>();
             List<QueryPredicate> inMemory = new ArrayList<>();
@@ -631,9 +636,14 @@ public final class MariaDbRecordStore implements RecordStore {
                     inMemory.add(predicate);
                 }
             }
-            residual = inMemory;
-            where = predicateToSql.translate(pushable);
+            return new SqlSplit(predicateToSql.translate(pushable), inMemory);
         }
+    }
+
+    private QueryResult runQuery(QueryRequest request, boolean includeHeavy) {
+        SqlSplit split = splitTranslate(new ArrayList<>(request.predicates()));
+        String where = split.where();
+        List<QueryPredicate> residual = split.residual();
         boolean postFilter = !residual.isEmpty();
         boolean hydrate = includeHeavy || postFilter;
         where = appendNoChat(where, request);
@@ -678,7 +688,8 @@ public final class MariaDbRecordStore implements RecordStore {
         // Generic keyset page over seq - all event types, full decode. The
         // lean, rollbackable-filtered path is streamRollbackEffects below.
         boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
-        String where = appendNoChat(predicateToSql.translate(new ArrayList<>(request.predicates())), request);
+        SqlSplit split = splitTranslate(new ArrayList<>(request.predicates()));
+        String where = appendNoChat(split.where(), request);
         where = appendKeyset(where, cursor, newestFirst);
 
         String sql = "SELECT " + DECODE_COLUMNS + " FROM records"
@@ -686,14 +697,25 @@ public final class MariaDbRecordStore implements RecordStore {
                 + " ORDER BY seq " + (newestFirst ? "DESC" : "ASC")
                 + " LIMIT " + pageSize;
 
+        // Under a residual filter a page may come back short; the cursor
+        // still advances over every SCANNED row, so paging terminates.
+        int scanned = 0;
+        EventRecord lastScanned = null;
         List<EventRecord> records = new ArrayList<>(Math.min(pageSize, 4096));
         Connection conn = borrow();
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
                 EventRecord record = decodeRow(rs, true);
-                if (record != null) {
-                    records.add(record);
+                if (record == null) {
+                    continue;
                 }
+                scanned++;
+                lastScanned = record;
+                if (!split.residual().isEmpty()
+                        && !PredicateEvaluator.matchesAll(split.residual(), record)) {
+                    continue;
+                }
+                records.add(record);
             }
         } catch (SQLException ex) {
             throw new RuntimeException("MariaDB paged query failed: " + ex.getMessage(), ex);
@@ -701,8 +723,8 @@ public final class MariaDbRecordStore implements RecordStore {
             giveBack(conn);
         }
         QueryPage.Cursor next = null;
-        if (records.size() == pageSize) {
-            EventRecord last = records.get(records.size() - 1);
+        if (scanned == pageSize && lastScanned != null) {
+            EventRecord last = lastScanned;
             if (last.occurred() != null && last.id() != null) {
                 next = new QueryPage.Cursor(last.occurred(), last.id());
             }
@@ -723,8 +745,16 @@ public final class MariaDbRecordStore implements RecordStore {
         // block) decodes.
         String blockColumn = rollback ? "orig_block" : "new_block";
         boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
-        String where = predicateToSql.translate(new ArrayList<>(request.predicates()));
-        where = appendAnd(where, rollbackableFilter());
+        SqlSplit split = splitTranslate(new ArrayList<>(request.predicates()));
+        if (!split.residual().isEmpty()) {
+            // Unpushable predicate (e.g. the container-aware b: filter,
+            // #263): fall back to a full-decode scan so the residual can be
+            // evaluated. Slower than the lean path, but only queries that
+            // carry such a filter pay for it.
+            return streamRollbackEffectsDecoded(split, cursor, windowLimit,
+                    rollback, newestFirst, sink);
+        }
+        String where = appendAnd(split.where(), rollbackableFilter());
         where = appendKeyset(where, cursor, newestFirst);
 
         String sql = "SELECT seq, occurred, world, x, y, z, "
@@ -757,6 +787,48 @@ public final class MariaDbRecordStore implements RecordStore {
                 : null;
     }
 
+    // Residual-filtered rollback stream: full row decode so the residual
+    // evaluates against real records; rows the residual rejects are simply
+    // omitted (they are query non-matches, not skips). The cursor advances
+    // over every scanned row, so windowing terminates as usual.
+    private QueryPage.Cursor streamRollbackEffectsDecoded(SqlSplit split, QueryPage.Cursor cursor,
+                                                          int windowLimit, boolean rollback,
+                                                          boolean newestFirst, RollbackEffectSink sink) {
+        String where = appendAnd(split.where(), rollbackableFilter());
+        where = appendKeyset(where, cursor, newestFirst);
+        String sql = "SELECT " + DECODE_COLUMNS + " FROM records"
+                + (where.isEmpty() ? "" : " WHERE " + where)
+                + " ORDER BY seq " + (newestFirst ? "DESC" : "ASC")
+                + " LIMIT " + windowLimit;
+
+        Instant lastOccurred = null;
+        UUID lastId = null;
+        int count = 0;
+        Connection conn = borrow();
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                count++;
+                UUID id = EventIds.uuidOf(rs.getLong("seq"));
+                Instant occurred = Instant.ofEpochSecond(rs.getLong("occurred"));
+                lastOccurred = occurred;
+                lastId = id;
+                EventRecord record = decodeRow(rs, true);
+                if (record == null
+                        || !PredicateEvaluator.matchesAll(split.residual(), record)) {
+                    continue;
+                }
+                emitEffectFromRecord(record, rollback, occurred, id, sink);
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException("MariaDB rollback stream failed: " + ex.getMessage(), ex);
+        } finally {
+            giveBack(conn);
+        }
+        return (count == windowLimit && lastOccurred != null && lastId != null)
+                ? new QueryPage.Cursor(lastOccurred, lastId)
+                : null;
+    }
+
     private void emitEffect(ResultSet rs, boolean rollback, Instant occurred, UUID id,
                             RollbackEffectSink sink) throws SQLException {
         byte[] blob = rs.getBytes("payload");
@@ -775,12 +847,22 @@ public final class MariaDbRecordStore implements RecordStore {
                     dictValue(blockRef), null, occurred, id);
             return;
         }
-        EventRecord record = decodeBlob(blob);
+        emitEffectFromRecord(decodeBlob(blob), rollback, occurred, id, sink);
+    }
+
+    private void emitEffectFromRecord(EventRecord record, boolean rollback, Instant occurred,
+                                      UUID id, RollbackEffectSink sink) {
         if (!(record instanceof Rollbackable rollbackable)) {
             sink.skip(occurred, id);
             return;
         }
         RollbackEffect effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
+        if (effect == null) {
+            // The record declined this direction (e.g. an environment
+            // death is never resurrected, #284) - cursor past it.
+            sink.skip(occurred, id);
+            return;
+        }
         if (effect instanceof RollbackEffect.BlockReplace br
                 && br.replacement() != null && br.replacement().simple()) {
             BlockLocation loc = br.location();

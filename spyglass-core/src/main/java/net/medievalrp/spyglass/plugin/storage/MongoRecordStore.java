@@ -377,7 +377,8 @@ public final class MongoRecordStore implements RecordStore {
                 Projections.include(RecordFields.ID, RecordFields.EVENT, RecordFields.OCCURRED,
                         RecordFields.LOCATION, replacementSide,
                         RecordFields.SLOT, RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
-                        RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT),
+                        RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT,
+                        RecordFields.KILLER_TYPE),
                 Projections.excludeId());
 
         Instant lastOccurred = null;
@@ -464,6 +465,16 @@ public final class MongoRecordStore implements RecordStore {
         }
 
         if (clazz == EntityDeathRecord.class) {
+            // Lockstep with EntityDeathRecord.resurrectable() (#284): only a
+            // player kill produces an effect in either direction; environment
+            // deaths stay searchable but never resurrect (or re-remove).
+            String killer = doc.containsKey(RecordFields.KILLER_TYPE)
+                    && doc.get(RecordFields.KILLER_TYPE).isString()
+                    ? doc.getString(RecordFields.KILLER_TYPE).getValue() : null;
+            if (!"player".equalsIgnoreCase(killer)) {
+                sink.skip(occurred, id);
+                return;
+            }
             BlockLocation location = readLocation(doc);
             String entityType = doc.containsKey(RecordFields.ENTITY_TYPE)
                     && doc.get(RecordFields.ENTITY_TYPE).isString()

@@ -112,6 +112,10 @@ public final class EventCatalog {
         // recorder queue on big rollbacks).
         m.put("rolled-place", BlockUseRecord.class);
         m.put("rolled-break", BlockUseRecord.class);
+        // Synthesized-only (#265): the rolled audit of a reverted container
+        // transaction. Never persisted or emitted by a listener.
+        m.put("rolled-deposit", BlockUseRecord.class);
+        m.put("rolled-withdraw", BlockUseRecord.class);
         // One per completed rollback/restore/undo operation: the durable
         // identity the per-block rolled-* entries are synthesized from
         // at search time (#22).

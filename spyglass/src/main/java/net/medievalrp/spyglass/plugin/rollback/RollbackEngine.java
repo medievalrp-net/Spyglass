@@ -41,6 +41,7 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
 import net.medievalrp.spyglass.plugin.util.ChunkResender;
+import net.medievalrp.spyglass.plugin.util.FluidTickScheduler;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -709,6 +710,13 @@ public final class RollbackEngine {
                     }
                 }
                 ChunkDirectWriter.finishChunk(chunkCtx);
+                // Direct writes never schedule fluid ticks; re-arm the fluid
+                // engine over this chunk's cells and their shell (#270).
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = i; j < chunkEnd; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
                 // Direct NMS writes skip the per-block packet queue,
                 // so push the new chunk to viewers ourselves.
                 try {
@@ -1061,6 +1069,15 @@ public final class RollbackEngine {
                 }
             }
             ChunkDirectWriter.finishChunk(work.ctx);
+            // Direct writes never schedule fluid ticks; re-arm the fluid
+            // engine over this chunk's cells and their shell (#270).
+            if (writes != null) {
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = 0; j < writes.length; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(from + j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
+            }
             // Direct NMS writes skip the per-block packet queue, so push
             // the new chunk to viewers ourselves.
             try {
@@ -1343,6 +1360,13 @@ public final class RollbackEngine {
                     } else {
                         ChunkDirectWriter.finishChunk(cc.ctx);
                     }
+                    // Direct writes never schedule fluid ticks; re-arm the
+                    // fluid engine over this chunk's cells and shell (#270).
+                    FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                    for (int k = cc.from; k < cc.rangeEnd; k++) {
+                        int cellIdx = order[k];
+                        fluids.touch(cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx));
+                    }
                     try {
                         ChunkResender.resend(world, cc.cx, cc.cz);
                     } catch (RuntimeException ignored) {
@@ -1433,6 +1457,7 @@ public final class RollbackEngine {
         long applied = 0;
         long changed = 0;
         long unparse = 0;
+        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
             if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
                 continue; // counted at classify time on the main thread
@@ -1457,6 +1482,7 @@ public final class RollbackEngine {
         cc.applied = applied;
         cc.blockChanged = changed;
         cc.unparseable = unparse;
+        cc.protectedCells = protectedCount;
     }
 
     // Main-thread fallback for a chunk whose prepareChunk failed: single
@@ -1464,6 +1490,7 @@ public final class RollbackEngine {
     private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
         long applied = 0;
         long unparse = 0;
+        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
             if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
                 continue; // counted at classify time on the main thread
@@ -1487,6 +1514,7 @@ public final class RollbackEngine {
         }
         cc.applied = applied;
         cc.unparseable = unparse;
+        cc.protectedCells = protectedCount;
     }
 
     // One chunk's columnar work unit: the [from, rangeEnd) slice of the
@@ -1556,7 +1584,7 @@ public final class RollbackEngine {
                     if (r instanceof RollbackResult.Applied a
                             && a.effect() instanceof RollbackEffect.BlockReplace br) {
                         rolledRecords.add(buildRollbackSourceRecord(
-                                operatorName, br.location(), br.replacement()));
+                                operatorName, br.location(), br.expectedCurrent(), br.replacement()));
                     }
                 }
                 recorder.recordAll(rolledRecords);
@@ -1763,7 +1791,8 @@ public final class RollbackEngine {
     // carrying the before/after snapshot blobs that BlockPlaceRecord
     // would, which mattered: at 150 blocks the snapshot pairs combined
     // with FAWE's write buffer were enough to tip the heap into OOM.
-    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location, BlockSnapshot after) {
+    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location,
+                                                   BlockSnapshot destroyed, BlockSnapshot after) {
         Instant occurred = support.now();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operatorName);
@@ -1778,7 +1807,12 @@ public final class RollbackEngine {
         // Lowercase-hyphenated form matches shulker-open etc. and
         // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
         String event = toAir ? "rolled-break" : "rolled-place";
-        String target = (after == null ? Material.AIR : after.material()).name();
+        // rolled-break names what was DESTROYED, not the air that replaced
+        // it (#269); rolled-place keeps naming what was placed.
+        String target = toAir
+                ? (destroyed == null || destroyed.material() == null
+                        ? Material.AIR : destroyed.material()).name()
+                : after.material().name();
         return new BlockUseRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
@@ -1822,6 +1856,14 @@ public final class RollbackEngine {
         }
         Location location = new Location(world.get(),
                 effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
+        // Hostile mobs are never resurrected (#284), NBT snapshot or not:
+        // nobody rolls back a slain zombie horde on purpose, and the killer
+        // filter upstream still lets player-killed passives (pets, villagers,
+        // livestock) come back.
+        if (isHostile(effect.entityType())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                    "Hostile mobs are not resurrected."));
+        }
         // Full-NBT resurrection when a snapshot exists. In practice it
         // rarely does: Paper's serializeEntity rejects dying entities,
         // so death records ship with null NBT — hence the
@@ -1842,6 +1884,25 @@ public final class RollbackEngine {
             }
         }
         return spawnByType(effect, world.get(), location);
+    }
+
+    // Best-effort hostility check via the entity type's API class. Any
+    // lookup failure (unknown type, registry not ready) resolves to NOT
+    // hostile so the killer filter upstream remains the deciding gate.
+    private static boolean isHostile(String entityTypeName) {
+        if (entityTypeName == null || entityTypeName.isBlank()) {
+            return false;
+        }
+        try {
+            EntityType type = org.bukkit.Registry.ENTITY_TYPE.get(
+                    org.bukkit.NamespacedKey.minecraft(
+                            entityTypeName.toLowerCase(Locale.ROOT)));
+            return type != null && type.getEntityClass() != null
+                    && (org.bukkit.entity.Monster.class.isAssignableFrom(type.getEntityClass())
+                        || org.bukkit.entity.Boss.class.isAssignableFrom(type.getEntityClass()));
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     // Resurrection without a snapshot: a fresh entity of the recorded
@@ -1906,6 +1967,10 @@ public final class RollbackEngine {
         // contract as forceWriteCell.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
         applySnapshot(block, effect.replacement());
+        // applySnapshot writes with applyPhysics=false; re-arm the fluid
+        // engine around the cell (#270).
+        FluidTickScheduler.touchSingle(world.get(),
+                effect.location().x(), effect.location().y(), effect.location().z());
         return appliedWithInverse(effect);
     }
 
@@ -1922,10 +1987,13 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Target is no longer a container."));
         }
 
-        // Some Bukkit inventory events fire with slot = -1 (drag /
-        // auto-stack) and the recorded container may be wider than
-        // the live one (chest -> hopper downgrade). Range-check
-        // before getItem to avoid IndexOutOfBoundsException.
+        // slot = -1 rows exist and stay benign skips: cursor-held bundle
+        // transactions record -1 by design (there is no container slot),
+        // and shift-click deposits recorded -1 before #268 - those legacy
+        // rows live in every store until retention ages them out. The
+        // recorded container may also be wider than the live one (chest ->
+        // hopper downgrade). Range-check before getItem to avoid
+        // IndexOutOfBoundsException.
         int slot = effect.slot();
         int size = container.getInventory().getSize();
         if (slot < 0 || slot >= size) {

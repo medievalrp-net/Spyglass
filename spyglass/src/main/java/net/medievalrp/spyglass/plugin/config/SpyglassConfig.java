@@ -127,13 +127,18 @@ public record SpyglassConfig(
                         root.node("limits", "rollback-tick-budget-ms").getLong(15L)),
                 Map.copyOf(events),
                 commandRedact,
-                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
+                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false),
+                        // How far back the wand's inspect looks. A point query
+                        // on one block, already capped by limits.search-result,
+                        // so a long default is cheap (#271).
+                        Duration.parse(root.node("tool", "lookback").getString("26w"))),
                 new Server(root.node("server", "name").getString("default")),
                 parseMetrics(root),
                 parseAnalytics(root),
-                // #250: /s as a third root alias, opt-in - single-letter
-                // roots collide with other plugins, so off by default.
-                new Commands(root.node("commands", "s-alias").getBoolean(false)));
+                // /s as a third root alias next to /spyglass and /sg. On by
+                // default (#279, reversing #250's opt-in); an operator whose
+                // server has another plugin claiming /s sets s-alias = false.
+                new Commands(root.node("commands", "s-alias").getBoolean(true)));
     }
 
     /**
@@ -471,9 +476,10 @@ public record SpyglassConfig(
     public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds) {
     }
 
-    public record Tool(Material material) {
+    public record Tool(Material material, Duration lookback) {
         public Tool {
             material = material == null ? Material.REDSTONE_LAMP : material;
+            lookback = lookback == null ? Duration.parse("26w") : lookback;
         }
     }
 
