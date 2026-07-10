@@ -78,7 +78,12 @@ public final class ItemFrameInteractListener implements RecordingListener {
             return;
         }
         BlockLocation location = BlockLocations.fromLocation(frame.getLocation());
-        StoredItem after = ItemSerialization.storedItem(0, inHand);
+        // The frame takes exactly one; recording the whole hand stack made
+        // the reversal's expected-state guard mismatch a frame that holds
+        // count 1 (#293 apply path).
+        ItemStack framed = inHand.clone();
+        framed.setAmount(1);
+        StoredItem after = ItemSerialization.storedItem(0, framed);
         RecordContext ctx = support.playerContext(player, location);
         recorder.record(ContainerDepositRecord.of(ctx,
                 "entity-deposit", inHand.getType().name(), "ITEM_FRAME",

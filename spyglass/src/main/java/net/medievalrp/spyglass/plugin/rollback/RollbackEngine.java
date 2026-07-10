@@ -1866,23 +1866,25 @@ public final class RollbackEngine {
             }
             return;
         }
-        Block block = world.get().getBlockAt(location.x(), location.y(), location.z());
-        BlockState state = block.getState();
-        if (!(state instanceof Container container)) {
+        String containerType = null;
+        for (RollbackEffect.ContainerSlotWrite csw : writes) {
+            if (csw.containerType() != null) {
+                containerType = csw.containerType();
+                break;
+            }
+        }
+        SurfaceOrSkip resolved = resolveContainerSurface(world.get(), location, containerType);
+        if (resolved.surface() == null) {
             for (int i = 0; i < indices.size(); i++) {
                 resultArray[indices.get(i)] = new RollbackResult.Skipped(writes.get(i),
-                        new RollbackReason.NotSupported("Target is no longer a container."));
+                        new RollbackReason.NotSupported(resolved.skipReason()));
             }
             return;
         }
 
-        // LIVE inventory, same as applyContainerSlotWrite - writes go
-        // straight to the block entity. The old snapshot-then-update
-        // pattern silently lost every write on shulker boxes: update(true)
-        // re-set the block and the snapshot's contents never landed, so
-        // the summary said applied while the box stayed empty (#298).
-        Inventory inventory = container.getInventory();
-        int size = inventory.getSize();
+        SlotSurface surface = resolved.surface();
+        int size = surface.size();
+        boolean anyApplied = false;
 
         for (int i = 0; i < indices.size(); i++) {
             RollbackEffect.ContainerSlotWrite csw = writes.get(i);
@@ -1893,19 +1895,179 @@ public final class RollbackEngine {
                                 "Slot " + slot + " out of range for container (size " + size + ")."));
                 continue;
             }
-            ItemStack current = inventory.getItem(slot);
+            ItemStack current = surface.get(slot);
             if (!matches(csw.expectedCurrent(), slot, current)) {
                 resultArray[indices.get(i)] = new RollbackResult.Skipped(csw,
                         new RollbackReason.Guarded("Container slot changed."));
                 continue;
             }
             StoredItem replacement = csw.replacement();
-            inventory.setItem(slot, replacement == null ? null : ItemSerialization.decode(replacement.data()));
+            surface.set(slot, replacement == null ? null : ItemSerialization.decode(replacement.data()));
             StoredItem inverseCurrent = ItemSerialization.storedItem(slot, current);
             RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(
-                    location, slot, replacement, inverseCurrent);
+                    location, slot, replacement, inverseCurrent, csw.containerType());
             resultArray[indices.get(i)] = new RollbackResult.Applied(csw, inverse);
+            anyApplied = true;
         }
+        if (anyApplied) {
+            surface.flush();
+        }
+    }
+
+    // ---- container slot surfaces (#293, #300) --------------------------
+
+    /**
+     * One writable container-slot surface. Widens the old
+     * instanceof-Container check, which rejected inventory-holding tile
+     * states that are not Containers (decorated pots, chiseled
+     * bookshelves - #300) and could never see entity-held inventories
+     * (storage/hopper minecarts, item frames - #293).
+     */
+    private interface SlotSurface {
+        int size();
+
+        ItemStack get(int slot);
+
+        void set(int slot, ItemStack stack);
+
+        /** Push writes for snapshot-backed surfaces; no-op for live ones. */
+        default void flush() {
+        }
+    }
+
+    private record SurfaceOrSkip(SlotSurface surface, String skipReason) {
+    }
+
+    private SurfaceOrSkip resolveContainerSurface(World world, BlockLocation location,
+                                                  String containerType) {
+        Block block = world.getBlockAt(location.x(), location.y(), location.z());
+        BlockState state = block.getState();
+        if (state instanceof Container container) {
+            // LIVE inventory - writes go straight to the block entity. The
+            // old snapshot-then-update pattern silently lost every write on
+            // shulker boxes (#298).
+            Inventory inventory = container.getInventory();
+            return new SurfaceOrSkip(new SlotSurface() {
+                @Override
+                public int size() {
+                    return inventory.getSize();
+                }
+
+                @Override
+                public ItemStack get(int slot) {
+                    return inventory.getItem(slot);
+                }
+
+                @Override
+                public void set(int slot, ItemStack stack) {
+                    inventory.setItem(slot, stack);
+                }
+            }, null);
+        }
+        if (state instanceof org.bukkit.inventory.BlockInventoryHolder holder) {
+            // Decorated pot / chiseled bookshelf: their Bukkit states are
+            // snapshots, so writes flush through update() (#300).
+            Inventory inventory = holder.getInventory();
+            return new SurfaceOrSkip(new SlotSurface() {
+                @Override
+                public int size() {
+                    return inventory.getSize();
+                }
+
+                @Override
+                public ItemStack get(int slot) {
+                    return inventory.getItem(slot);
+                }
+
+                @Override
+                public void set(int slot, ItemStack stack) {
+                    inventory.setItem(slot, stack);
+                }
+
+                @Override
+                public void flush() {
+                    state.update(true, false);
+                }
+            }, null);
+        }
+        EntityType entityType = entityContainerType(containerType);
+        if (entityType != null) {
+            Entity entity = nearestEntityOfType(world, location, entityType);
+            if (entity == null) {
+                return new SurfaceOrSkip(null, "Container entity (" + containerType
+                        + ") is no longer near the recorded spot.");
+            }
+            if (entity instanceof org.bukkit.inventory.InventoryHolder holder) {
+                Inventory inventory = holder.getInventory();
+                return new SurfaceOrSkip(new SlotSurface() {
+                    @Override
+                    public int size() {
+                        return inventory.getSize();
+                    }
+
+                    @Override
+                    public ItemStack get(int slot) {
+                        return inventory.getItem(slot);
+                    }
+
+                    @Override
+                    public void set(int slot, ItemStack stack) {
+                        inventory.setItem(slot, stack);
+                    }
+                }, null);
+            }
+            if (entity instanceof org.bukkit.entity.ItemFrame frame) {
+                return new SurfaceOrSkip(new SlotSurface() {
+                    @Override
+                    public int size() {
+                        return 1;
+                    }
+
+                    @Override
+                    public ItemStack get(int slot) {
+                        ItemStack held = frame.getItem();
+                        return held.getType() == Material.AIR ? null : held;
+                    }
+
+                    @Override
+                    public void set(int slot, ItemStack stack) {
+                        frame.setItem(stack, false);
+                    }
+                }, null);
+            }
+            return new SurfaceOrSkip(null, "Transactions on " + containerType
+                    + " entities cannot be reversed yet.");
+        }
+        return new SurfaceOrSkip(null, "Target is no longer a container.");
+    }
+
+    private static EntityType entityContainerType(String containerType) {
+        if (containerType == null) {
+            return null;
+        }
+        try {
+            return EntityType.valueOf(containerType);
+        } catch (IllegalArgumentException ex) {
+            return null;   // a block material name - the block path already ran
+        }
+    }
+
+    // Carts drift; frames and stands do not. 8 blocks keeps casual cart
+    // motion in range without grabbing an unrelated cart two farms over.
+    private static Entity nearestEntityOfType(World world, BlockLocation loc, EntityType type) {
+        org.bukkit.Location center = new org.bukkit.Location(
+                world, loc.x() + 0.5, loc.y() + 0.5, loc.z() + 0.5);
+        Entity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Entity entity : world.getNearbyEntities(center, 8, 8, 8,
+                e -> e.getType() == type)) {
+            double distance = entity.getLocation().distanceSquared(center);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = entity;
+            }
+        }
+        return best;
     }
 
     // Emit a lightweight wand-attribution record on a rolled block so
@@ -2104,10 +2266,13 @@ public final class RollbackEngine {
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
-        Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
-        if (!(block.getState() instanceof Container container)) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Target is no longer a container."));
+        SurfaceOrSkip resolved = resolveContainerSurface(
+                world.get(), effect.location(), effect.containerType());
+        if (resolved.surface() == null) {
+            return new RollbackResult.Skipped(effect,
+                    new RollbackReason.NotSupported(resolved.skipReason()));
         }
+        SlotSurface surface = resolved.surface();
 
         // slot = -1 rows exist and stay benign skips: cursor-held bundle
         // transactions record -1 by design (there is no container slot),
@@ -2117,22 +2282,24 @@ public final class RollbackEngine {
         // hopper downgrade). Range-check before getItem to avoid
         // IndexOutOfBoundsException.
         int slot = effect.slot();
-        int size = container.getInventory().getSize();
+        int size = surface.size();
         if (slot < 0 || slot >= size) {
             return new RollbackResult.Skipped(effect,
                     new RollbackReason.NotSupported(
                             "Slot " + slot + " out of range for container (size " + size + ")."));
         }
 
-        ItemStack current = container.getInventory().getItem(slot);
+        ItemStack current = surface.get(slot);
         if (!matches(effect.expectedCurrent(), effect.slot(), current)) {
             return new RollbackResult.Skipped(effect, new RollbackReason.Guarded("Container slot changed."));
         }
 
         StoredItem replacement = effect.replacement();
-        container.getInventory().setItem(effect.slot(), replacement == null ? null : ItemSerialization.decode(replacement.data()));
+        surface.set(effect.slot(), replacement == null ? null : ItemSerialization.decode(replacement.data()));
+        surface.flush();
         StoredItem inverseCurrent = ItemSerialization.storedItem(effect.slot(), current);
-        RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(effect.location(), effect.slot(), replacement, inverseCurrent);
+        RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(
+                effect.location(), effect.slot(), replacement, inverseCurrent, effect.containerType());
         return new RollbackResult.Applied(effect, inverse);
     }
 

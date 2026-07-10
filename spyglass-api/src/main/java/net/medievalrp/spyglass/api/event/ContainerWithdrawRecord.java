@@ -34,12 +34,12 @@ public record ContainerWithdrawRecord(
     @Override
     public RollbackEffect rollbackEffect() {
         // Undo the withdraw: put the item back in the slot.
-        return new RollbackEffect.ContainerSlotWrite(location, slot, afterItem, beforeItem);
+        return new RollbackEffect.ContainerSlotWrite(location, slot, afterItem, beforeItem, containerType);
     }
 
     @Override
     public RollbackEffect restoreEffect() {
         // Re-apply the withdraw: take the item out again.
-        return new RollbackEffect.ContainerSlotWrite(location, slot, beforeItem, afterItem);
+        return new RollbackEffect.ContainerSlotWrite(location, slot, beforeItem, afterItem, containerType);
     }
 }
