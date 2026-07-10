@@ -820,8 +820,10 @@ public final class ClickHouseRecordStore implements RecordStore {
             BlockLocation location = readLocation(row);
             String entityType = row.getString("entity_type");
             if (rollback) {
+                UUID originalId = row.getUUID("entity_id");
                 sink.complex(new RollbackEffect.EntitySpawn(location, entityType,
-                        row.getString("entity_nbt")), occurred, id);
+                        row.getString("entity_nbt"),
+                        originalId == null ? null : originalId.toString()), occurred, id);
             } else {
                 UUID entityId = row.getUUID("entity_id");
                 sink.complex(new RollbackEffect.EntityRemove(location, entityType,

@@ -59,14 +59,22 @@ public final class UndoReferenceBson {
      */
     public record Reference(QueryRequest request, String mode, Instant ceiling,
                             List<WorldBox> boxes, int applied, int skipped,
-                            @Nullable UUID salvageGroup) {
+                            @Nullable UUID salvageGroup,
+                            java.util.Map<UUID, UUID> entityAliases) {
         public Reference {
             boxes = List.copyOf(boxes);
+            entityAliases = java.util.Map.copyOf(entityAliases);
         }
 
         public Reference(QueryRequest request, String mode, Instant ceiling,
                          List<WorldBox> boxes, int applied, int skipped) {
-            this(request, mode, ceiling, boxes, applied, skipped, null);
+            this(request, mode, ceiling, boxes, applied, skipped, null, java.util.Map.of());
+        }
+
+        public Reference(QueryRequest request, String mode, Instant ceiling,
+                         List<WorldBox> boxes, int applied, int skipped,
+                         @Nullable UUID salvageGroup) {
+            this(request, mode, ceiling, boxes, applied, skipped, salvageGroup, java.util.Map.of());
         }
     }
 
@@ -85,12 +93,20 @@ public final class UndoReferenceBson {
 
     public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
                                       List<WorldBox> boxes, int applied, int skipped) {
-        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, null);
+        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, null, java.util.Map.of());
     }
 
     public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
                                       List<WorldBox> boxes, int applied, int skipped,
                                       @Nullable UUID salvageGroup) {
+        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, salvageGroup,
+                java.util.Map.of());
+    }
+
+    public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
+                                      List<WorldBox> boxes, int applied, int skipped,
+                                      @Nullable UUID salvageGroup,
+                                      java.util.Map<UUID, UUID> entityAliases) {
         BsonDocument doc = new BsonDocument();
         doc.append("v", new BsonInt32(2));
         doc.append("mode", new BsonString(mode));
@@ -102,6 +118,18 @@ public final class UndoReferenceBson {
             // clean undo can withdraw those snapshots from /sg inventory
             // (#292). Optional: old blobs simply lack it.
             doc.append("sg", new BsonBinary(salvageGroup, UuidRepresentation.STANDARD));
+        }
+        if (entityAliases != null && !entityAliases.isEmpty()) {
+            // (original dead entity id -> freshly spawned id) pairs, so an
+            // undo can remove resurrected entities whose spawn minted a
+            // new uuid (#294). Optional: old blobs simply lack it.
+            BsonArray aliases = new BsonArray();
+            for (java.util.Map.Entry<UUID, UUID> alias : entityAliases.entrySet()) {
+                aliases.add(new BsonDocument(
+                        "o", new BsonBinary(alias.getKey(), UuidRepresentation.STANDARD))
+                        .append("f", new BsonBinary(alias.getValue(), UuidRepresentation.STANDARD)));
+            }
+            doc.append("ea", aliases);
         }
         BsonArray boxArray = new BsonArray();
         for (WorldBox box : boxes) {
@@ -181,8 +209,17 @@ public final class UndoReferenceBson {
         UUID salvageGroup = doc.containsKey("sg")
                 ? doc.getBinary("sg").asUuid(UuidRepresentation.STANDARD)
                 : null;
+        java.util.Map<UUID, UUID> entityAliases = new java.util.HashMap<>();
+        if (doc.containsKey("ea")) {
+            for (BsonValue value : doc.getArray("ea")) {
+                BsonDocument alias = value.asDocument();
+                entityAliases.put(
+                        alias.getBinary("o").asUuid(UuidRepresentation.STANDARD),
+                        alias.getBinary("f").asUuid(UuidRepresentation.STANDARD));
+            }
+        }
         return new Reference(new QueryRequest(predicates, sort, limit, flags, grouping),
-                mode, ceiling, boxes, applied, skipped, salvageGroup);
+                mode, ceiling, boxes, applied, skipped, salvageGroup, entityAliases);
     }
 
     private static BsonDocument predicateToBson(QueryPredicate predicate) {
