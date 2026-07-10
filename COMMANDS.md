@@ -2,7 +2,7 @@
 
 Full reference for every command, permission, query key, and flag. For the project overview and feature comparison, see the [README](README.md).
 
-Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases too, so `/sg s` is `/sg search`. Every permission defaults to `op`; grant them through your permissions plugin to open them up.
+Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-letter `/s`. If another plugin on your server claims `/s`, set `commands.s-alias = false` in `config.conf`; `/spyglass` and `/sg` always work. Subcommands take short aliases too, so `/sg s` is `/sg search`. Every permission defaults to `op`; grant them through your permissions plugin to open them up.
 
 ## Commands
 

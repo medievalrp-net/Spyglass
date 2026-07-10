@@ -34,8 +34,9 @@ public final class SpyglassCommands {
 
     // /sg is the short backend alias; /sgv on the Velocity proxy stays
     // namespace-distinct so the proxy never shadows the Paper command.
-    // /s joins when commands.s-alias is enabled in config (#250) - opt-in
-    // because single-letter roots collide with other plugins.
+    // /s joins unless commands.s-alias is disabled in config (#279, opt-out;
+    // was opt-in under #250) - an operator turns it off when another plugin
+    // on the server claims the single-letter root.
     private final List<String> rootAliases;
 
     static List<String> rootAliases(boolean sAlias) {
