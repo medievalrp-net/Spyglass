@@ -56,7 +56,13 @@ final class ClickHouseFieldMapper {
             // JoinRecord IP — a flat column on the events table; previously
             // omitted so ip:1.2.3.4 raised UnsupportedPredicateException
             // with a misleading "BSON blob" message.
-            Map.entry("address", "address"));
+            Map.entry("address", "address"),
+            // Container transaction's own material (#263): a nullable
+            // LowCardinality column, written since the schema's first
+            // container support but unreachable by any filter until the
+            // container-aware b: predicate. NULL on non-container rows,
+            // which the predicate's Exists guards key on.
+            Map.entry("containerType", "container_type"));
 
     private ClickHouseFieldMapper() {
     }
