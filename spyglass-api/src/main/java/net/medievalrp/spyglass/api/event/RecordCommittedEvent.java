@@ -12,8 +12,7 @@ import org.bukkit.event.HandlerList;
  * SIEM, etc.
  *
  * <p>This event fires <em>after</em> the record has been accepted
- * by the in-memory queue (and, when WAL durability is enabled,
- * after the WAL fsync). Final database persistence happens on the
+ * by the in-memory queue. Final database persistence happens on the
  * drain thread shortly after; the event does not block on it.
  *
  * <h2>Threading</h2>

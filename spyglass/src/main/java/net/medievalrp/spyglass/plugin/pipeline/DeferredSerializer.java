@@ -51,7 +51,7 @@ import org.jetbrains.annotations.ApiStatus;
  * <h2>Durability tradeoff</h2>
  *
  * <p>A task in flight here has been snapshotted off the live world but not
- * yet enqueued, so it sits <b>outside</b> the recorder's no-drop/WAL
+ * yet enqueued, so it sits <b>outside</b> the recorder's no-drop
  * guarantee -- a hard JVM crash in that window (the few ms of serialization)
  * loses it. For pickups this is irrelevant (never rolled back); for
  * rollbackable records it is a small, deliberate weakening of rollback

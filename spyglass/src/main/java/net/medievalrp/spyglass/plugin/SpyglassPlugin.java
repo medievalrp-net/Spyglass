@@ -300,15 +300,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         // flush can drain it before a rollback reads.
         deferredSerializer = new DeferredSerializer(getLogger());
 
-        boolean walEnabled = config.storage().durability()
-                == SpyglassConfig.Durability.WAL_BATCHED;
-        net.medievalrp.spyglass.plugin.pipeline.WalDurability wal =
-                new net.medievalrp.spyglass.plugin.pipeline.WalDurability(
-                        getDataFolder().toPath(), walEnabled, getLogger());
-        if (walEnabled) {
-            getLogger().info("Spyglass durability mode: WAL-batched (fsync per drain batch).");
-        }
-
         // On-disk overflow for the uncappable bulk-edit firehose: when the
         // queue is at its ceiling, a vanilla-WorldEdit paste spills here
         // instead of growing the heap. Only meaningful with a ceiling set.
@@ -324,7 +315,7 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         recorder = new AsyncRecorder(
                 config.storage().queueCapacity(), config.storage().queueMax(),
-                recordStore, wal, spill, Bukkit::isPrimaryThread, getLogger());
+                recordStore, spill, Bukkit::isPrimaryThread, getLogger());
         // #180: cap how fast the drain reclaims a large on-disk spill backlog in
         // the background, so it never saturates the store on a live server.
         recorder.setSpillDrainRate(config.storage().spillDrainRate());
@@ -345,16 +336,15 @@ public final class SpyglassPlugin extends JavaPlugin {
         // would snapshot the queue before the in-flight records land.
         recorder.setFlushBarrier(deferredSerializer::awaitQuiescence);
 
-        // Replay any WAL files left from a prior crash before the
-        // listeners come online, so recovered records land in the DB
-        // before new ones start flowing.
-        java.util.List<net.medievalrp.spyglass.api.event.EventRecord> recovered = wal.recover();
-        for (net.medievalrp.spyglass.api.event.EventRecord record : recovered) {
-            recorder.record(record);
-        }
+        // One-release upgrade shim (#307): the removed wal-batched durability
+        // mode may have left fsynced-but-unacked batch files behind after an
+        // unclean exit. Replay them before the listeners come online, so
+        // recovered records land in the DB before new ones start flowing.
+        net.medievalrp.spyglass.plugin.pipeline.WalPendingReplay.replay(
+                getDataFolder().toPath(), recorder::record, getLogger());
 
-        // #168: opt-in ingest analytics. Created AFTER WAL replay (so recovered
-        // records aren't counted as live ingest) and BEFORE listeners come
+        // #168: opt-in ingest analytics. Created AFTER the WAL upgrade replay
+        // (so recovered records aren't counted as live ingest) and BEFORE listeners come
         // online (so every live event is tallied). Null - and zero hot-path
         // overhead - when analytics.enabled = false.
         IngestStats ingestStats = null;

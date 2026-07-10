@@ -29,10 +29,10 @@ import org.jetbrains.annotations.ApiStatus;
 
 /**
  * BSON encode/decode for an {@link EventRecord} batch as a single
- * self-describing byte block. Shared by the on-disk pipeline paths —
- * {@link WalDurability} (drain-side write-ahead) and {@link SpillBuffer}
- * (producer-side overflow) — so both round-trip records through the exact
- * same polymorphic {@link EventRecordCodec} the storage backends use.
+ * self-describing byte block. Used by the on-disk pipeline path,
+ * {@link SpillBuffer} (producer-side overflow), and by the one-release
+ * {@link WalPendingReplay} upgrade shim, so records round-trip through the
+ * exact same polymorphic {@link EventRecordCodec} the storage backends use.
  *
  * <p>Layout: one BSON document {@code { r: [ <record>, <record>, ... ] }};
  * each element is written via a one-key {@code { v: <record-doc> }} wrapper

@@ -161,11 +161,11 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 
 | # | Scenario | Verify | Dim | Auto |
 |---|---|---|---|---|
-| J1 | DB down during play with `durability=wal-batched` | Events fsynced to WAL, replayed on DB return — zero loss; CP behavior with DB down documented | K,C | man |
+| J1 | DB down during play | Ingest queues and retries; bulk-edit overflow spills to disk; everything drains losslessly once the DB returns (a shutdown while the DB is still down loses only the unflushed queue, logged at SEVERE); CP behavior with DB down documented | K,C | man |
 | J2 | DB dies mid-rollback | Clean operator-facing failure; resumable once DB returns | U,C | man |
 | J3 | Retention expiry (`4w`) + undo TTL (24h) | Expired events leave search AND disk (after merges); expired undo fails gracefully with a clear message | C,S,U | rcon |
 | J4 | Same suite on Mongo backend | Every C-dimension case above passes identically on Mongo (backend parity) | C | bot |
-| J5 | `kill -9` mid-ingest-burst with WAL, restart | Replay produces no duplicate rows post-merge (ReplacingMergeTree dedup) | C | man |
+| J5 | `kill -9` mid-ingest-burst, restart | In-RAM queue loss bounded (~last drain interval); spilled segments replay with no duplicate rows post-merge (ReplacingMergeTree dedup) | C | man |
 | J6 | Two servers share one store with distinct `server.name` | `srv:` partitions results correctly; rollback scoped to own server | C,K | man |
 | J7 | Store written by a pre-synthesis build (persisted receipts) read by current build | Legacy rolled-* rows still searchable alongside synthesized ones; no double-render | C | rcon |
 | J8 | Full permission matrix (search/rollback/restore/undo/wand/global) | Each node gates exactly its commands; failure messages clean | U | bot |
@@ -176,7 +176,7 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 
 Going in, these are the *expected* capability splits to confirm or refute — each is a scored case above, not an assumption:
 
-- **Expected SG-only:** item name/lore/enchant search (H3–H5), cross-server proxy search (H8), bundle ops (C10), mount/teleport trails (D4, E4), crash-resume of an interrupted rollback (G8), WAL durability (J1), unlimited rollback size + flat lag profile at scale (I2–I3), +1-row re-run storage (I7).
+- **Expected SG-only:** item name/lore/enchant search (H3-H5), cross-server proxy search (H8), bundle ops (C10), mount/teleport trails (D4, E4), crash-resume of an interrupted rollback (G8), unlimited rollback size + flat lag profile at scale (I2-I3), +1-row re-run storage (I7).
 - **Expected CP-ahead:** `#preview` (G6 — SG has no preview mode today). Anything else CP-ahead that the suite surfaces gets filed as an issue.
 - **Known SG loss by design:** bytes/row (~3× CP) — richer forensic payload; tracked under S-dimension cases (F6, I6–I7) so the trade stays measured, not assumed.
 
