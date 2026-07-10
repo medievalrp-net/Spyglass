@@ -766,6 +766,89 @@ public final class RollbackService {
         boolean undoUnavailableFinal = undoUnavailable;
         support.onMainThread(() -> deliverStreamingSummary(
                 sender, mode, summary, skipCounts, undoUnavailableFinal));
+        // A rollback bounded by an explicit before: ceiling can land a
+        // mid-history state: newer records above the ceiling at the same
+        // cells were never considered, and force-overwrite (#69) does not
+        // look at them. Warn with a count so the operator learns the
+        // slice order matters (#303). Undo replays carry a ceiling by
+        // design and are exempt.
+        if (mode == RollbackMode.ROLLBACK && !replayOp && totalApplied > 0) {
+            warnIfNewerHistoryAboveCeiling(sender, request);
+        }
+    }
+
+    // Newer-history probe cap: enough to say "a lot", cheap to count.
+    private static final int NEWER_HISTORY_WARN_CAP = 1000;
+
+    /**
+     * When the request carries an explicit {@code before:} ceiling,
+     * count rollbackable records matching the same query above that
+     * ceiling and tell the operator the result may be mid-history
+     * (#303). Runs on the streaming thread; failures only cost the hint.
+     */
+    private void warnIfNewerHistoryAboveCeiling(CommandSender sender, QueryRequest request) {
+        Instant ceiling = explicitUpperBound(request.predicates());
+        if (ceiling == null) {
+            return;
+        }
+        try {
+            List<net.medievalrp.spyglass.api.query.QueryPredicate> newer = new ArrayList<>();
+            for (net.medievalrp.spyglass.api.query.QueryPredicate predicate : request.predicates()) {
+                if (!(predicate instanceof net.medievalrp.spyglass.api.query.QueryPredicate.Range range)
+                        || !"occurred".equals(range.field())) {
+                    newer.add(predicate);
+                }
+            }
+            newer.add(new net.medievalrp.spyglass.api.query.QueryPredicate.Range(
+                    "occurred", ceiling, Instant.now()));
+            newer.add(new net.medievalrp.spyglass.api.query.QueryPredicate.In(
+                    "event", List.copyOf(rollbackableEventNames())));
+            QueryRequest probe = new QueryRequest(newer, Sort.NEWEST_FIRST,
+                    NEWER_HISTORY_WARN_CAP + 1, EnumSet.of(Flag.NO_GROUP), false);
+            int count = store.querySummary(probe).records().size();
+            if (count == 0) {
+                return;
+            }
+            String amount = count > NEWER_HISTORY_WARN_CAP
+                    ? NEWER_HISTORY_WARN_CAP + "+" : String.valueOf(count);
+            support.onMainThread(() -> sender.sendMessage(Feedback.bonus(
+                    "Heads up: " + amount + " newer record(s) matching this query sit above"
+                            + " the before: ceiling, so the area may now show a mid-history"
+                            + " state. Roll back the newer window too, or re-run without"
+                            + " before: to converge.")));
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass newer-history probe failed (summary unaffected): "
+                    + ex.getMessage());
+        }
+    }
+
+    private static @org.jetbrains.annotations.Nullable Instant explicitUpperBound(
+            List<net.medievalrp.spyglass.api.query.QueryPredicate> predicates) {
+        Instant ceiling = null;
+        for (net.medievalrp.spyglass.api.query.QueryPredicate predicate : predicates) {
+            if (predicate instanceof net.medievalrp.spyglass.api.query.QueryPredicate.Range range
+                    && "occurred".equals(range.field())
+                    && range.upperInclusive() instanceof Instant upper) {
+                ceiling = ceiling == null || upper.isBefore(ceiling) ? upper : ceiling;
+            }
+        }
+        return ceiling;
+    }
+
+    // Mirrors the stores' rollbackable filter: event names whose record
+    // class is Rollbackable. Keeps the probe from counting chat and
+    // other non-rollbackable noise in the area.
+    private static java.util.Set<String> rollbackableEventNames() {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (String name : net.medievalrp.spyglass.api.event.EventCatalog.eventNames()) {
+            Class<? extends net.medievalrp.spyglass.api.event.EventRecord> clazz =
+                    net.medievalrp.spyglass.api.event.EventCatalog.recordClassOf(name);
+            if (clazz != null && net.medievalrp.spyglass.api.rollback.Rollbackable.class
+                    .isAssignableFrom(clazz)) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
