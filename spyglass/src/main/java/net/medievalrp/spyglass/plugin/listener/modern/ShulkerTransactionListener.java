@@ -31,10 +31,15 @@ public final class ShulkerTransactionListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    // Main-thread, next-tick: shift-click deposits are diffed after the
+    // click applies, per-slot, exactly like the chest listener (#268).
+    private final java.util.concurrent.Executor nextTick;
 
-    public ShulkerTransactionListener(Recorder recorder, RecordingSupport support) {
+    public ShulkerTransactionListener(Recorder recorder, RecordingSupport support,
+                                      java.util.concurrent.Executor nextTick) {
         this.recorder = recorder;
         this.support = support;
+        this.nextTick = nextTick;
     }
 
     @Override
@@ -90,19 +95,51 @@ public final class ShulkerTransactionListener implements RecordingListener {
         }
         StoredItem before = ItemSerialization.storedItem(slot, slotItem);
 
+        // (before, after) must be the SLOT's exact state pair - the
+        // rollback effect writes `before` back only when the live slot
+        // still matches `after`. MONITOR fires before the click applies,
+        // so `after` is computed from the action, same as the chest
+        // listener (#28). The hardcoded null this path used to carry
+        // made every shulker reversal skip on "slot changed" or write
+        // nothing while claiming applied (#298).
         switch (direction) {
-            case DEPOSIT -> recorder.record(new ContainerDepositRecord(
-                    support.newId(), "shulker-deposit", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), cursor == null ? "UNKNOWN" : cursor.getType().name(),
-                    containerType, slot, amount, before, null));
-            case WITHDRAW -> recorder.record(new ContainerWithdrawRecord(
-                    support.newId(), "shulker-withdraw", occurred,
-                    support.expiresAt(occurred),
-                    support.playerOrigin(), support.playerSource(player),
-                    location, support.serverName(), slotItem == null ? "UNKNOWN" : slotItem.getType().name(),
-                    containerType, slot, amount, before, null));
+            case DEPOSIT -> {
+                ItemStack afterStack;
+                if (slotItem == null || slotItem.getType() == Material.AIR) {
+                    afterStack = cursor == null ? null : cursor.clone();
+                    if (afterStack != null) {
+                        afterStack.setAmount(amount);
+                    }
+                } else {
+                    afterStack = slotItem.clone();
+                    afterStack.setAmount(Math.min(slotItem.getMaxStackSize(),
+                            slotItem.getAmount() + amount));
+                }
+                recorder.record(new ContainerDepositRecord(
+                        support.newId(), "shulker-deposit", occurred,
+                        support.expiresAt(occurred),
+                        support.playerOrigin(), support.playerSource(player),
+                        location, support.serverName(),
+                        cursor == null ? "UNKNOWN" : cursor.getType().name(),
+                        containerType, slot, amount, before,
+                        ItemSerialization.storedItem(slot, afterStack)));
+            }
+            case WITHDRAW -> {
+                ItemStack afterStack = null;
+                if (slotItem != null && slotItem.getType() != Material.AIR
+                        && slotItem.getAmount() > amount) {
+                    afterStack = slotItem.clone();
+                    afterStack.setAmount(slotItem.getAmount() - amount);
+                }
+                recorder.record(new ContainerWithdrawRecord(
+                        support.newId(), "shulker-withdraw", occurred,
+                        support.expiresAt(occurred),
+                        support.playerOrigin(), support.playerSource(player),
+                        location, support.serverName(),
+                        slotItem == null ? "UNKNOWN" : slotItem.getType().name(),
+                        containerType, slot, amount, before,
+                        ItemSerialization.storedItem(slot, afterStack)));
+            }
         }
     }
 
@@ -176,12 +213,42 @@ public final class ShulkerTransactionListener implements RecordingListener {
         if (!clicked.equals(bottom)) {
             return;
         }
-        recorder.record(new ContainerDepositRecord(
-                support.newId(), "shulker-deposit", occurred,
-                support.expiresAt(occurred),
-                support.playerOrigin(), support.playerSource(player),
-                location, support.serverName(), moved.getType().name(), containerType,
-                -1, amount, null, before));
+        // Shift-click from player inventory into the shulker. The event
+        // names no destination slot - vanilla merges into partial stacks
+        // first, then empty slots, so one click can touch several slots.
+        // Snapshot the top inventory now (MONITOR fires before the click
+        // applies) and diff it one tick later, one record per slot -
+        // parity with the chest listener's #268 fix. The old single
+        // record carried slot -1, which every rollback path rejects.
+        int topSize = top.getSize();
+        ItemStack[] beforeTop = new ItemStack[topSize];
+        for (int i = 0; i < topSize; i++) {
+            ItemStack item = top.getItem(i);
+            beforeTop[i] = item == null ? null : item.clone();
+        }
+        Material movedType = moved.getType();
+        nextTick.execute(() -> {
+            for (int slot = 0; slot < topSize; slot++) {
+                ItemStack now = top.getItem(slot);
+                if (now == null || now.getType() != movedType) {
+                    continue;
+                }
+                ItemStack was = beforeTop[slot];
+                int wasAmount = was == null || was.getType() == Material.AIR ? 0 : was.getAmount();
+                int delta = now.getAmount() - wasAmount;
+                if (delta <= 0) {
+                    continue;
+                }
+                recorder.record(new ContainerDepositRecord(
+                        support.newId(), "shulker-deposit", occurred,
+                        support.expiresAt(occurred),
+                        support.playerOrigin(), support.playerSource(player),
+                        location, support.serverName(), movedType.name(), containerType,
+                        slot, delta,
+                        wasAmount > 0 ? ItemSerialization.storedItem(slot, was) : null,
+                        ItemSerialization.storedItem(slot, now)));
+            }
+        });
     }
 
     private void handleHotbarSwap(InventoryClickEvent event, Player player, int slot,
