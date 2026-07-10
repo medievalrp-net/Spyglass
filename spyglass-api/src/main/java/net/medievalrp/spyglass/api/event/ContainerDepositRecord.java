@@ -34,12 +34,12 @@ public record ContainerDepositRecord(
     @Override
     public RollbackEffect rollbackEffect() {
         // Undo the deposit: restore the slot to its pre-deposit state.
-        return new RollbackEffect.ContainerSlotWrite(location, slot, afterItem, beforeItem);
+        return new RollbackEffect.ContainerSlotWrite(location, slot, afterItem, beforeItem, containerType);
     }
 
     @Override
     public RollbackEffect restoreEffect() {
         // Re-apply the deposit: write the post-deposit state.
-        return new RollbackEffect.ContainerSlotWrite(location, slot, beforeItem, afterItem);
+        return new RollbackEffect.ContainerSlotWrite(location, slot, beforeItem, afterItem, containerType);
     }
 }

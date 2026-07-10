@@ -376,7 +376,8 @@ public final class MongoRecordStore implements RecordStore {
         Bson projection = Projections.fields(
                 Projections.include(RecordFields.ID, RecordFields.EVENT, RecordFields.OCCURRED,
                         RecordFields.LOCATION, replacementSide,
-                        RecordFields.SLOT, RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
+                        RecordFields.SLOT, RecordFields.CONTAINER_TYPE,
+                        RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
                         RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT,
                         RecordFields.KILLER_TYPE),
                 Projections.excludeId());
@@ -458,9 +459,12 @@ public final class MongoRecordStore implements RecordStore {
                     ? doc.getInt32(RecordFields.SLOT).getValue() : 0;
             StoredItem before = decodeItem(doc, RecordFields.BEFORE_ITEM);
             StoredItem after = decodeItem(doc, RecordFields.AFTER_ITEM);
+            String containerType = doc.containsKey(RecordFields.CONTAINER_TYPE)
+                    && doc.get(RecordFields.CONTAINER_TYPE).isString()
+                    ? doc.getString(RecordFields.CONTAINER_TYPE).getValue() : null;
             sink.complex(rollback
-                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before)
-                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after), occurred, id);
+                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before, containerType)
+                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after, containerType), occurred, id);
             return;
         }
 
