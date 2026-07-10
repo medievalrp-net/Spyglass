@@ -1714,10 +1714,13 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Target is no longer a container."));
         }
 
-        // Some Bukkit inventory events fire with slot = -1 (drag /
-        // auto-stack) and the recorded container may be wider than
-        // the live one (chest -> hopper downgrade). Range-check
-        // before getItem to avoid IndexOutOfBoundsException.
+        // slot = -1 rows exist and stay benign skips: cursor-held bundle
+        // transactions record -1 by design (there is no container slot),
+        // and shift-click deposits recorded -1 before #268 - those legacy
+        // rows live in every store until retention ages them out. The
+        // recorded container may also be wider than the live one (chest ->
+        // hopper downgrade). Range-check before getItem to avoid
+        // IndexOutOfBoundsException.
         int slot = effect.slot();
         int size = container.getInventory().getSize();
         if (slot < 0 || slot >= size) {
