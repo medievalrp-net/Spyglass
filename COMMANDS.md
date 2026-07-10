@@ -19,9 +19,7 @@ Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases to
 | `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
 | `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
-| `/sg tele <world> <x> <y> <z>` | - | `spyglass.tele` | Teleport (used by clickable search results) |
-| `/sg import <file>` | - | `spyglass.import` | Import a CoreProtect SQLite database from `plugins/Spyglass/import/` |
-| `/sg import mysql <source>` | - | `spyglass.import` | Import a live CoreProtect MySQL database (sources defined in `import.conf`) |
+| `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
 
 ## Permissions
