@@ -1876,9 +1876,13 @@ public final class RollbackEngine {
             return;
         }
 
-        Inventory inventory = container.getSnapshotInventory();
+        // LIVE inventory, same as applyContainerSlotWrite - writes go
+        // straight to the block entity. The old snapshot-then-update
+        // pattern silently lost every write on shulker boxes: update(true)
+        // re-set the block and the snapshot's contents never landed, so
+        // the summary said applied while the box stayed empty (#298).
+        Inventory inventory = container.getInventory();
         int size = inventory.getSize();
-        boolean anyApplied = false;
 
         for (int i = 0; i < indices.size(); i++) {
             RollbackEffect.ContainerSlotWrite csw = writes.get(i);
@@ -1901,11 +1905,6 @@ public final class RollbackEngine {
             RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(
                     location, slot, replacement, inverseCurrent);
             resultArray[indices.get(i)] = new RollbackResult.Applied(csw, inverse);
-            anyApplied = true;
-        }
-
-        if (anyApplied) {
-            state.update(true, false);
         }
     }
 
