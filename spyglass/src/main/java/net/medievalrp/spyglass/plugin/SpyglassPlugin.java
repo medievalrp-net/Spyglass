@@ -605,7 +605,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             }
         }
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport, config,
-                rollbackService);
+                rollbackService, salvageStore);
         net.medievalrp.spyglass.plugin.command.service.RbqueueService rbqueueService =
                 new net.medievalrp.spyglass.plugin.command.service.RbqueueService(
                         rollbackQueue, resumeStore, rollbackService, serviceSupport);

@@ -353,8 +353,11 @@ public final class RollbackService {
         AtomicBoolean cancelFlag = job.cancelFlag;
         // Attribute any containers this rollback salvages to the operator and
         // group them under one rollback id; also resets per-run dedup (#76).
-        engine.salvageBegin(sender == null ? "console" : sender.getName(),
-                java.util.UUID.randomUUID());
+        // The id rides the undo reference so a clean undo can withdraw this
+        // op's salvage snapshots - the restored containers hold the items
+        // again, and leaving the snapshots claimable duplicated them (#292).
+        java.util.UUID salvageGroupId = java.util.UUID.randomUUID();
+        engine.salvageBegin(sender == null ? "console" : sender.getName(), salvageGroupId);
         // Encoded once per job: checkpoint() re-writes the whole marker
         // after every applied window and must carry the same resolved
         // plan markStart wrote (#49). Null for replays — see runJob.
@@ -719,7 +722,8 @@ public final class RollbackService {
                                 e.getValue()[3], e.getValue()[4], e.getValue()[5]))
                         .toList();
         String reference = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
-                request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped);
+                request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped,
+                salvageGroupId);
         boolean undoUnavailable = false;
         // Replay ops (undo) do NOT push a reference: the popped reference
         // is consumed on clean completion, so repeated /undo unwinds the

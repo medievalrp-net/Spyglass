@@ -155,6 +155,18 @@ public final class SqliteSalvageStore implements SalvageStore {
         });
     }
 
+    @Override
+    public void deleteByRollback(UUID rollbackId) {
+        store.withWriteConnection(conn -> {
+            try (var ps = conn.prepareStatement(
+                    "DELETE FROM salvage WHERE rollback_op_id = ?")) {
+                ps.setString(1, rollbackId.toString());
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
     private void pruneExpired(java.sql.Connection conn) throws SQLException {
         if (ttlMs <= 0) {
             return;
