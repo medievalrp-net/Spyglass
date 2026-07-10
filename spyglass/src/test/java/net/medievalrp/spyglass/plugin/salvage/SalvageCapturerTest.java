@@ -129,4 +129,38 @@ class SalvageCapturerTest {
         assertThat(deferred).as("an unchanged container queues no persist work").isEmpty();
         verify(store, never()).save(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void survivingContainerWithChangedContentsIsNotSaved() {
+        // #283: the rollback changed the barrel's contents (reverted a
+        // deposit, restored snapshot items) but the barrel still stands -
+        // nothing was destroyed, so nothing goes to /sg inventory. The old
+        // behavior treated any content change as destruction and dumped the
+        // full pre-write clone on every run.
+        World world = mock(World.class);
+        when(world.getUID()).thenReturn(WORLD);
+        when(world.getName()).thenReturn("world");
+        when(world.isChunkLoaded(CX, CZ)).thenReturn(true);
+        Chunk chunk = mock(Chunk.class);
+        when(world.getChunkAt(CX, CZ)).thenReturn(chunk);
+        wireBarrelWithDiamond(world, chunk);
+        // Post-write: still a barrel, contents now different (empty).
+        Block block = mock(Block.class);
+        when(block.getType()).thenReturn(Material.BARREL);
+        Barrel liveState = mock(Barrel.class);
+        Inventory liveInv = mock(Inventory.class);
+        when(liveInv.getContents()).thenReturn(new ItemStack[] {null, null, null});
+        when(liveState.getInventory()).thenReturn(liveInv);
+        when(block.getState()).thenReturn(liveState);
+        when(world.getBlockAt(BX, BY, BZ)).thenReturn(block);
+
+        capturer.begin("Alice", UUID.randomUUID());
+        capturer.onChunkResolved(world, CX, CZ);
+        capturer.onChunkWritten(world, CX, CZ);
+
+        assertThat(deferred)
+                .as("a surviving container is never salvaged, changed contents or not")
+                .isEmpty();
+        verify(store, never()).save(org.mockito.ArgumentMatchers.any());
+    }
 }
