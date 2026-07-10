@@ -89,6 +89,8 @@ Flags start with `-` and take no value unless noted.
 | `-nc` | `-nochat` | Don't echo the summary line to chat (action-bar only) |
 | `-ex` | `-extended` | Include extra detail columns in the result list |
 | `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` runs with no radius or time bound |
+| `--containers` | `-containers` | Rollback/restore also touches containers. Without it, a rollback never places a container block, never overwrites a live one, and never reverts deposits/withdrawals |
+| `--entities` | `-entities` | Rollback/restore also spawns/removes entities. Without it, death records are left alone |
 
 ### Time formats
 

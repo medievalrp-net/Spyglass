@@ -252,6 +252,14 @@ public final class RollbackEngine {
     /** Skip message for cells the live-state guard left untouched (#264). */
     public static final String PROTECTED_SKIP = "Live block is excluded by the query";
 
+    /** Skip message for container work withheld by default (#287). */
+    public static final String CONTAINERS_SKIP =
+            "Containers are skipped by default (pass --containers to include them)";
+
+    /** Skip message for entity work withheld by default (#287). */
+    public static final String ENTITIES_SKIP =
+            "Entities are skipped by default (pass --entities to include them)";
+
     // Materials the operator explicitly excluded (block:!x), per job. A cell
     // whose LIVE block is one of these is never overwritten: excluding the
     // chest's record used to leave older same-coordinate history free to
@@ -269,6 +277,44 @@ public final class RollbackEngine {
     // above: jobs are queue-serialized, set at the public entry points.
     private volatile Set<String> protectedMaterials = Set.of();
 
+    // #287: containers and entities are opt-in per job. Default TRUE so
+    // direct engine callers (tests, the legacy undo replay, the api) keep
+    // their behavior; RollbackService sets both from the query flags.
+    private volatile boolean includeContainers = true;
+    private volatile boolean includeEntities = true;
+
+    // Materials whose block state is a Bukkit Container - the same set
+    // SalvageCapturer keys on. Resolved once from the live registry; on any
+    // failure (unit tests without a server) the set stays empty and the
+    // container-block gate is inert, which the flag-independent gates on
+    // the container-slot and entity paths do not depend on.
+    private static volatile Set<Material> containerMaterials;
+
+    private static Set<Material> containerMaterials() {
+        Set<Material> resolved = containerMaterials;
+        if (resolved != null) {
+            return resolved;
+        }
+        Set<Material> out = new java.util.HashSet<>();
+        try {
+            for (Material material : Material.values()) {
+                try {
+                    if (material.isBlock() && !material.isLegacy()
+                            && material.createBlockData().createBlockState()
+                                    instanceof org.bukkit.block.Container) {
+                        out.add(material);
+                    }
+                } catch (Throwable ignored) {
+                    // Material without a resolvable state; not a container.
+                }
+            }
+        } catch (Throwable ignored) {
+            out.clear();
+        }
+        containerMaterials = Set.copyOf(out);
+        return containerMaterials;
+    }
+
     // Synchronous entry point for tests. Production uses applyAllChunked
     // directly so the apply loop can yield between ticks.
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
@@ -280,9 +326,35 @@ public final class RollbackEngine {
         this.protectedMaterials = materials == null ? Set.of() : Set.copyOf(materials);
     }
 
+    /** Sets what the next job may touch beyond plain blocks (#287). */
+    public void includeInRollback(boolean containers, boolean entities) {
+        this.includeContainers = containers;
+        this.includeEntities = entities;
+    }
+
     private boolean isProtectedLive(World world, int x, int y, int z) {
         return !protectedMaterials.isEmpty()
                 && protectedMaterials.contains(world.getBlockAt(x, y, z).getType().name());
+    }
+
+    /**
+     * Skip reason for a block cell, or null to write it. Two gates (#264,
+     * #287): the operator's excluded materials, and - unless --containers -
+     * any cell that would place a container or overwrite a live one. Main
+     * thread only (live block reads).
+     */
+    private String blockCellSkip(World world, int x, int y, int z, Material replacement) {
+        if (isProtectedLive(world, x, y, z)) {
+            return PROTECTED_SKIP;
+        }
+        if (!includeContainers) {
+            Set<Material> containers = containerMaterials();
+            if ((replacement != null && containers.contains(replacement))
+                    || containers.contains(world.getBlockAt(x, y, z).getType())) {
+                return CONTAINERS_SKIP;
+            }
+        }
+        return null;
     }
 
     // -- apply-phase failsafe (#127) ------------------------------
@@ -325,7 +397,11 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
         CompletableFuture<List<RollbackResult>> done = new CompletableFuture<>();
-        done.whenComplete((r, t) -> protectedMaterials = Set.of());
+        done.whenComplete((r, t) -> {
+            protectedMaterials = Set.of();
+            includeContainers = true;
+            includeEntities = true;
+        });
         if (effects.isEmpty()) {
             done.complete(List.of());
             return done;
@@ -613,9 +689,11 @@ public final class RollbackEngine {
                     BlockSnapshot replacement = effect.replacement();
                     BlockLocation loc = effect.location();
                     try {
-                        if (isProtectedLive(world, loc.x(), loc.y(), loc.z())) {
+                        String cellSkip = blockCellSkip(world, loc.x(), loc.y(), loc.z(),
+                                replacement.material());
+                        if (cellSkip != null) {
                             resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                                    new RollbackReason.NotSupported(PROTECTED_SKIP));
+                                    new RollbackReason.NotSupported(cellSkip));
                             continue;
                         }
                         BlockData bd =
@@ -776,19 +854,20 @@ public final class RollbackEngine {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
                 // Live-state reads are main-thread only; the worker half
-                // consults the mask instead of the world (#264).
-                BitSet protectedMask = null;
-                if (!protectedMaterials.isEmpty()) {
-                    protectedMask = new BitSet(chunkEnd - cursor);
+                // consults the precomputed reasons instead of the world
+                // (#264 exclusions, #287 container gate).
+                String[] cellSkips = null;
+                if (!protectedMaterials.isEmpty() || !includeContainers) {
+                    cellSkips = new String[chunkEnd - cursor];
                     for (int j = cursor; j < chunkEnd; j++) {
-                        BlockLocation loc = blockReplaceEffects.get(j).location();
-                        if (isProtectedLive(world, loc.x(), loc.y(), loc.z())) {
-                            protectedMask.set(j - cursor);
-                        }
+                        RollbackEffect.BlockReplace eff = blockReplaceEffects.get(j);
+                        BlockLocation loc = eff.location();
+                        cellSkips[j - cursor] = blockCellSkip(world, loc.x(), loc.y(), loc.z(),
+                                eff.replacement() == null ? null : eff.replacement().material());
                     }
                 }
                 batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded,
-                        protectedMask));
+                        cellSkips));
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -914,9 +993,9 @@ public final class RollbackEngine {
         for (int j = 0; j < chunkSize; j++) {
             int targetIndex = blockReplaceIndices.get(from + j);
             RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
-            if (work.protectedMask != null && work.protectedMask.get(j)) {
+            if (work.cellSkips != null && work.cellSkips[j] != null) {
                 resultArray[targetIndex] = new RollbackResult.Skipped(effect,
-                        new RollbackReason.NotSupported(PROTECTED_SKIP));
+                        new RollbackReason.NotSupported(work.cellSkips[j]));
                 continue;
             }
             BlockData bd;
@@ -1035,13 +1114,13 @@ public final class RollbackEngine {
         final int chunkEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
-        final BitSet protectedMask;
+        final String[] cellSkips;
         volatile BlockData[] writes;
         volatile BitSet nonSimpleMask;
 
         ChunkWork(World world, int cx, int cz, int from, int chunkEnd,
                   ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
-                  BitSet protectedMask) {
+                  String[] cellSkips) {
             this.world = world;
             this.cx = cx;
             this.cz = cz;
@@ -1049,7 +1128,7 @@ public final class RollbackEngine {
             this.chunkEnd = chunkEnd;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
-            this.protectedMask = protectedMask;
+            this.cellSkips = cellSkips;
         }
     }
 
@@ -1076,10 +1155,13 @@ public final class RollbackEngine {
         public long cancelled;
         /** Cells the live-state guard left untouched (#264). Benign. */
         public long protectedCells;
+        /** Live-container cells withheld without --containers (#287). Benign. */
+        public long containerCells;
 
         /** Total skipped across every benign and error reason. */
         public long skipped() {
-            return blockChanged + unparseable + invalidLocation + cancelled + protectedCells;
+            return blockChanged + unparseable + invalidLocation + cancelled
+                    + protectedCells + containerCells;
         }
 
         /** Skips that are real failures (parity with RollbackReason.Error). */
@@ -1094,6 +1176,7 @@ public final class RollbackEngine {
             invalidLocation += other.invalidLocation;
             cancelled += other.cancelled;
             protectedCells += other.protectedCells;
+            containerCells += other.containerCells;
         }
     }
 
@@ -1105,7 +1188,11 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyColumnsChunked must run on the main thread.");
         }
         CompletableFuture<ApplyCounts> done = new CompletableFuture<>();
-        done.whenComplete((r, t) -> protectedMaterials = Set.of());
+        done.whenComplete((r, t) -> {
+            protectedMaterials = Set.of();
+            includeContainers = true;
+            includeEntities = true;
+        });
         ApplyCounts counts = new ApplyCounts();
         int total = cols.count();
         if (total == 0) {
@@ -1198,18 +1285,33 @@ public final class RollbackEngine {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
                 // Live-state reads are main-thread only; the worker half
-                // consults the mask instead of the world (#264).
-                BitSet protectedMask = null;
-                if (!protectedMaterials.isEmpty()) {
-                    protectedMask = new BitSet(rangeEnd - cursor);
+                // consults the mask instead of the world (#264 exclusions,
+                // #287 container gate; columnar cells are simple blocks, so
+                // only the live side can be a container here). Counting
+                // happens at classify time so the worker only skips.
+                BitSet skipMask = null;
+                long protectedHere = 0;
+                long containersHere = 0;
+                if (!protectedMaterials.isEmpty() || !includeContainers) {
+                    skipMask = new BitSet(rangeEnd - cursor);
                     for (int k = cursor; k < rangeEnd; k++) {
                         int cellIdx = order[k];
-                        if (isProtectedLive(world, cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx))) {
-                            protectedMask.set(k - cursor);
+                        String reason = blockCellSkip(world,
+                                cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx), null);
+                        if (reason != null) {
+                            skipMask.set(k - cursor);
+                            if (PROTECTED_SKIP.equals(reason)) {
+                                protectedHere++;
+                            } else {
+                                containersHere++;
+                            }
                         }
                     }
                 }
-                batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded, protectedMask));
+                ColChunk colChunk = new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded, skipMask);
+                colChunk.protectedCells = protectedHere;
+                colChunk.containerCells = containersHere;
+                batch.add(colChunk);
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -1278,6 +1380,7 @@ public final class RollbackEngine {
                     counts.blockChanged += cc.blockChanged;
                     counts.unparseable += cc.unparseable;
                     counts.protectedCells += cc.protectedCells;
+                    counts.containerCells += cc.containerCells;
                 } catch (Throwable t) {
                     // finishChunk / onChunkWritten threw; record the failure and
                     // keep cleaning up the rest of the batch (#127).
@@ -1356,9 +1459,8 @@ public final class RollbackEngine {
         long unparse = 0;
         long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
-            if (cc.protectedMask != null && cc.protectedMask.get(k - cc.from)) {
-                protectedCount++;
-                continue;
+            if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
+                continue; // counted at classify time on the main thread
             }
             int idx = order[k];
             int x = cols.x(idx);
@@ -1390,9 +1492,8 @@ public final class RollbackEngine {
         long unparse = 0;
         long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
-            if (cc.protectedMask != null && cc.protectedMask.get(k - cc.from)) {
-                protectedCount++;
-                continue;
+            if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
+                continue; // counted at classify time on the main thread
             }
             int idx = order[k];
             int x = cols.x(idx);
@@ -1426,20 +1527,21 @@ public final class RollbackEngine {
         final int rangeEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
-        final BitSet protectedMask;
+        final BitSet skipMask;
         volatile long applied;
         volatile long blockChanged;
         volatile long unparseable;
         volatile long protectedCells;
+        volatile long containerCells;
 
         ColChunk(int cx, int cz, int from, int rangeEnd,
                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
-                 BitSet protectedMask) {
+                 BitSet skipMask) {
             this.cx = cx;
             this.cz = cz;
             this.from = from;
             this.rangeEnd = rangeEnd;
-            this.protectedMask = protectedMask;
+            this.skipMask = skipMask;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
         }
@@ -1626,6 +1728,13 @@ public final class RollbackEngine {
                                      List<Integer> indices,
                                      List<RollbackEffect.ContainerSlotWrite> writes,
                                      RollbackResult[] resultArray) {
+        if (!includeContainers) {
+            for (int i = 0; i < indices.size(); i++) {
+                resultArray[indices.get(i)] = new RollbackResult.Skipped(writes.get(i),
+                        new RollbackReason.NotSupported(CONTAINERS_SKIP));
+            }
+            return;
+        }
         Optional<World> world = BlockLocations.resolveWorld(location);
         if (world.isEmpty()) {
             for (int i = 0; i < indices.size(); i++) {
@@ -1738,6 +1847,9 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyEntitySpawn(RollbackEffect.EntitySpawn effect) {
+        if (!includeEntities) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(ENTITIES_SKIP));
+        }
         Optional<World> world = BlockLocations.resolveWorld(effect.location());
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
@@ -1821,6 +1933,9 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyEntityRemove(RollbackEffect.EntityRemove effect) {
+        if (!includeEntities) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(ENTITIES_SKIP));
+        }
         if (effect.entityId() == null || effect.entityId().isBlank()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("No entity id."));
         }
@@ -1860,6 +1975,9 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyContainerSlotWrite(RollbackEffect.ContainerSlotWrite effect) {
+        if (!includeContainers) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(CONTAINERS_SKIP));
+        }
         Optional<World> world = BlockLocations.resolveWorld(effect.location());
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
