@@ -47,6 +47,7 @@ final class RecordFields {
     static final String ENTITY_TYPE = "entityType";
     static final String ENTITY_ID = "entityId";
     static final String ENTITY_NBT = "entityNbt";
+    static final String KILLER_TYPE = "killerType";
 
     private RecordFields() {
     }
