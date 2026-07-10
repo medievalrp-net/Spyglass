@@ -90,6 +90,35 @@ class RolledSynthesisTest {
                 new QueryPredicate.Eq("event", "break"));
     }
 
+    // The default search and the wand render aggregations when grouping is
+    // on; receipts that only reach records() are invisible there. The
+    // decorator must fold them into the grouped side too, counted per
+    // (event, target, operator).
+    @Test
+    void groupedQueriesSeeSynthesizedReceiptsAsAggregations() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1), griefBreak(2)));
+        store.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+        SynthesizingRecordStore wrapped = new SynthesizingRecordStore(store, true);
+
+        QueryRequest grouped = new QueryRequest(
+                List.of(new QueryPredicate.Eq("location.worldId", WORLD)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100, EnumSet.noneOf(Flag.class), true);
+        QueryResult result = wrapped.query(grouped);
+
+        assertThat(result.aggregations())
+                .anyMatch(aggregation -> "rolled-place".equals(aggregation.sample().event())
+                        && aggregation.count() == 2);
+
+        // Ungrouped requests keep the store's aggregation list untouched.
+        QueryRequest ungrouped = new QueryRequest(
+                List.of(new QueryPredicate.Eq("location.worldId", WORLD)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100, EnumSet.noneOf(Flag.class), false);
+        assertThat(wrapped.query(ungrouped).aggregations()).isEmpty();
+    }
+
     // ---- #302: coverage honors the op's inclusion flags ----
 
     private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x) {
