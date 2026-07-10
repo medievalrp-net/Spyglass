@@ -44,7 +44,9 @@ public final class WandInteractListener implements Listener {
         this.tool = tool;
         this.search = search;
         this.config = config;
-        this.lookbackWindow = Duration.parse("7d");
+        // tool.lookback, default 26w. The old hardcoded 7d silently hid
+        // older history and read as "Spyglass cannot roll this back" (#271).
+        this.lookbackWindow = config.tool().lookback();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
@@ -130,7 +132,7 @@ public final class WandInteractListener implements Listener {
     private void queryAt(Player player, Location location) {
         BlockLocation anchor = BlockLocations.fromLocation(location);
         String target = location.getBlock().getType().name();
-        player.sendMessage(Feedback.inspectHeader(target, anchor));
+        player.sendMessage(Feedback.inspectHeader(target, anchor, lookbackWindow));
         List<QueryPredicate> predicates = new ArrayList<>();
         predicates.add(RadiusParam.groupAround(anchor, 0));
         predicates.add(new QueryPredicate.Range(
