@@ -44,7 +44,10 @@ class ClickHouseSynthesisParityIT {
     private static final UUID GRIEFER = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final Instant GRIEF_TIME = Instant.parse("2026-06-10T10:00:00Z");
     private static final Instant OP_TIME = Instant.parse("2026-06-10T11:00:00Z");
-    private static final Instant EXPIRES = Instant.parse("2026-07-10T00:00:00Z");
+    // Relative, not a wall-clock date: a hardcoded expiry silently turned
+    // every seeded row born-expired once the calendar passed it, and all
+    // three parity tests failed with empty results.
+    private static final Instant EXPIRES = Instant.now().plus(30, java.time.temporal.ChronoUnit.DAYS);
 
     private ClickHouseContainer container;
     private ClickHouseRecordStore receiptsStore;
