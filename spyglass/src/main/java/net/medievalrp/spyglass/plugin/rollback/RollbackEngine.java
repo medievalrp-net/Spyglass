@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.BitSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -247,10 +248,40 @@ public final class RollbackEngine {
         this.chunkTicketHolder = plugin;
     }
 
+    /** Skip message for cells the live-state guard left untouched (#264). */
+    public static final String PROTECTED_SKIP = "Live block is excluded by the query";
+
+    // Materials the operator explicitly excluded (block:!x), per job. A cell
+    // whose LIVE block is one of these is never overwritten: excluding the
+    // chest's record used to leave older same-coordinate history free to
+    // force-write the live chest back to the window's start state (#264).
+    // This is deliberately NOT the general expected-state guard that #69
+    // removed - that one skipped cells where unlogged drift (water/lava/
+    // fire) moved in after the grief, which broke grief recovery. Guarding
+    // only the operator's own exclusions cannot break that: unlogged drift
+    // is never in the set, and an operator who names a material has said
+    // "leave that material alone" in so many words. Do not widen this into
+    // a general live-state comparison; the reasoning above is why the last
+    // one was deleted.
+    //
+    // Per-job engine state, same contract as the apply-phase counters
+    // above: jobs are queue-serialized, set at the public entry points.
+    private volatile Set<String> protectedMaterials = Set.of();
+
     // Synchronous entry point for tests. Production uses applyAllChunked
     // directly so the apply loop can yield between ticks.
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
         return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
+    }
+
+    /** Sets the operator's excluded materials for the next job (#264). */
+    public void protectMaterials(Set<String> materials) {
+        this.protectedMaterials = materials == null ? Set.of() : Set.copyOf(materials);
+    }
+
+    private boolean isProtectedLive(World world, int x, int y, int z) {
+        return !protectedMaterials.isEmpty()
+                && protectedMaterials.contains(world.getBlockAt(x, y, z).getType().name());
     }
 
     // -- apply-phase failsafe (#127) ------------------------------
@@ -293,6 +324,7 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
         CompletableFuture<List<RollbackResult>> done = new CompletableFuture<>();
+        done.whenComplete((r, t) -> protectedMaterials = Set.of());
         if (effects.isEmpty()) {
             done.complete(List.of());
             return done;
@@ -580,6 +612,11 @@ public final class RollbackEngine {
                     BlockSnapshot replacement = effect.replacement();
                     BlockLocation loc = effect.location();
                     try {
+                        if (isProtectedLive(world, loc.x(), loc.y(), loc.z())) {
+                            resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                                    new RollbackReason.NotSupported(PROTECTED_SKIP));
+                            continue;
+                        }
                         BlockData bd =
                                 blockDataFor(replacement.blockData());
                         forceWriteCell(chunkCtx, world, loc.x(), loc.y(), loc.z(), bd);
@@ -730,7 +767,20 @@ public final class RollbackEngine {
                 if (salvageHook != null) {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
-                batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
+                // Live-state reads are main-thread only; the worker half
+                // consults the mask instead of the world (#264).
+                BitSet protectedMask = null;
+                if (!protectedMaterials.isEmpty()) {
+                    protectedMask = new BitSet(chunkEnd - cursor);
+                    for (int j = cursor; j < chunkEnd; j++) {
+                        BlockLocation loc = blockReplaceEffects.get(j).location();
+                        if (isProtectedLive(world, loc.x(), loc.y(), loc.z())) {
+                            protectedMask.set(j - cursor);
+                        }
+                    }
+                }
+                batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded,
+                        protectedMask));
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -856,6 +906,11 @@ public final class RollbackEngine {
         for (int j = 0; j < chunkSize; j++) {
             int targetIndex = blockReplaceIndices.get(from + j);
             RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
+            if (work.protectedMask != null && work.protectedMask.get(j)) {
+                resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                        new RollbackReason.NotSupported(PROTECTED_SKIP));
+                continue;
+            }
             BlockData bd;
             try {
                 bd = blockDataFor(effect.replacement().blockData());
@@ -963,11 +1018,13 @@ public final class RollbackEngine {
         final int chunkEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
+        final BitSet protectedMask;
         volatile BlockData[] writes;
         volatile BitSet nonSimpleMask;
 
         ChunkWork(World world, int cx, int cz, int from, int chunkEnd,
-                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
+                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
+                  BitSet protectedMask) {
             this.world = world;
             this.cx = cx;
             this.cz = cz;
@@ -975,6 +1032,7 @@ public final class RollbackEngine {
             this.chunkEnd = chunkEnd;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
+            this.protectedMask = protectedMask;
         }
     }
 
@@ -999,10 +1057,12 @@ public final class RollbackEngine {
         public long unparseable;
         public long invalidLocation;
         public long cancelled;
+        /** Cells the live-state guard left untouched (#264). Benign. */
+        public long protectedCells;
 
         /** Total skipped across every benign and error reason. */
         public long skipped() {
-            return blockChanged + unparseable + invalidLocation + cancelled;
+            return blockChanged + unparseable + invalidLocation + cancelled + protectedCells;
         }
 
         /** Skips that are real failures (parity with RollbackReason.Error). */
@@ -1016,6 +1076,7 @@ public final class RollbackEngine {
             unparseable += other.unparseable;
             invalidLocation += other.invalidLocation;
             cancelled += other.cancelled;
+            protectedCells += other.protectedCells;
         }
     }
 
@@ -1027,6 +1088,7 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyColumnsChunked must run on the main thread.");
         }
         CompletableFuture<ApplyCounts> done = new CompletableFuture<>();
+        done.whenComplete((r, t) -> protectedMaterials = Set.of());
         ApplyCounts counts = new ApplyCounts();
         int total = cols.count();
         if (total == 0) {
@@ -1118,7 +1180,19 @@ public final class RollbackEngine {
                 if (salvageHook != null) {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
-                batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
+                // Live-state reads are main-thread only; the worker half
+                // consults the mask instead of the world (#264).
+                BitSet protectedMask = null;
+                if (!protectedMaterials.isEmpty()) {
+                    protectedMask = new BitSet(rangeEnd - cursor);
+                    for (int k = cursor; k < rangeEnd; k++) {
+                        int cellIdx = order[k];
+                        if (isProtectedLive(world, cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx))) {
+                            protectedMask.set(k - cursor);
+                        }
+                    }
+                }
+                batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded, protectedMask));
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -1179,6 +1253,7 @@ public final class RollbackEngine {
                     counts.applied += cc.applied;
                     counts.blockChanged += cc.blockChanged;
                     counts.unparseable += cc.unparseable;
+                    counts.protectedCells += cc.protectedCells;
                 } catch (Throwable t) {
                     // finishChunk / onChunkWritten threw; record the failure and
                     // keep cleaning up the rest of the batch (#127).
@@ -1255,7 +1330,12 @@ public final class RollbackEngine {
         long applied = 0;
         long changed = 0;
         long unparse = 0;
+        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
+            if (cc.protectedMask != null && cc.protectedMask.get(k - cc.from)) {
+                protectedCount++;
+                continue;
+            }
             int idx = order[k];
             int x = cols.x(idx);
             int y = cols.y(idx);
@@ -1276,6 +1356,7 @@ public final class RollbackEngine {
         cc.applied = applied;
         cc.blockChanged = changed;
         cc.unparseable = unparse;
+        cc.protectedCells = protectedCount;
     }
 
     // Main-thread fallback for a chunk whose prepareChunk failed: single
@@ -1283,7 +1364,12 @@ public final class RollbackEngine {
     private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
         long applied = 0;
         long unparse = 0;
+        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
+            if (cc.protectedMask != null && cc.protectedMask.get(k - cc.from)) {
+                protectedCount++;
+                continue;
+            }
             int idx = order[k];
             int x = cols.x(idx);
             int y = cols.y(idx);
@@ -1303,6 +1389,7 @@ public final class RollbackEngine {
         }
         cc.applied = applied;
         cc.unparseable = unparse;
+        cc.protectedCells = protectedCount;
     }
 
     // One chunk's columnar work unit: the [from, rangeEnd) slice of the
@@ -1315,16 +1402,20 @@ public final class RollbackEngine {
         final int rangeEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
+        final BitSet protectedMask;
         volatile long applied;
         volatile long blockChanged;
         volatile long unparseable;
+        volatile long protectedCells;
 
         ColChunk(int cx, int cz, int from, int rangeEnd,
-                 ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
+                 ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
+                 BitSet protectedMask) {
             this.cx = cx;
             this.cz = cz;
             this.from = from;
             this.rangeEnd = rangeEnd;
+            this.protectedMask = protectedMask;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
         }
@@ -1697,6 +1788,9 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
 
+        if (isProtectedLive(world.get(), effect.location().x(), effect.location().y(), effect.location().z())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(PROTECTED_SKIP));
+        }
         // Force-overwrite via applySnapshot (the Bukkit slow path) — same
         // contract as forceWriteCell.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
