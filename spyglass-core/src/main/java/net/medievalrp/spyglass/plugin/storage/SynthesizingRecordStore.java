@@ -25,8 +25,18 @@ public final class SynthesizingRecordStore implements RecordStore {
     private final boolean enabled;
 
     public SynthesizingRecordStore(RecordStore delegate, boolean enabled) {
+        this(delegate, enabled, java.util.Set.of());
+    }
+
+    /**
+     * @param containerMaterials material names whose block state is a
+     *     container, from the caller's registry - lets synthesis honor
+     *     an op's missing --containers flag for block writes too (#302)
+     */
+    public SynthesizingRecordStore(RecordStore delegate, boolean enabled,
+                                   java.util.Set<String> containerMaterials) {
         this.delegate = delegate;
-        this.synthesis = new RolledSynthesis(delegate);
+        this.synthesis = new RolledSynthesis(delegate, containerMaterials);
         this.enabled = enabled;
     }
 

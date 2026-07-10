@@ -115,6 +115,17 @@ class RolledAuditRegressionTest {
                 new QueryPredicate.Eq("event", event));
     }
 
+    // Since #287 a container transaction only ever reverts under
+    // --containers, so an op that covered one always carries the flag;
+    // synthesis refuses container receipts for unflagged ops (#302).
+    private static QueryRequest coveredByWithContainers(String event) {
+        return new QueryRequest(
+                List.of(new QueryPredicate.Eq("source.playerId", GRIEFER),
+                        new QueryPredicate.Eq("event", event)),
+                Sort.NEWEST_FIRST, 100,
+                EnumSet.of(Flag.NO_GROUP, Flag.INCLUDE_CONTAINERS), false);
+    }
+
     @Test
     void rolledBreakNamesTheDestroyedBlock() {
         MemoryStore store = new MemoryStore();
@@ -135,7 +146,7 @@ class RolledAuditRegressionTest {
     void containerRollbackSynthesizesRolledWithdraw() {
         MemoryStore store = new MemoryStore();
         store.save(List.of(deposit()));
-        store.save(List.of(op(coveredBy("deposit"))));
+        store.save(List.of(op(coveredByWithContainers("deposit"))));
 
         List<EventRecord> rolled = new RolledSynthesis(store)
                 .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
@@ -151,7 +162,7 @@ class RolledAuditRegressionTest {
     void containerRestoreSynthesizesRolledDeposit() {
         MemoryStore store = new MemoryStore();
         store.save(List.of(withdraw()));
-        store.save(List.of(op(coveredBy("withdraw"))));
+        store.save(List.of(op(coveredByWithContainers("withdraw"))));
 
         List<EventRecord> rolled = new RolledSynthesis(store)
                 .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
@@ -167,7 +178,7 @@ class RolledAuditRegressionTest {
     void rolledContainerEventsAreSearchableByEventFilter() {
         MemoryStore store = new MemoryStore();
         store.save(List.of(deposit()));
-        store.save(List.of(op(coveredBy("deposit"))));
+        store.save(List.of(op(coveredByWithContainers("deposit"))));
         RolledSynthesis synthesis = new RolledSynthesis(store);
 
         assertThat(synthesis.synthesize(request(

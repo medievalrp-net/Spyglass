@@ -315,6 +315,20 @@ public final class RollbackEngine {
         return containerMaterials;
     }
 
+    /**
+     * Material names of the {@link #containerMaterials()} set, for
+     * consumers outside the engine that must mirror the #287 gate's
+     * notion of "container" - today the rolled-* audit synthesis
+     * (#302). Empty when no registry is available.
+     */
+    public static Set<String> containerMaterialNames() {
+        Set<String> names = new java.util.HashSet<>();
+        for (Material material : containerMaterials()) {
+            names.add(material.name());
+        }
+        return Set.copyOf(names);
+    }
+
     // Synchronous entry point for tests. Production uses applyAllChunked
     // directly so the apply loop can yield between ticks.
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
