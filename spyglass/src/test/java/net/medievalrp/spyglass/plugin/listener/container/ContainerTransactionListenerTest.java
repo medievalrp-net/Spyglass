@@ -40,11 +40,15 @@ class ContainerTransactionListenerTest {
 
     private final CapturingRecorder recorder = new CapturingRecorder();
     private final RecordingSupport support = new RecordingSupport(Duration.parse("4w"), "test");
+    // Queued next-tick executor: shift-click deposits diff the container
+    // one tick after the click applies (#268), so tests re-stub the top
+    // inventory to its post-click state and then drain this queue.
+    private final List<Runnable> nextTick = new java.util.ArrayList<>();
     // Same-thread serializer so the deferred build (#98) runs inline and the
     // (before, after) assertions below see the records immediately. A
     // separate test exercises the actual deferral handoff.
     private final ContainerTransactionListener listener =
-            new ContainerTransactionListener(recorder, support, Runnable::run);
+            new ContainerTransactionListener(recorder, support, Runnable::run, nextTick::add);
 
     // Strong refs so Location's weak World reference can't be collected
     // mid-test (see ChatListenerTest.mockPlayer).
@@ -164,7 +168,7 @@ class ContainerTransactionListenerTest {
         // record exists until the deferred task runs.
         List<Runnable> deferred = new java.util.ArrayList<>();
         ContainerTransactionListener deferredListener =
-                new ContainerTransactionListener(recorder, support, deferred::add);
+                new ContainerTransactionListener(recorder, support, deferred::add, nextTick::add);
         InventoryClickEvent event = clickEvent(InventoryAction.PLACE_ALL, 0, null, ironStack(64));
 
         deferredListener.onInventoryClick(event);
@@ -179,6 +183,128 @@ class ContainerTransactionListenerTest {
         assertThat(record.amount()).isEqualTo(64);
         assertThat(record.afterItem()).isNotNull();
         assertThat(record.afterItem().material()).isEqualTo("IRON_INGOT");
+    }
+
+    // ── shift-click deposits (#268) ──────────────────────────────
+
+    @Test
+    void shiftClickDepositEmitsOnePerSlotRecordAcrossPartialAndEmptySlots() {
+        // Chest slot 3 holds 40 iron; the player shift-clicks 64 iron from
+        // player-inventory slot 30. Vanilla tops the partial stack up to 64
+        // (+24) and drops the remaining 40 into the first empty slot. The
+        // record shape carries one slot, so this MUST be two records; the
+        // pre-#268 code emitted a single slot=-1 record no rollback path
+        // could apply.
+        ItemStack partialBefore = ironStack(40);
+        Inventory top = mock(Inventory.class);
+        when(top.getSize()).thenReturn(27);
+        when(top.getItem(3)).thenReturn(partialBefore);
+        InventoryClickEvent event = shiftClickFromPlayer(top, 30, ironStack(64));
+
+        listener.onInventoryClick(event);
+        assertThat(recorder.records).as("nothing recorded until the click applies").isEmpty();
+        assertThat(nextTick).hasSize(1);
+
+        // The click has applied: slot 3 topped up to 64, overflow of 40 in slot 0.
+        ItemStack overflow = ironStack(40);
+        ItemStack toppedUp = ironStack(64);
+        when(top.getItem(0)).thenReturn(overflow);
+        when(top.getItem(3)).thenReturn(toppedUp);
+        nextTick.forEach(Runnable::run);
+
+        assertThat(recorder.records).hasSize(2);
+        ContainerDepositRecord intoEmpty = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(intoEmpty.slot()).isEqualTo(0);
+        assertThat(intoEmpty.amount()).isEqualTo(40);
+        assertThat(intoEmpty.beforeItem()).isNull();
+        assertThat(intoEmpty.afterItem().material()).isEqualTo("IRON_INGOT");
+        ContainerDepositRecord intoPartial = (ContainerDepositRecord) recorder.records.get(1);
+        assertThat(intoPartial.slot()).isEqualTo(3);
+        assertThat(intoPartial.amount()).isEqualTo(24);
+        assertThat(intoPartial.beforeItem()).isNotNull();
+        // No record anywhere carries the old -1 sentinel.
+        assertThat(recorder.records)
+                .allSatisfy(r -> assertThat(((ContainerDepositRecord) r).slot()).isNotNegative());
+    }
+
+    @Test
+    void shiftClickIntoFullContainerRecordsNothing() {
+        // Nothing fits, nothing moves. The old code recorded a full-stack
+        // deposit that never happened.
+        ItemStack full = ironStack(64);
+        Inventory top = mock(Inventory.class);
+        when(top.getSize()).thenReturn(27);
+        for (int i = 0; i < 27; i++) {
+            when(top.getItem(i)).thenReturn(full);
+        }
+        InventoryClickEvent event = shiftClickFromPlayer(top, 30, ironStack(64));
+
+        listener.onInventoryClick(event);
+        nextTick.forEach(Runnable::run);
+
+        assertThat(recorder.records).isEmpty();
+    }
+
+    @Test
+    void shiftClickDepositIgnoresForeignMaterialChanges() {
+        // A slot that held a different material cannot be a merge target;
+        // a same-tick change there (hopper, another player) is not ours.
+        Inventory top = mock(Inventory.class);
+        when(top.getSize()).thenReturn(27);
+        ItemStack gold = mockStack(Material.GOLD_INGOT, 10);
+        when(top.getItem(5)).thenReturn(gold);
+        InventoryClickEvent event = shiftClickFromPlayer(top, 30, ironStack(16));
+
+        listener.onInventoryClick(event);
+        ItemStack foreignSwap = ironStack(16);
+        ItemStack deposit = ironStack(16);
+        when(top.getItem(5)).thenReturn(foreignSwap); // foreign swap mid-tick
+        when(top.getItem(0)).thenReturn(deposit); // the actual deposit
+        nextTick.forEach(Runnable::run);
+
+        assertThat(recorder.records).hasSize(1);
+        assertThat(((ContainerDepositRecord) recorder.records.get(0)).slot()).isEqualTo(0);
+    }
+
+    @Test
+    void shiftClickWithdrawStillRecordsTheRealContainerSlot() {
+        // The withdraw direction indexed real container slots all along and
+        // must keep doing so, without waiting a tick.
+        Inventory top = mock(Inventory.class);
+        when(top.getSize()).thenReturn(27);
+        ItemStack held = ironStack(16);
+        when(top.getItem(3)).thenReturn(held);
+        InventoryClickEvent event = shiftClickEvent(top, top, 3, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+
+        listener.onInventoryClick(event);
+
+        assertThat(nextTick).isEmpty();
+        assertThat(recorder.records).hasSize(1);
+        ContainerWithdrawRecord record = (ContainerWithdrawRecord) recorder.records.get(0);
+        assertThat(record.slot()).isEqualTo(3);
+        assertThat(record.amount()).isEqualTo(16);
+    }
+
+    @Test
+    void shiftClickDepositIntoDoubleChestRebasesToTheOwningHalf() {
+        // Raw slot 30 of a double chest lives in the right half: the record
+        // must attribute to the right block at its local slot 3, exactly as
+        // direct clicks do.
+        Inventory top = mock(Inventory.class);
+        when(top.getSize()).thenReturn(54);
+        DoubleChest holder = doubleChestHolder();
+        when(top.getHolder(false)).thenReturn(holder);
+        InventoryClickEvent event = shiftClickFromPlayer(top, 12, ironStack(8));
+
+        listener.onInventoryClick(event);
+        ItemStack landed = ironStack(8);
+        when(top.getItem(30)).thenReturn(landed);
+        nextTick.forEach(Runnable::run);
+
+        assertThat(recorder.records).hasSize(1);
+        ContainerDepositRecord record = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(record.location().x()).isEqualTo(2);
+        assertThat(record.slot()).isEqualTo(3);
     }
 
     // ── fixtures ─────────────────────────────────────────────────
@@ -242,6 +368,62 @@ class ContainerTransactionListenerTest {
         when(event.getSlot()).thenReturn(rawSlot);
         when(event.getCursor()).thenReturn(cursor);
         return event;
+    }
+
+    /**
+     * A MOVE_TO_OTHER_INVENTORY click from the player (bottom) inventory
+     * into {@code top}. The moved stack sits in player-inventory
+     * {@code playerSlot}; {@code top} gets a single-chest holder at
+     * (1,64,2) unless the test stubbed one already.
+     */
+    private InventoryClickEvent shiftClickFromPlayer(Inventory top, int playerSlot, ItemStack moved) {
+        Inventory bottom = mock(Inventory.class);
+        when(bottom.getItem(playerSlot)).thenReturn(moved);
+        return shiftClickEvent(top, bottom, playerSlot, InventoryAction.MOVE_TO_OTHER_INVENTORY);
+    }
+
+    private InventoryClickEvent shiftClickEvent(Inventory top, Inventory clicked, int slot,
+                                                InventoryAction action) {
+        ensureChestHolder(top);
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(PLAYER_ID);
+        when(player.getName()).thenReturn("Alice");
+        Inventory bottom = clicked.equals(top) ? mock(Inventory.class) : clicked;
+        org.bukkit.inventory.InventoryView view = mock(org.bukkit.inventory.InventoryView.class);
+        when(view.getTopInventory()).thenReturn(top);
+        when(view.getBottomInventory()).thenReturn(bottom);
+        InventoryClickEvent event = mock(InventoryClickEvent.class);
+        when(event.getWhoClicked()).thenReturn(player);
+        when(event.getClickedInventory()).thenReturn(clicked);
+        when(event.getAction()).thenReturn(action);
+        when(event.getView()).thenReturn(view);
+        when(event.getSlot()).thenReturn(slot);
+        return event;
+    }
+
+    private void ensureChestHolder(Inventory top) {
+        if (top.getHolder(false) != null) {
+            return;
+        }
+        when(world.getUID()).thenReturn(UUID.fromString("77777777-7777-7777-7777-777777777777"));
+        when(world.getName()).thenReturn("world");
+        Block block = mock(Block.class);
+        when(block.getLocation()).thenReturn(new Location(world, 1, 64, 2));
+        when(block.getType()).thenReturn(Material.CHEST);
+        Chest holder = mock(Chest.class);
+        when(holder.getBlock()).thenReturn(block);
+        when(top.getHolder(false)).thenReturn(holder);
+    }
+
+    private DoubleChest doubleChestHolder() {
+        when(world.getUID()).thenReturn(UUID.fromString("77777777-7777-7777-7777-777777777777"));
+        when(world.getName()).thenReturn("world");
+        Chest left = chestHalf(1);
+        Chest right = chestHalf(2);
+        DoubleChest doubleChest = mock(DoubleChest.class);
+        when(doubleChest.getLeftSide()).thenReturn(left);
+        when(doubleChest.getRightSide()).thenReturn(right);
+        return doubleChest;
     }
 
     /** A 27-slot chest block at the given x, used as one half of a double chest. */
