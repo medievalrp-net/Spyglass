@@ -93,7 +93,8 @@ class MigrateServiceTest {
     }
 
     private static SpyglassConfig.Database db(Backend active, String mongoUri, String chHost) {
-        return new SpyglassConfig.Database(active, mongoUri, "Spyglass", "EventRecords",
+        return new SpyglassConfig.Database(active,
+                new SpyglassConfig.Mongo(mongoUri, "Spyglass", "EventRecords"),
                 new SpyglassConfig.ClickHouse(chHost, 8123, "spyglass", "event_records", "default", "", false),
                 new SpyglassConfig.Sqlite("spyglass.db"),
                 new SpyglassConfig.MariaDb("localhost", 3306, "spyglass", "root", "", false));
@@ -187,7 +188,7 @@ class MigrateServiceTest {
     void validateTargetConfigFlagsBlankFields() {
         SpyglassConfig.Database blankMongo = db(Backend.SQLITE, " ", "localhost");
         assertThat(MigrateService.validateTargetConfig(blankMongo, Backend.MONGO))
-                .contains("database.uri");
+                .contains("database.mongo.uri");
 
         SpyglassConfig.Database blankCh = db(Backend.SQLITE, "mongodb://localhost", "");
         assertThat(MigrateService.validateTargetConfig(blankCh, Backend.CLICKHOUSE))

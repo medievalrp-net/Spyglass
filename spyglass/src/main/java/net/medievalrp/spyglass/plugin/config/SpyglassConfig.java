@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.storage.MongoConnectionString;
 import org.bukkit.Material;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.spongepowered.configurate.ConfigurationNode;
@@ -35,6 +36,20 @@ public record SpyglassConfig(
             "login", "register", "l", "reg", "changepassword", "changepw",
             "unregister", "premium", "2fa", "totp", "auth");
 
+    /**
+     * Current config schema version. Bumped whenever the on-disk layout changes
+     * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
+     * A config with an older {@code config-version} is migrated on load.
+     */
+    public static final int CONFIG_VERSION = 2;
+
+    // v1 -> v2: the bare database.uri/name/collection keys moved under a
+    // mongo { } block, and `name` became `database`.
+    private static final Map<String, String> MIGRATION_REMAP = Map.of(
+            "database.uri", "database.mongo.uri",
+            "database.name", "database.mongo.database",
+            "database.collection", "database.mongo.collection");
+
     public static SpyglassConfig load(JavaPlugin plugin) throws IOException {
         Path path = plugin.getDataFolder().toPath().resolve("config.conf");
         Files.createDirectories(path.getParent());
@@ -45,7 +60,31 @@ public record SpyglassConfig(
         HoconConfigurationLoader loader = HoconConfigurationLoader.builder()
                 .path(path)
                 .build();
-        ConfigurationNode root = loader.load();
+        ConfigurationNode root;
+        try {
+            root = loader.load();
+        } catch (IOException ex) {
+            // A hand-broken config must not silently reset to defaults - that
+            // would repoint the backend and credentials. Preserve it and stop.
+            Path saved = ConfigMigrator.backup(path, "corrupt");
+            throw new IOException("Spyglass config.conf could not be parsed; backed up to "
+                    + saved.getFileName() + ". Fix the syntax and restart.", ex);
+        }
+
+        int version = ConfigMigrator.readVersion(root);
+        if (version < CONFIG_VERSION) {
+            Path saved = ConfigMigrator.backup(path, "v" + version);
+            try {
+                root = ConfigMigrator.migrate(root, loadBundledDefaults(plugin),
+                        MIGRATION_REMAP, CONFIG_VERSION);
+                loader.save(root);
+            } catch (org.spongepowered.configurate.serialize.SerializationException ex) {
+                throw new IOException("Spyglass config migration failed; your original config is at "
+                        + saved.getFileName(), ex);
+            }
+            plugin.getLogger().info("Spyglass: migrated config v" + version + " -> v" + CONFIG_VERSION
+                    + "; previous file backed up to " + saved.getFileName());
+        }
 
         // Auto-merge: any event present in the jar's default config.conf but missing from
         // the on-disk config gets added with defaults. Prevents silent "event not enabled"
@@ -78,9 +117,16 @@ public record SpyglassConfig(
         return new SpyglassConfig(
                 new Database(
                         backend,
-                        root.node("database", "uri").getString("mongodb://localhost:27017"),
-                        root.node("database", "name").getString("Spyglass"),
-                        root.node("database", "collection").getString("EventRecords"),
+                        new Mongo(
+                                MongoConnectionString.resolve(
+                                        root.node("database", "mongo", "uri").getString(""),
+                                        root.node("database", "mongo", "host").getString("localhost"),
+                                        root.node("database", "mongo", "port").getInt(27017),
+                                        root.node("database", "mongo", "user").getString(""),
+                                        root.node("database", "mongo", "password").getString(""),
+                                        root.node("database", "mongo", "ssl").getBoolean(false)),
+                                root.node("database", "mongo", "database").getString("Spyglass"),
+                                root.node("database", "mongo", "collection").getString("EventRecords")),
                         new ClickHouse(
                                 root.node("database", "clickhouse", "host").getString("localhost"),
                                 root.node("database", "clickhouse", "port").getInt(8123),
@@ -113,8 +159,8 @@ public record SpyglassConfig(
                         root.node("defaults", "radius").getInt(250),
                         Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
-                        root.node("limits", "max-radius").getInt(250),
-                        root.node("limits", "search-result").getInt(1_000),
+                        root.node("limits", "max-radius").getInt(500),
+                        root.node("limits", "search-result").getInt(5_000),
                         root.node("limits", "chat-dump").getInt(50),
                         root.node("limits", "rollback-batch-size").getInt(4_000),
                         Duration.parse(root.node("limits", "rollback-flush-timeout").getString("30s")),
@@ -243,12 +289,23 @@ public record SpyglassConfig(
 
     public record Database(
             Backend backend,
-            String uri,
-            String name,
-            String collection,
+            Mongo mongo,
             ClickHouse clickhouse,
             Sqlite sqlite,
             MariaDb mariadb) {
+    }
+
+    /**
+     * Resolved MongoDB connection (used when {@code backend = "mongo"}). The
+     * {@code uri} is either the operator's explicit {@code uri} override or a
+     * string assembled from the discrete host/port/user/password/ssl fields by
+     * {@link MongoConnectionString}, so downstream only ever sees a connection
+     * string plus the database and collection names.
+     */
+    public record Mongo(
+            String uri,
+            String database,
+            String collection) {
     }
 
     /**
