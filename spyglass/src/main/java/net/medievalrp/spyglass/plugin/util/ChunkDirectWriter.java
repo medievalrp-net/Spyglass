@@ -61,6 +61,24 @@ public final class ChunkDirectWriter {
     private static Method lightEngineCheckBlock;
     private static Constructor<?> blockPosCtor;
 
+    // Block-entity lifecycle (#289) — optional group like the light
+    // engine. When any lookup fails, palette writes still work but the
+    // stale-BE prune and tile-BE creation degrade to no-ops (ghost
+    // block entities come back), flagged once at WARNING.
+    private static volatile boolean beLifecycleAvailable;
+    private static Method levelChunkGetBlockEntityCreate;
+    private static Object beCreationImmediate;
+    private static Method levelChunkRemoveBlockEntity;
+    private static Method chunkGetBlockState;
+    private static java.lang.reflect.Field chunkBlockEntitiesField;
+    private static Method blockEntityGetType;
+    private static Method blockEntityTypeIsValid;
+    private static Method stateHasBlockEntity;
+    private static Class<?> baseContainerBlockEntityClass;
+    private static Method blockPosGetX;
+    private static Method blockPosGetY;
+    private static Method blockPosGetZ;
+
     private ChunkDirectWriter() {
     }
 
@@ -277,6 +295,160 @@ public final class ChunkDirectWriter {
         }
     }
 
+    // ---- block-entity lifecycle (#289) --------------------------------
+
+    /** Cache of "does this block state carry a block entity" per BlockData. */
+    private static final java.util.concurrent.ConcurrentHashMap<BlockData, Boolean> HAS_BE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * True when writing {@code blockData} produces a tile block (chest,
+     * sign, furnace, ...) that needs a block entity registered. Safe off
+     * the main thread - reads immutable state only. False when the
+     * lifecycle handles are unavailable, which keeps callers no-op.
+     */
+    public static boolean stateHasBlockEntity(BlockData blockData) {
+        if (blockData == null) {
+            return false;
+        }
+        if (!initialized) {
+            init();
+        }
+        if (!beLifecycleAvailable) {
+            return false;
+        }
+        return HAS_BE_CACHE.computeIfAbsent(blockData, bd -> {
+            try {
+                Object state = craftBlockDataGetState.invoke(bd);
+                return state != null && (boolean) stateHasBlockEntity.invoke(state);
+            } catch (Throwable t) {
+                return false;
+            }
+        });
+    }
+
+    /** A block entity the prune removed because its type no longer matches the palette. */
+    public record StaleBlockEntity(int x, int y, int z, boolean container) {
+    }
+
+    /**
+     * Remove every block entity in the chunk whose type is invalid for
+     * the block now in the palette - the ghosts a direct palette write
+     * leaves behind (#289). A stale BE can only exist because a write
+     * bypassed {@code LevelChunk.setBlockState}, so the sweep is
+     * self-selecting and needs no record of which cells were written.
+     * Main thread only. Returns the removed entries so the caller can
+     * close player views on the container-backed ones (#299).
+     */
+    public static java.util.List<StaleBlockEntity> pruneStaleBlockEntities(
+            World world, int cx, int cz) {
+        if (!initialized) {
+            init();
+        }
+        if (!beLifecycleAvailable || !available || world == null) {
+            return java.util.List.of();
+        }
+        try {
+            Object serverLevel = craftWorldGetHandle.invoke(world);
+            Object levelChunk = serverLevelGetChunk.invoke(serverLevel, cx, cz);
+            if (levelChunk == null) {
+                return java.util.List.of();
+            }
+            java.util.Map<?, ?> blockEntities =
+                    (java.util.Map<?, ?>) chunkBlockEntitiesField.get(levelChunk);
+            if (blockEntities == null || blockEntities.isEmpty()) {
+                return java.util.List.of();
+            }
+            java.util.List<Object> stalePositions = new java.util.ArrayList<>(0);
+            java.util.List<StaleBlockEntity> stale = new java.util.ArrayList<>(0);
+            for (java.util.Map.Entry<?, ?> entry : blockEntities.entrySet()) {
+                Object pos = entry.getKey();
+                Object blockEntity = entry.getValue();
+                Object state = chunkGetBlockState.invoke(levelChunk, pos);
+                Object type = blockEntityGetType.invoke(blockEntity);
+                if (!(boolean) blockEntityTypeIsValid.invoke(type, state)) {
+                    stalePositions.add(pos);
+                    stale.add(new StaleBlockEntity(
+                            (int) blockPosGetX.invoke(pos),
+                            (int) blockPosGetY.invoke(pos),
+                            (int) blockPosGetZ.invoke(pos),
+                            baseContainerBlockEntityClass.isInstance(blockEntity)));
+                }
+            }
+            // Remove after the scan - removeBlockEntity mutates the map.
+            for (Object pos : stalePositions) {
+                levelChunkRemoveBlockEntity.invoke(levelChunk, pos);
+            }
+            return stale;
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "Spyglass stale block-entity prune failed for chunk "
+                    + cx + "," + cz, t);
+            return java.util.List.of();
+        }
+    }
+
+    /**
+     * Make sure the cell at {@code (x, y, z)} has a block entity of the
+     * right type for its current palette state - the create half of the
+     * lifecycle a palette write skips (#289, the #298 vanish). A
+     * lingering wrong-type entity is replaced. No-op for non-tile
+     * states or when the handles are unavailable. Main thread only.
+     */
+    public static void ensureBlockEntity(World world, int x, int y, int z) {
+        if (!initialized) {
+            init();
+        }
+        if (!beLifecycleAvailable || !available || world == null) {
+            return;
+        }
+        try {
+            Object serverLevel = craftWorldGetHandle.invoke(world);
+            Object levelChunk = serverLevelGetChunk.invoke(serverLevel, x >> 4, z >> 4);
+            if (levelChunk == null) {
+                return;
+            }
+            Object pos = blockPosCtor.newInstance(x, y, z);
+            Object state = chunkGetBlockState.invoke(levelChunk, pos);
+            if (state == null || !(boolean) stateHasBlockEntity.invoke(state)) {
+                return;
+            }
+            Object existing = levelChunkGetBlockEntityCreate.invoke(
+                    levelChunk, pos, beCreationImmediate);
+            if (existing != null) {
+                Object type = blockEntityGetType.invoke(existing);
+                if ((boolean) blockEntityTypeIsValid.invoke(type, state)) {
+                    return;
+                }
+                // Wrong-type leftover (e.g. chest entity under a new sign
+                // state): drop it and create the right one.
+                levelChunkRemoveBlockEntity.invoke(levelChunk, pos);
+            }
+            levelChunkGetBlockEntityCreate.invoke(levelChunk, pos, beCreationImmediate);
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "Spyglass block-entity create failed at "
+                    + x + "," + y + "," + z, t);
+        }
+    }
+
+    /**
+     * Look up a field by name, walking up the class hierarchy (the
+     * blockEntities map is declared on a chunk parent class in some
+     * Paper builds).
+     */
+    private static java.lang.reflect.Field findField(Class<?> clazz, String name)
+            throws NoSuchFieldException {
+        for (Class<?> c = clazz; c != null; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Field field = c.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException ignored) {
+                // continue walking
+            }
+        }
+        throw new NoSuchFieldException(clazz.getName() + "." + name);
+    }
+
     private static synchronized void init() {
         if (initialized) {
             return;
@@ -350,6 +522,48 @@ public final class ChunkDirectWriter {
                 serverLevelGetLightEngine = null;
                 lightEngineCheckBlock = null;
                 blockPosCtor = null;
+            }
+
+            // Block-entity lifecycle (#289) — best-effort. Palette writes
+            // bypass LevelChunk.setBlockState, which is where vanilla
+            // removes the old block entity and registers the new one;
+            // these handles let the rollback do that half itself.
+            try {
+                Class<?> blockPosClass = Class.forName("net.minecraft.core.BlockPos");
+                if (blockPosCtor == null) {
+                    blockPosCtor = blockPosClass.getConstructor(int.class, int.class, int.class);
+                }
+                blockPosGetX = findMethod(blockPosClass, "getX");
+                blockPosGetY = findMethod(blockPosClass, "getY");
+                blockPosGetZ = findMethod(blockPosClass, "getZ");
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                Class<Enum> creationType = (Class<Enum>) Class.forName(
+                        "net.minecraft.world.level.chunk.LevelChunk$EntityCreationType");
+                @SuppressWarnings("unchecked")
+                Object immediate = Enum.valueOf(creationType, "IMMEDIATE");
+                beCreationImmediate = immediate;
+                levelChunkGetBlockEntityCreate = findMethod(levelChunkClass,
+                        "getBlockEntity", blockPosClass, creationType);
+                levelChunkRemoveBlockEntity = findMethod(levelChunkClass,
+                        "removeBlockEntity", blockPosClass);
+                chunkGetBlockState = findMethod(levelChunkClass, "getBlockState", blockPosClass);
+                chunkBlockEntitiesField = findField(levelChunkClass, "blockEntities");
+                Class<?> blockEntityClass = Class.forName(
+                        "net.minecraft.world.level.block.entity.BlockEntity");
+                blockEntityGetType = findMethod(blockEntityClass, "getType");
+                Class<?> blockEntityTypeClass = Class.forName(
+                        "net.minecraft.world.level.block.entity.BlockEntityType");
+                blockEntityTypeIsValid = findMethod(blockEntityTypeClass, "isValid", blockStateClass);
+                stateHasBlockEntity = findMethod(blockStateClass, "hasBlockEntity");
+                baseContainerBlockEntityClass = Class.forName(
+                        "net.minecraft.world.level.block.entity.BaseContainerBlockEntity");
+                beLifecycleAvailable = true;
+            } catch (Throwable beFail) {
+                beLifecycleAvailable = false;
+                LOG.log(Level.WARNING,
+                        "Spyglass block-entity lifecycle handles unavailable; rollbacks over"
+                                + " tile blocks may leave stale block entities (#289). Cause: "
+                                + beFail, beFail);
             }
 
             available = true;

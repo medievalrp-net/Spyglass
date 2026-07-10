@@ -186,6 +186,48 @@ public final class RollbackEngine {
         }
     }
 
+    // After a chunk's palette writes land, drop every block entity whose
+    // type no longer matches the palette - the ghosts a direct section
+    // write leaves behind (#289): they resurrect containers when the
+    // container phase resolves through them, keep looted inventories
+    // alive for open GUIs (#299), persist to disk, and throw "Failed to
+    // create block entity" on every later chunk load. Views on destroyed
+    // containers are closed first so nobody keeps a window into a dead
+    // inventory. Main thread only.
+    private void pruneStaleBlockEntities(World world, int cx, int cz) {
+        for (ChunkDirectWriter.StaleBlockEntity stale
+                : ChunkDirectWriter.pruneStaleBlockEntities(world, cx, cz)) {
+            if (stale.container()) {
+                closeViewsAt(world, stale.x(), stale.y(), stale.z());
+            }
+        }
+    }
+
+    private static void closeViewsAt(World world, int x, int y, int z) {
+        for (Player player : world.getPlayers()) {
+            try {
+                if (holderAt(player.getOpenInventory().getTopInventory().getHolder(), x, y, z)) {
+                    player.closeInventory();
+                }
+            } catch (RuntimeException ignored) {
+                // Best-effort: a missed close only leaves a stale window
+                // that dies on the next inventory tick.
+            }
+        }
+    }
+
+    private static boolean holderAt(Object holder, int x, int y, int z) {
+        if (holder instanceof org.bukkit.block.DoubleChest doubleChest) {
+            return holderAt(doubleChest.getLeftSide(), x, y, z)
+                    || holderAt(doubleChest.getRightSide(), x, y, z);
+        }
+        if (holder instanceof org.bukkit.inventory.BlockInventoryHolder blockHolder) {
+            Block block = blockHolder.getBlock();
+            return block.getX() == x && block.getY() == y && block.getZ() == z;
+        }
+        return false;
+    }
+
     // The Applied result + its inverse for a restored block, built identically
     // by every object-path apply (sync, parallel worker, main post-pass, slow
     // path). The inverse swaps replacement<->expectedCurrent so /undo reverses
@@ -713,6 +755,12 @@ public final class RollbackEngine {
                         BlockData bd =
                                 blockDataFor(replacement.blockData());
                         forceWriteCell(chunkCtx, world, loc.x(), loc.y(), loc.z(), bd);
+                        // Palette writes skip the block-entity lifecycle;
+                        // register the tile entity the new state needs so
+                        // container/sign payloads land in a real one (#289).
+                        if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                            ChunkDirectWriter.ensureBlockEntity(world, loc.x(), loc.y(), loc.z());
+                        }
                         if (!replacement.simple()) {
                             Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                             applyTileEntityState(block, replacement);
@@ -723,6 +771,7 @@ public final class RollbackEngine {
                                 new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
                     }
                 }
+                pruneStaleBlockEntities(world, cx, cz);
                 ChunkDirectWriter.finishChunk(chunkCtx);
                 // Direct writes never schedule fluid ticks; re-arm the fluid
                 // engine over this chunk's cells and their shell (#270).
@@ -1035,12 +1084,14 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(work.ctx, work.world, loc.x(), loc.y(), loc.z(), bd);
-            if (replacement.simple()) {
-                // No tile entity to apply; the palette write is the whole
-                // apply. Build Applied here on the worker.
+            if (replacement.simple() && !ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                // No tile entity to apply or register; the palette write
+                // is the whole apply. Build Applied here on the worker.
                 resultArray[targetIndex] = appliedWithInverse(effect);
             } else {
-                // Needs BlockState.update on the main thread.
+                // Needs the main thread: BlockState.update for the tile
+                // payload, and/or block-entity registration for a tile
+                // block the palette write placed (#289).
                 nonSimpleMask.set(j);
             }
         }
@@ -1060,6 +1111,10 @@ public final class RollbackEngine {
         BitSet nonSimpleMask = work.nonSimpleMask;
         BlockData[] writes = work.writes;
         try {
+            // The worker's palette writes are all in; drop the block
+            // entities they orphaned before any tile state resolves
+            // through a stale one (#289, #299).
+            pruneStaleBlockEntities(world, work.cx, work.cz);
             if (nonSimpleMask != null) {
                 for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
                         j = nonSimpleMask.nextSetBit(j + 1)) {
@@ -1073,8 +1128,17 @@ public final class RollbackEngine {
                             // the recorded block here on main.
                             forceWriteCell(null, world, loc.x(), loc.y(), loc.z(), writes[j]);
                         }
-                        Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
-                        applyTileEntityState(block, replacement);
+                        // Register the block entity the new tile state
+                        // needs before applying its payload (#289); a
+                        // detached state write otherwise vanishes (#298).
+                        if (work.ctx != null && ChunkDirectWriter.stateHasBlockEntity(writes[j])) {
+                            ChunkDirectWriter.ensureBlockEntity(
+                                    world, loc.x(), loc.y(), loc.z());
+                        }
+                        if (!replacement.simple()) {
+                            Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
+                            applyTileEntityState(block, replacement);
+                        }
                         resultArray[targetIndex] = appliedWithInverse(effect);
                     } catch (RuntimeException ex) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
@@ -1300,18 +1364,23 @@ public final class RollbackEngine {
                 }
                 // Live-state reads are main-thread only; the worker half
                 // consults the mask instead of the world (#264 exclusions,
-                // #287 container gate; columnar cells are simple blocks, so
-                // only the live side can be a container here). Counting
-                // happens at classify time so the worker only skips.
+                // #287 container gate). The replacement side is parsed out
+                // of the lean stream's blockdata string - an EMPTY container
+                // is a simple snapshot and rides this path, so trusting
+                // "columnar means no container" let plain rollbacks place
+                // container blocks (#290). Counting happens at classify
+                // time so the worker only skips.
                 BitSet skipMask = null;
                 long protectedHere = 0;
                 long containersHere = 0;
                 if (!protectedMaterials.isEmpty() || !includeContainers) {
+                    java.util.HashMap<String, Material> materialCache = new java.util.HashMap<>();
                     skipMask = new BitSet(rangeEnd - cursor);
                     for (int k = cursor; k < rangeEnd; k++) {
                         int cellIdx = order[k];
                         String reason = blockCellSkip(world,
-                                cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx), null);
+                                cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx),
+                                replacementMaterial(cols.replData(cellIdx), materialCache));
                         if (reason != null) {
                             skipMask.set(k - cursor);
                             if (PROTECTED_SKIP.equals(reason)) {
@@ -1372,6 +1441,16 @@ public final class RollbackEngine {
                         // main thread via the single-block fallback.
                         writeColumnChunkMain(world, cols, order, cc);
                     } else {
+                        // Palette writes skip the block-entity lifecycle:
+                        // drop the entities they orphaned (#289, #299) and
+                        // register the ones the written tile states need.
+                        pruneStaleBlockEntities(world, cc.cx, cc.cz);
+                        if (cc.tileCells != null) {
+                            for (int[] cell : cc.tileCells) {
+                                ChunkDirectWriter.ensureBlockEntity(
+                                        world, cell[0], cell[1], cell[2]);
+                            }
+                        }
                         ChunkDirectWriter.finishChunk(cc.ctx);
                     }
                     // Direct writes never schedule fluid ticks; re-arm the
@@ -1464,6 +1543,26 @@ public final class RollbackEngine {
     // Worker-thread half: parse + write one chunk's cells from the columns.
     // No chunk-system access (prepareChunk already ran on main) — only the
     // locked LevelChunkSection write. Counts land on the work unit.
+    // Material of a lean-stream blockdata string, e.g.
+    // "minecraft:chest[facing=west]" -> CHEST, so the columnar gate can
+    // see what it is about to place (#290). Null-cached per distinct
+    // string; the palette is tiny so this is a handful of parses per
+    // batch.
+    private static @org.jetbrains.annotations.Nullable Material replacementMaterial(
+            String blockData, java.util.Map<String, Material> cache) {
+        if (blockData == null) {
+            return null;
+        }
+        Material cached = cache.get(blockData);
+        if (cached == null && !cache.containsKey(blockData)) {
+            int bracket = blockData.indexOf('[');
+            cached = Material.matchMaterial(
+                    (bracket >= 0 ? blockData.substring(0, bracket) : blockData).trim());
+            cache.put(blockData, cached);
+        }
+        return cached;
+    }
+
     private void writeColumnChunk(BlockColumns cols, int[] order, ColChunk cc) {
         if (cc.ctx == null) {
             return; // handled on the main thread in writeColumnChunkMain
@@ -1490,6 +1589,15 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(cc.ctx, null, x, y, z, bd);
+            // Rare on this path (post-#290 containers ride the object
+            // path), but blank signs, skulls and the like are simple AND
+            // tile - remember them for main-thread registration (#289).
+            if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                if (cc.tileCells == null) {
+                    cc.tileCells = new java.util.ArrayList<>(4);
+                }
+                cc.tileCells.add(new int[]{x, y, z});
+            }
             applied++;
         }
         cc.applied = applied;
@@ -1543,6 +1651,11 @@ public final class RollbackEngine {
         volatile long unparseable;
         volatile long protectedCells;
         volatile long containerCells;
+        // Cells whose written state carries a block entity - the worker
+        // collects them so the main-thread post pass can register the
+        // entities a palette write skips (#289). Written by exactly one
+        // worker, read after its future completes.
+        java.util.List<int[]> tileCells;
 
         ColChunk(int cx, int cz, int from, int rangeEnd,
                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
