@@ -40,6 +40,7 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
 import net.medievalrp.spyglass.plugin.util.ChunkResender;
+import net.medievalrp.spyglass.plugin.util.FluidTickScheduler;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -594,6 +595,13 @@ public final class RollbackEngine {
                     }
                 }
                 ChunkDirectWriter.finishChunk(chunkCtx);
+                // Direct writes never schedule fluid ticks; re-arm the fluid
+                // engine over this chunk's cells and their shell (#270).
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = i; j < chunkEnd; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
                 // Direct NMS writes skip the per-block packet queue,
                 // so push the new chunk to viewers ourselves.
                 try {
@@ -927,6 +935,15 @@ public final class RollbackEngine {
                 }
             }
             ChunkDirectWriter.finishChunk(work.ctx);
+            // Direct writes never schedule fluid ticks; re-arm the fluid
+            // engine over this chunk's cells and their shell (#270).
+            if (writes != null) {
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = 0; j < writes.length; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(from + j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
+            }
             // Direct NMS writes skip the per-block packet queue, so push
             // the new chunk to viewers ourselves.
             try {
@@ -1166,6 +1183,13 @@ public final class RollbackEngine {
                         writeColumnChunkMain(world, cols, order, cc);
                     } else {
                         ChunkDirectWriter.finishChunk(cc.ctx);
+                    }
+                    // Direct writes never schedule fluid ticks; re-arm the
+                    // fluid engine over this chunk's cells and shell (#270).
+                    FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                    for (int k = cc.from; k < cc.rangeEnd; k++) {
+                        int cellIdx = order[k];
+                        fluids.touch(cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx));
                     }
                     try {
                         ChunkResender.resend(world, cc.cx, cc.cz);
@@ -1701,6 +1725,10 @@ public final class RollbackEngine {
         // contract as forceWriteCell.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
         applySnapshot(block, effect.replacement());
+        // applySnapshot writes with applyPhysics=false; re-arm the fluid
+        // engine around the cell (#270).
+        FluidTickScheduler.touchSingle(world.get(),
+                effect.location().x(), effect.location().y(), effect.location().z());
         return appliedWithInverse(effect);
     }
 
