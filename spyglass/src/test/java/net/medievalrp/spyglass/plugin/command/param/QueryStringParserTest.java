@@ -109,6 +109,30 @@ class QueryStringParserTest {
         assertThat(request.predicates()).hasSize(2);
     }
 
+    // ---- #287: rollback inclusion flags ----
+
+    @Test
+    void inclusionFlagsParseWithSingleOrDoubleDash() throws Exception {
+        SpyglassApi api = mock(SpyglassApi.class);
+        QueryRequest doubled = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "--containers --entities", 0);
+        assertThat(doubled.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS,
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+
+        QueryRequest single = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "-containers", 0);
+        assertThat(single.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS)
+                .doesNotContain(net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+
+        QueryRequest none = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "-g", 0);
+        assertThat(none.flags())
+                .doesNotContain(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS,
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+    }
+
     // ---- #150: ip: pre-resolution off the main thread ----
 
     @Test

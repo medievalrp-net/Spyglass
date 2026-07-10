@@ -92,7 +92,10 @@ public final class QueryStringParser {
                     continue;
                 }
                 if (token.startsWith("-")) {
-                    String name = token.substring(1).toLowerCase(java.util.Locale.ROOT);
+                    // Accept GNU-style double dashes too: --containers and
+                    // -containers are the same flag (#287).
+                    String name = token.substring(token.startsWith("--") ? 2 : 1)
+                            .toLowerCase(java.util.Locale.ROOT);
                     String flagValue = null;
                     int eq = name.indexOf('=');
                     if (eq >= 0) {
@@ -257,7 +260,8 @@ public final class QueryStringParser {
                  "ex", "extended",
                  "we", "worldedit",
                  "ord", "order",
-                 "nod", "nodefault" -> true;
+                 "nod", "nodefault",
+                 "containers", "entities" -> true;
             default -> false;
         };
     }
@@ -288,6 +292,9 @@ public final class QueryStringParser {
                 state.defaultRadiusSuppressed = true;
             }
             case "nc", "nochat" -> state.flags.add(Flag.NO_CHAT);
+            // #287: rollbacks skip containers and entities unless asked.
+            case "containers" -> state.flags.add(Flag.INCLUDE_CONTAINERS);
+            case "entities" -> state.flags.add(Flag.INCLUDE_ENTITIES);
             case "ex", "extended" -> state.flags.add(Flag.EXTENDED);
             case "we", "worldedit" -> {
                 if (!(sender instanceof Player player)) {
