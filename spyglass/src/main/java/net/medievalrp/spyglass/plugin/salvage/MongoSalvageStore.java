@@ -100,4 +100,9 @@ public final class MongoSalvageStore implements SalvageStore {
     public void delete(UUID id) {
         collection.deleteOne(Filters.eq("_id", id));
     }
+
+    @Override
+    public void deleteByRollback(UUID rollbackId) {
+        collection.deleteMany(Filters.eq("rollbackOpId", rollbackId));
+    }
 }

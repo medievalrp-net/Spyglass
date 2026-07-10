@@ -58,9 +58,15 @@ public final class UndoReferenceBson {
      * counts.
      */
     public record Reference(QueryRequest request, String mode, Instant ceiling,
-                            List<WorldBox> boxes, int applied, int skipped) {
+                            List<WorldBox> boxes, int applied, int skipped,
+                            @Nullable UUID salvageGroup) {
         public Reference {
             boxes = List.copyOf(boxes);
+        }
+
+        public Reference(QueryRequest request, String mode, Instant ceiling,
+                         List<WorldBox> boxes, int applied, int skipped) {
+            this(request, mode, ceiling, boxes, applied, skipped, null);
         }
     }
 
@@ -79,12 +85,24 @@ public final class UndoReferenceBson {
 
     public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
                                       List<WorldBox> boxes, int applied, int skipped) {
+        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, null);
+    }
+
+    public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
+                                      List<WorldBox> boxes, int applied, int skipped,
+                                      @Nullable UUID salvageGroup) {
         BsonDocument doc = new BsonDocument();
         doc.append("v", new BsonInt32(2));
         doc.append("mode", new BsonString(mode));
         doc.append("ceiling", new BsonDateTime(ceiling.toEpochMilli()));
         doc.append("applied", new BsonInt32(applied));
         doc.append("skipped", new BsonInt32(skipped));
+        if (salvageGroup != null) {
+            // The salvage-group id the op captured containers under, so a
+            // clean undo can withdraw those snapshots from /sg inventory
+            // (#292). Optional: old blobs simply lack it.
+            doc.append("sg", new BsonBinary(salvageGroup, UuidRepresentation.STANDARD));
+        }
         BsonArray boxArray = new BsonArray();
         for (WorldBox box : boxes) {
             BsonDocument b = new BsonDocument();
@@ -160,8 +178,11 @@ public final class UndoReferenceBson {
                         bounds.get(5).asInt32().getValue()));
             }
         }
+        UUID salvageGroup = doc.containsKey("sg")
+                ? doc.getBinary("sg").asUuid(UuidRepresentation.STANDARD)
+                : null;
         return new Reference(new QueryRequest(predicates, sort, limit, flags, grouping),
-                mode, ceiling, boxes, applied, skipped);
+                mode, ceiling, boxes, applied, skipped, salvageGroup);
     }
 
     private static BsonDocument predicateToBson(QueryPredicate predicate) {

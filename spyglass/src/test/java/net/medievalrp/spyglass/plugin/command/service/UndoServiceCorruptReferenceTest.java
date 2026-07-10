@@ -79,7 +79,7 @@ class UndoServiceCorruptReferenceTest {
             List<Component> messages, String expectedFragment) {
         RollbackService rollbacks = mock(RollbackService.class);
         UndoService undo = new UndoService(mock(RollbackEngine.class), stack,
-                ServiceSupport.synchronous(), fakeConfig(), rollbacks);
+                ServiceSupport.synchronous(), fakeConfig(), rollbacks, null);
 
         // First /undo hits the unusable newest reference: it is reported
         // AND removed from the ledger.

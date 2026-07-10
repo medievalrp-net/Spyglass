@@ -120,6 +120,15 @@ public final class ClickHouseSalvageStore implements SalvageStore {
                 + "'', 0, 0, 0, '', '', " + now + ", '', 1, " + now + ")");
     }
 
+    @Override
+    public void deleteByRollback(UUID rollbackId) {
+        // Tombstone-insert per snapshot, matching delete(): the table is
+        // versioned, so a real DELETE mutation is both heavy and racy here.
+        for (SalvageSnapshot snapshot : listByRollback(rollbackId, 10_000)) {
+            delete(snapshot.id());
+        }
+    }
+
     private void insert(SalvageSnapshot s, boolean deleted) {
         execute("INSERT INTO " + table + " " + columns() + " VALUES ("
                 + "toUUID('" + s.id() + "'), "

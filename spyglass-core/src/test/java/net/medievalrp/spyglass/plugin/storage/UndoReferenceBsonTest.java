@@ -86,6 +86,26 @@ class UndoReferenceBsonTest {
         assertThat(nested.flags()).isEqualTo(pattern.flags());
     }
 
+    // The salvage-group id rides the reference so a clean undo can
+    // withdraw the op's salvage snapshots (#292); blobs without it
+    // decode to null (old references).
+    @Test
+    void roundTripsSalvageGroupAndToleratesItsAbsence() {
+        QueryRequest request = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "break")),
+                Sort.NEWEST_FIRST, 100, EnumSet.of(Flag.NO_GROUP), false);
+        UUID salvageGroup = UUID.randomUUID();
+
+        String with = UndoReferenceBson.encodeBase64(
+                request, "ROLLBACK", Instant.EPOCH, List.of(), 1, 0, salvageGroup);
+        assertThat(UndoReferenceBson.decodeBase64(with).salvageGroup())
+                .isEqualTo(salvageGroup);
+
+        String without = UndoReferenceBson.encodeBase64(
+                request, "ROLLBACK", Instant.EPOCH, List.of(), 1, 0);
+        assertThat(UndoReferenceBson.decodeBase64(without).salvageGroup()).isNull();
+    }
+
     @Test
     void rejectsUnknownVersions() {
         QueryRequest request = new QueryRequest(
