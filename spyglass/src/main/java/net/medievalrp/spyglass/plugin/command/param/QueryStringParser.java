@@ -96,11 +96,19 @@ public final class QueryStringParser {
                     // -containers are the same flag (#287).
                     String name = token.substring(token.startsWith("--") ? 2 : 1)
                             .toLowerCase(java.util.Locale.ROOT);
+                    // Value separator: '=' or ':', whichever comes first.
+                    // The docs and the rest of the query language use ':';
+                    // suggestions historically emitted '='. Accept both so
+                    // -ord:asc and -ord=asc are the same flag (#305).
                     String flagValue = null;
-                    int eq = name.indexOf('=');
-                    if (eq >= 0) {
-                        flagValue = name.substring(eq + 1);
-                        name = name.substring(0, eq);
+                    int sep = name.indexOf('=');
+                    int colonSep = name.indexOf(':');
+                    if (sep < 0 || (colonSep >= 0 && colonSep < sep)) {
+                        sep = colonSep;
+                    }
+                    if (sep >= 0) {
+                        flagValue = name.substring(sep + 1);
+                        name = name.substring(0, sep);
                     }
                     applyFlag(name, flagValue, sender, context, state);
                     continue;
@@ -142,6 +150,13 @@ public final class QueryStringParser {
                 state.predicates.add(predicate);
                 state.usedHandlerAliases.add(canonicalAlias(h));
                 if (h.suppressesDefaultRadius(alias)) {
+                    state.defaultRadiusSuppressed = true;
+                }
+                // A param that pins the query to explicit coordinates
+                // (trg:x,y,z) is its own region bound; stacking the
+                // sender-anchored default radius on top would silently
+                // exclude far-away targets (#305).
+                if (constrainsLocation(predicate)) {
                     state.defaultRadiusSuppressed = true;
                 }
                 if (h instanceof TimeParam) {
@@ -395,5 +410,25 @@ public final class QueryStringParser {
 
     private static String canonicalAlias(QueryParamHandler handler) {
         return handler.aliases().getFirst();
+    }
+
+    /**
+     * True when the predicate tree carries a positive {@code location.*}
+     * bound of its own (e.g. the {@code trg:x,y,z} coordinate form). A
+     * negated location constraint does not bound the query, so {@code Not}
+     * never counts; an {@code Or} only counts when every branch is bounded.
+     */
+    private static boolean constrainsLocation(QueryPredicate predicate) {
+        return switch (predicate) {
+            case QueryPredicate.Eq eq -> eq.field().startsWith("location.");
+            case QueryPredicate.Range range -> range.field().startsWith("location.");
+            case QueryPredicate.In in -> in.field().startsWith("location.");
+            case QueryPredicate.Exists exists -> false;
+            case QueryPredicate.Not not -> false;
+            case QueryPredicate.And and ->
+                    and.predicates().stream().anyMatch(QueryStringParser::constrainsLocation);
+            case QueryPredicate.Or or -> !or.predicates().isEmpty()
+                    && or.predicates().stream().allMatch(QueryStringParser::constrainsLocation);
+        };
     }
 }

@@ -52,9 +52,19 @@ public final class RolledSynthesis {
     private static final int MAX_OPS_PER_SEARCH = 256;
 
     private final RecordStore store;
+    // Material names whose block state is a container, injected by the
+    // plugin from the same registry scan the engine's #287 gate uses.
+    // Empty when the caller has no registry (tests, exotic wiring):
+    // container-flavored receipts then depend on the effect shape alone.
+    private final Set<String> containerMaterials;
 
     public RolledSynthesis(RecordStore store) {
+        this(store, Set.of());
+    }
+
+    public RolledSynthesis(RecordStore store, Set<String> containerMaterials) {
         this.store = store;
+        this.containerMaterials = Set.copyOf(containerMaterials);
     }
 
     /**
@@ -205,6 +215,13 @@ public final class RolledSynthesis {
                 Math.max(request.limit(), 1), EnumSet.of(Flag.NO_GROUP), false);
 
         boolean rollback = "ROLLBACK".equalsIgnoreCase(ref.mode());
+        // Coverage must honor the op's inclusion flags (#302): without
+        // --containers the engine gate-skips every container cell and
+        // transaction, so an op stored without the flag never touched
+        // them and must not get receipts claiming it did. The live-state
+        // guard (#264) and slot-drift skips stay invisible here - those
+        // still over-report until skip outcomes are persisted.
+        boolean includedContainers = ref.request().flags().contains(Flag.INCLUDE_CONTAINERS);
         String operator = op.source() == null ? null : op.source().playerName();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operator == null ? "console" : operator);
@@ -212,11 +229,36 @@ public final class RolledSynthesis {
             if (!(original instanceof Rollbackable rollbackable)) {
                 continue;
             }
+            if (!includedContainers && coversContainer(rollbackable, rollback)) {
+                continue;
+            }
             EventRecord virtual = toRolled(op, rollback, source, origin, original, rollbackable);
             if (virtual != null && PredicateEvaluator.matchesAll(request.predicates(), virtual)) {
                 out.add(virtual);
             }
         }
+    }
+
+    /**
+     * True when reversing this record would have hit the #287 container
+     * gate: a container transaction, or a block write that places or
+     * removes a container-material block.
+     */
+    private boolean coversContainer(Rollbackable rollbackable, boolean rollback) {
+        var effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
+        if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite) {
+            return true;
+        }
+        if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace) {
+            return isContainerMaterial(replace.replacement())
+                    || isContainerMaterial(replace.expectedCurrent());
+        }
+        return false;
+    }
+
+    private boolean isContainerMaterial(net.medievalrp.spyglass.api.event.BlockSnapshot snapshot) {
+        return snapshot != null && snapshot.material() != null
+                && containerMaterials.contains(snapshot.material().name());
     }
 
     private static @Nullable EventRecord toRolled(RollbackOpRecord op, boolean rollback,

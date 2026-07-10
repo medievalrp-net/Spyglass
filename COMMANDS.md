@@ -73,7 +73,7 @@ Values are plain terms. Wrap in double quotes to search for a value that contain
 | `before:` | - | `t:12h before:6h` | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago |
 | `w:` | `world:` | `w:world_nether` | Restrict to one world |
 | `srv:` | `server:` | `srv:survival` | Restrict to one server name (multi-server setups) |
-| `trg:` | `target:` | `trg:100,64,200` | Specific block coords `x,y,z` |
+| `trg:` | `target:` | `trg:100,64,200` · `trg:chest` | Coords `x,y,z` pin the query to that single block (no default radius). Any other value is a case-insensitive substring match on the record's target |
 | `ip:` | - | `ip:192.168.1.10` | Source IP. Requires the `spyglass.search.ip` permission |
 
 ### Flags
@@ -84,11 +84,11 @@ Flags start with `-` and take no value unless noted.
 |---|---|---|
 | `-g` | `-global` | Skip the default radius for a whole-world or whole-server search |
 | `-we` | `-worldedit` | Use your active WorldEdit selection as the region |
-| `-ord:<asc\|desc>` | `-order:` | Sort order. Default is newest first for search and rollback, oldest first for restore |
+| `-ord:<asc\|desc>` | `-order:` | Search sort order (newest first by default). `-ord:asc` and `-ord=asc` both work. Rollback and restore ignore it: they force newest-first / oldest-first, or the apply order would corrupt the result |
 | `-ng` | `-nogroup` | Don't merge duplicate adjacent events in the result list |
 | `-nc` | `-nochat` | Don't echo the summary line to chat (action-bar only) |
 | `-ex` | `-extended` | Include extra detail columns in the result list |
-| `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` runs with no radius or time bound |
+| `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` (or `-nod=r,t`) runs with no radius or time bound |
 | `--containers` | `-containers` | Rollback/restore also touches containers. Without it, a rollback never places a container block, never overwrites a live one, and never reverts deposits/withdrawals |
 | `--entities` | `-entities` | Rollback/restore also spawns/removes entities. Without it, death records are left alone |
 

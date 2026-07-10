@@ -58,9 +58,23 @@ public final class UndoReferenceBson {
      * counts.
      */
     public record Reference(QueryRequest request, String mode, Instant ceiling,
-                            List<WorldBox> boxes, int applied, int skipped) {
+                            List<WorldBox> boxes, int applied, int skipped,
+                            @Nullable UUID salvageGroup,
+                            java.util.Map<UUID, UUID> entityAliases) {
         public Reference {
             boxes = List.copyOf(boxes);
+            entityAliases = java.util.Map.copyOf(entityAliases);
+        }
+
+        public Reference(QueryRequest request, String mode, Instant ceiling,
+                         List<WorldBox> boxes, int applied, int skipped) {
+            this(request, mode, ceiling, boxes, applied, skipped, null, java.util.Map.of());
+        }
+
+        public Reference(QueryRequest request, String mode, Instant ceiling,
+                         List<WorldBox> boxes, int applied, int skipped,
+                         @Nullable UUID salvageGroup) {
+            this(request, mode, ceiling, boxes, applied, skipped, salvageGroup, java.util.Map.of());
         }
     }
 
@@ -79,12 +93,44 @@ public final class UndoReferenceBson {
 
     public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
                                       List<WorldBox> boxes, int applied, int skipped) {
+        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, null, java.util.Map.of());
+    }
+
+    public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
+                                      List<WorldBox> boxes, int applied, int skipped,
+                                      @Nullable UUID salvageGroup) {
+        return encodeBase64(request, mode, ceiling, boxes, applied, skipped, salvageGroup,
+                java.util.Map.of());
+    }
+
+    public static String encodeBase64(QueryRequest request, String mode, Instant ceiling,
+                                      List<WorldBox> boxes, int applied, int skipped,
+                                      @Nullable UUID salvageGroup,
+                                      java.util.Map<UUID, UUID> entityAliases) {
         BsonDocument doc = new BsonDocument();
         doc.append("v", new BsonInt32(2));
         doc.append("mode", new BsonString(mode));
         doc.append("ceiling", new BsonDateTime(ceiling.toEpochMilli()));
         doc.append("applied", new BsonInt32(applied));
         doc.append("skipped", new BsonInt32(skipped));
+        if (salvageGroup != null) {
+            // The salvage-group id the op captured containers under, so a
+            // clean undo can withdraw those snapshots from /sg inventory
+            // (#292). Optional: old blobs simply lack it.
+            doc.append("sg", new BsonBinary(salvageGroup, UuidRepresentation.STANDARD));
+        }
+        if (entityAliases != null && !entityAliases.isEmpty()) {
+            // (original dead entity id -> freshly spawned id) pairs, so an
+            // undo can remove resurrected entities whose spawn minted a
+            // new uuid (#294). Optional: old blobs simply lack it.
+            BsonArray aliases = new BsonArray();
+            for (java.util.Map.Entry<UUID, UUID> alias : entityAliases.entrySet()) {
+                aliases.add(new BsonDocument(
+                        "o", new BsonBinary(alias.getKey(), UuidRepresentation.STANDARD))
+                        .append("f", new BsonBinary(alias.getValue(), UuidRepresentation.STANDARD)));
+            }
+            doc.append("ea", aliases);
+        }
         BsonArray boxArray = new BsonArray();
         for (WorldBox box : boxes) {
             BsonDocument b = new BsonDocument();
@@ -160,8 +206,20 @@ public final class UndoReferenceBson {
                         bounds.get(5).asInt32().getValue()));
             }
         }
+        UUID salvageGroup = doc.containsKey("sg")
+                ? doc.getBinary("sg").asUuid(UuidRepresentation.STANDARD)
+                : null;
+        java.util.Map<UUID, UUID> entityAliases = new java.util.HashMap<>();
+        if (doc.containsKey("ea")) {
+            for (BsonValue value : doc.getArray("ea")) {
+                BsonDocument alias = value.asDocument();
+                entityAliases.put(
+                        alias.getBinary("o").asUuid(UuidRepresentation.STANDARD),
+                        alias.getBinary("f").asUuid(UuidRepresentation.STANDARD));
+            }
+        }
         return new Reference(new QueryRequest(predicates, sort, limit, flags, grouping),
-                mode, ceiling, boxes, applied, skipped);
+                mode, ceiling, boxes, applied, skipped, salvageGroup, entityAliases);
     }
 
     private static BsonDocument predicateToBson(QueryPredicate predicate) {
@@ -261,6 +319,11 @@ public final class UndoReferenceBson {
             case Boolean b -> new BsonDocument("b", new BsonBoolean(b));
             case UUID u -> new BsonDocument("u", new BsonBinary(u, UuidRepresentation.STANDARD));
             case Instant t -> new BsonDocument("ts", new BsonDateTime(t.toEpochMilli()));
+            // Substring params (trg:, iname:, ilore:, itags:, m:, ench:, cu:)
+            // parse to Pattern values; without this envelope every such key
+            // killed rollback/restore at the resume-store persist (#301).
+            case java.util.regex.Pattern p -> new BsonDocument("re", new BsonString(p.pattern()))
+                    .append("rf", new BsonInt32(p.flags()));
             default -> throw new IllegalStateException(
                     "Unsupported predicate value type: " + value.getClass().getName());
         };
@@ -280,6 +343,8 @@ public final class UndoReferenceBson {
             case "b" -> doc.getBoolean("b").getValue();
             case "u" -> doc.getBinary("u").asUuid(UuidRepresentation.STANDARD);
             case "ts" -> Instant.ofEpochMilli(doc.getDateTime("ts").getValue());
+            case "re" -> java.util.regex.Pattern.compile(doc.getString("re").getValue(),
+                    doc.getInt32("rf").getValue());
             default -> throw new IllegalStateException("Unknown value envelope: " + key);
         };
     }

@@ -37,6 +37,13 @@ public interface SalvageStore {
     /** Remove an emptied snapshot. */
     void delete(UUID id);
 
+    /**
+     * Remove every snapshot one rollback captured. A clean undo restores
+     * those containers with their contents, so the snapshots must stop
+     * being claimable or the items exist twice (#292).
+     */
+    void deleteByRollback(UUID rollbackId);
+
     /** Best-effort release of any backend resources. */
     default void close() {
     }

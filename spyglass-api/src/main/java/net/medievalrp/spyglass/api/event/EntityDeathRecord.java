@@ -58,7 +58,8 @@ public record EntityDeathRecord(
         if (!resurrectable()) {
             return null;
         }
-        return new RollbackEffect.EntitySpawn(location, entityType, entityNbt);
+        return new RollbackEffect.EntitySpawn(location, entityType, entityNbt,
+                entityId == null ? null : entityId.toString());
     }
 
     @Override

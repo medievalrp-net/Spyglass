@@ -278,7 +278,9 @@ public final class SpyglassPlugin extends JavaPlugin {
                 // search, the public API, IP resolution — behind the
                 // same merge; writes and the rollback's streaming page
                 // reads delegate untouched.
-                recordStore = new SynthesizingRecordStore(recordStore, true);
+                recordStore = new SynthesizingRecordStore(recordStore, true,
+                        net.medievalrp.spyglass.plugin.rollback.RollbackEngine
+                                .containerMaterialNames());
             }
             getLogger().info("Spyglass: backend = " + config.database().backend()
                     + (config.storage().rolledAuditSynthesized()
@@ -432,7 +434,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new EntityDoorBreakListener(recorder, support),
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
-                new ShulkerTransactionListener(recorder, support),
+                new ShulkerTransactionListener(recorder, support,
+                        task -> getServer().getScheduler().runTask(this, task)),
                 new BundleTransactionListener(recorder, support, this),
                 new CrafterListener(recorder, support),
                 new SculkListener(recorder, support),
@@ -603,7 +606,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             }
         }
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport, config,
-                rollbackService);
+                rollbackService, salvageStore);
         net.medievalrp.spyglass.plugin.command.service.RbqueueService rbqueueService =
                 new net.medievalrp.spyglass.plugin.command.service.RbqueueService(
                         rollbackQueue, resumeStore, rollbackService, serviceSupport);

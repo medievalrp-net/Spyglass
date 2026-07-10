@@ -90,6 +90,106 @@ class RolledSynthesisTest {
                 new QueryPredicate.Eq("event", "break"));
     }
 
+    // The default search and the wand render aggregations when grouping is
+    // on; receipts that only reach records() are invisible there. The
+    // decorator must fold them into the grouped side too, counted per
+    // (event, target, operator).
+    @Test
+    void groupedQueriesSeeSynthesizedReceiptsAsAggregations() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(griefBreak(1), griefBreak(2)));
+        store.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+        SynthesizingRecordStore wrapped = new SynthesizingRecordStore(store, true);
+
+        QueryRequest grouped = new QueryRequest(
+                List.of(new QueryPredicate.Eq("location.worldId", WORLD)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100, EnumSet.noneOf(Flag.class), true);
+        QueryResult result = wrapped.query(grouped);
+
+        assertThat(result.aggregations())
+                .anyMatch(aggregation -> "rolled-place".equals(aggregation.sample().event())
+                        && aggregation.count() == 2);
+
+        // Ungrouped requests keep the store's aggregation list untouched.
+        QueryRequest ungrouped = new QueryRequest(
+                List.of(new QueryPredicate.Eq("location.worldId", WORLD)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100, EnumSet.noneOf(Flag.class), false);
+        assertThat(wrapped.query(ungrouped).aggregations()).isEmpty();
+    }
+
+    // ---- #302: coverage honors the op's inclusion flags ----
+
+    private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x) {
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot chest = new BlockSnapshot(Material.CHEST, "minecraft:chest",
+                List.of(), List.of(), List.of(), List.of(), null);
+        return new net.medievalrp.spyglass.api.event.BlockPlaceRecord(UUID.randomUUID(), "place",
+                GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0),
+                "test", "CHEST", air, chest);
+    }
+
+    private static net.medievalrp.spyglass.api.event.ContainerDepositRecord deposit(int x) {
+        return new net.medievalrp.spyglass.api.event.ContainerDepositRecord(UUID.randomUUID(),
+                "deposit", GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0), "test",
+                "DIRT", "CHEST", 0, 8, null,
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "DIRT", "", null, List.of(), List.of(), null));
+    }
+
+    private static QueryRequest griefQueryWithFlags(Flag... flags) {
+        EnumSet<Flag> set = EnumSet.noneOf(Flag.class);
+        set.addAll(List.of(flags));
+        return new QueryRequest(
+                List.of(new QueryPredicate.Eq("source.playerId", GRIEFER)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 100, set, false);
+    }
+
+    @Test
+    void opWithoutContainersFlagGetsNoContainerBlockReceipt() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(chestPlace(1)));
+        store.save(List.of(op(griefQueryWithFlags(), "ROLLBACK", OP_TIME)));
+
+        // The engine's gate skipped this chest cell, so the audit must
+        // not claim the op broke it (#302).
+        assertThat(new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD))))
+                .isEmpty();
+    }
+
+    @Test
+    void opWithContainersFlagKeepsTheReceipt() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(chestPlace(1)));
+        store.save(List.of(op(griefQueryWithFlags(Flag.INCLUDE_CONTAINERS), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("CHEST");
+    }
+
+    @Test
+    void opWithoutContainersFlagGetsNoTransactionReceipt() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(deposit(1)));
+        store.save(List.of(op(griefQueryWithFlags(), "ROLLBACK", OP_TIME)));
+
+        // ContainerSlotWrite effects are container-gated by shape alone -
+        // no material set needed.
+        assertThat(new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD))))
+                .isEmpty();
+    }
+
     @Test
     void synthesizesRolledPlaceMirroringEngineReceipts() {
         MemoryStore store = new MemoryStore();

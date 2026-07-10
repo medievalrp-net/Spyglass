@@ -194,8 +194,9 @@ public final class ClickHouseRecordStore implements RecordStore {
     // The strictly-needed columns to build a RollbackEffect (#67). Drops
     // everything streamRollbackEffects never reads vs ROLLBACK_COLUMNS:
     // expires_at, origin_*, all source_*, server, target, plus the
-    // container_type/amount and entity killer/damage columns that the
-    // effect constructors ignore.
+    // amount and entity killer/damage columns that the effect
+    // constructors ignore. container_type IS read: it is what lets the
+    // apply path find entity-held inventories again (#293).
     //
     // Direction-specific (read-churn cut): force-overwrite (#69) never reads
     // the expected (other) side of a block edit, so a rollback fetches only
@@ -208,7 +209,7 @@ public final class ClickHouseRecordStore implements RecordStore {
             "id", "event", "occurred",
             "location_world_id", "location_world_name",
             "location_x", "location_y", "location_z",
-            "slot", "before_item", "after_item",
+            "slot", "container_type", "before_item", "after_item",
             // killer_type gates death resurrection (#284): only player
             // kills produce effects, so the stream now reads it.
             "entity_type", "entity_id", "entity_nbt", "entity_killer_type");
@@ -801,9 +802,10 @@ public final class ClickHouseRecordStore implements RecordStore {
             int slot = row.getInteger("slot");
             StoredItem before = BsonBlobs.decodeStoredItem(row.getString("before_item"));
             StoredItem after = BsonBlobs.decodeStoredItem(row.getString("after_item"));
+            String containerType = row.getString("container_type");
             sink.complex(rollback
-                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before)
-                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after), occurred, id);
+                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before, containerType)
+                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after, containerType), occurred, id);
             return;
         }
         if (clazz == EntityDeathRecord.class) {
@@ -818,8 +820,10 @@ public final class ClickHouseRecordStore implements RecordStore {
             BlockLocation location = readLocation(row);
             String entityType = row.getString("entity_type");
             if (rollback) {
+                UUID originalId = row.getUUID("entity_id");
                 sink.complex(new RollbackEffect.EntitySpawn(location, entityType,
-                        row.getString("entity_nbt")), occurred, id);
+                        row.getString("entity_nbt"),
+                        originalId == null ? null : originalId.toString()), occurred, id);
             } else {
                 UUID entityId = row.getUUID("entity_id");
                 sink.complex(new RollbackEffect.EntityRemove(location, entityType,

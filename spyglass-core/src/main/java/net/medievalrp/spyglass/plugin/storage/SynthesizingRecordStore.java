@@ -25,8 +25,18 @@ public final class SynthesizingRecordStore implements RecordStore {
     private final boolean enabled;
 
     public SynthesizingRecordStore(RecordStore delegate, boolean enabled) {
+        this(delegate, enabled, java.util.Set.of());
+    }
+
+    /**
+     * @param containerMaterials material names whose block state is a
+     *     container, from the caller's registry - lets synthesis honor
+     *     an op's missing --containers flag for block writes too (#302)
+     */
+    public SynthesizingRecordStore(RecordStore delegate, boolean enabled,
+                                   java.util.Set<String> containerMaterials) {
         this.delegate = delegate;
-        this.synthesis = new RolledSynthesis(delegate);
+        this.synthesis = new RolledSynthesis(delegate, containerMaterials);
         this.enabled = enabled;
     }
 
@@ -101,6 +111,41 @@ public final class SynthesizingRecordStore implements RecordStore {
         if (merged.size() > request.limit()) {
             merged = merged.subList(0, request.limit());
         }
-        return new QueryResult(merged, base.aggregations());
+        // The default search and the wand render AGGREGATIONS when grouping
+        // is on, and the renderer only falls back to records() when the
+        // aggregation list is empty - so receipts merged into records()
+        // alone were invisible in every grouped view and only surfaced on
+        // queries that matched zero persisted rows (a:rolled-* searches).
+        // Fold the synthesized receipts into the grouped side too.
+        List<QueryResult.RecordAggregation> aggregations = base.aggregations();
+        if (request.grouping()) {
+            List<QueryResult.RecordAggregation> combined = new ArrayList<>(aggregations);
+            combined.addAll(aggregate(extra));
+            Comparator<QueryResult.RecordAggregation> aggByOccurred =
+                    Comparator.comparing(aggregation -> aggregation.sample().occurred());
+            combined.sort(request.sort() == Sort.OLDEST_FIRST
+                    ? aggByOccurred : aggByOccurred.reversed());
+            aggregations = combined;
+        }
+        return new QueryResult(merged, aggregations);
+    }
+
+    /**
+     * Group synthesized receipts the way the stores group persisted rows:
+     * one line per (event, target, operator), counted - "ROLLBACK broke
+     * STONE x64" instead of sixty-four rows.
+     */
+    private static List<QueryResult.RecordAggregation> aggregate(List<EventRecord> extra) {
+        java.util.LinkedHashMap<String, QueryResult.RecordAggregation> groups =
+                new java.util.LinkedHashMap<>();
+        for (EventRecord record : extra) {
+            String key = record.event() + '|' + record.target() + '|'
+                    + (record.origin() == null ? "" : record.origin().detail());
+            QueryResult.RecordAggregation existing = groups.get(key);
+            groups.put(key, existing == null
+                    ? new QueryResult.RecordAggregation(record, 1)
+                    : new QueryResult.RecordAggregation(existing.sample(), existing.count() + 1));
+        }
+        return List.copyOf(groups.values());
     }
 }

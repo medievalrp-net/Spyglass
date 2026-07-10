@@ -79,7 +79,7 @@ class UndoServiceCorruptReferenceTest {
             List<Component> messages, String expectedFragment) {
         RollbackService rollbacks = mock(RollbackService.class);
         UndoService undo = new UndoService(mock(RollbackEngine.class), stack,
-                ServiceSupport.synchronous(), fakeConfig(), rollbacks);
+                ServiceSupport.synchronous(), fakeConfig(), rollbacks, null);
 
         // First /undo hits the unusable newest reference: it is reported
         // AND removed from the ledger.
@@ -87,7 +87,7 @@ class UndoServiceCorruptReferenceTest {
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains(expectedFragment)
                         && line.contains("run /sg undo again"));
-        verify(rollbacks, never()).executeReplay(any(), any(), any(), any(), any());
+        verify(rollbacks, never()).executeReplay(any(), any(), any(), any(), any(), any());
         UndoStack.Popped next = stack.openLatest(playerId).orElseThrow();
         assertThat(((UndoStack.ReplayReference) next).referenceBase64())
                 .as("the poison row must be tombstoned so the older valid reference surfaces")
@@ -98,7 +98,8 @@ class UndoServiceCorruptReferenceTest {
         undo.execute(player);
         ArgumentCaptor<RollbackMode> mode = ArgumentCaptor.forClass(RollbackMode.class);
         verify(rollbacks).executeReplay(eq(player), any(QueryRequest.class),
-                mode.capture(), any(String.class), any(Runnable.class));
+                mode.capture(), any(String.class),
+                org.mockito.ArgumentMatchers.anyMap(), any(Runnable.class));
         assertThat(mode.getValue()).isEqualTo(RollbackMode.RESTORE);
     }
 
