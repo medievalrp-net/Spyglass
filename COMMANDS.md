@@ -106,7 +106,9 @@ Player-lit TNT records the igniter as the actor, so `p:<griefer>` searches and r
 /sg tool
 ```
 
-Toggles inspection mode. Left-click a block to see its full history, including blocks a previous rollback restored. Right-click to preview what is about to happen near it. Toggle off the same way.
+Toggles inspection mode. Left-click a block to see its history, including blocks a previous rollback restored. Right-click to preview what is about to happen near it. Toggle off the same way.
+
+The wand looks back `tool.lookback` (default `26w`), and the inspect header always names the window, e.g. `STONE at 100 64 200 (last 26w)`. An empty inspect means nothing happened *inside that window*; for anything older, or for more results than the cap shows, run `/sg search t:... trg:x,y,z` at the block.
 
 ## Rollback
 
