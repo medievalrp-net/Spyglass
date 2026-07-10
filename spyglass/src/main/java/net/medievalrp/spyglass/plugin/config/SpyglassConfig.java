@@ -135,9 +135,10 @@ public record SpyglassConfig(
                 new Server(root.node("server", "name").getString("default")),
                 parseMetrics(root),
                 parseAnalytics(root),
-                // #250: /s as a third root alias, opt-in - single-letter
-                // roots collide with other plugins, so off by default.
-                new Commands(root.node("commands", "s-alias").getBoolean(false)));
+                // /s as a third root alias next to /spyglass and /sg. On by
+                // default (#279, reversing #250's opt-in); an operator whose
+                // server has another plugin claiming /s sets s-alias = false.
+                new Commands(root.node("commands", "s-alias").getBoolean(true)));
     }
 
     /**
