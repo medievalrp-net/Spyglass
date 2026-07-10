@@ -398,7 +398,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 // hopper listener since one listener carries both toggles.
                 new BucketListener(recorder, support, deferredSerializer, enabledEvents),
                 new FallingBlockLandListener(recorder, support),
-                new ContainerTransactionListener(recorder, support, deferredSerializer),
+                new ContainerTransactionListener(recorder, support, deferredSerializer,
+                        task -> getServer().getScheduler().runTask(this, task)),
                 new ContainerDragListener(recorder, support),
                 new ContainerInteractListener(recorder, support),
                 new BlockUseListener(recorder, support),
