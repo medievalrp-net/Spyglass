@@ -209,7 +209,9 @@ public final class ClickHouseRecordStore implements RecordStore {
             "location_world_id", "location_world_name",
             "location_x", "location_y", "location_z",
             "slot", "before_item", "after_item",
-            "entity_type", "entity_id", "entity_nbt");
+            // killer_type gates death resurrection (#284): only player
+            // kills produce effects, so the stream now reads it.
+            "entity_type", "entity_id", "entity_nbt", "entity_killer_type");
     private static final List<String> LEAN_ROLLBACK_BLOCK = List.of(
             "before_material", "before_blockdata", "before_extras");
     private static final List<String> LEAN_RESTORE_BLOCK = List.of(
@@ -805,6 +807,14 @@ public final class ClickHouseRecordStore implements RecordStore {
             return;
         }
         if (clazz == EntityDeathRecord.class) {
+            // Lockstep with EntityDeathRecord.resurrectable() (#284): only a
+            // player kill produces an effect in either direction; environment
+            // deaths stay searchable but never resurrect (or re-remove).
+            String killer = row.getString("entity_killer_type");
+            if (!"player".equalsIgnoreCase(killer)) {
+                sink.skip(occurred, id);
+                return;
+            }
             BlockLocation location = readLocation(row);
             String entityType = row.getString("entity_type");
             if (rollback) {
