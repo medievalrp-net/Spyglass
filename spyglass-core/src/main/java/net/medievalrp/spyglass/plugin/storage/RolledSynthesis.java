@@ -45,7 +45,8 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Internal
 public final class RolledSynthesis {
 
-    private static final Set<String> ROLLED_EVENTS = Set.of("rolled-place", "rolled-break");
+    private static final Set<String> ROLLED_EVENTS = Set.of(
+            "rolled-place", "rolled-break", "rolled-deposit", "rolled-withdraw");
     // Ops are rare (an operator action each); a search window with more
     // than this many is pathological — log-free clamp, newest first.
     private static final int MAX_OPS_PER_SEARCH = 256;
@@ -222,21 +223,42 @@ public final class RolledSynthesis {
                                                   Source source, Origin origin,
                                                   EventRecord original, Rollbackable rollbackable) {
         var effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
-        if (!(effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace)) {
-            // Receipts only ever covered block writes; container/entity
-            // effects never emitted them.
-            return null;
-        }
-        var after = replace.replacement();
-        boolean toAir = after == null
-                || "AIR".equals(after.material() == null ? "AIR" : after.material().name());
-        String event = toAir ? "rolled-break" : "rolled-place";
-        String target = after == null || after.material() == null
-                ? "AIR" : after.material().name();
         // Deterministic id: the same op covering the same record must
         // synthesize the same identity across repeated searches.
         UUID id = UUID.nameUUIDFromBytes(
                 (op.id() + ":" + original.id()).getBytes(StandardCharsets.UTF_8));
+        if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite csw) {
+            // A rollback that reverted a container transaction used to leave
+            // NO audit entry in either mode (#265). Synthesize the inverse
+            // transaction: clearing a slot is rolled-withdraw of what sat
+            // there, repopulating one is rolled-deposit of what came back.
+            var placed = csw.replacement();
+            var removed = csw.expectedCurrent();
+            String event = placed == null ? "rolled-withdraw" : "rolled-deposit";
+            String target = placed != null ? placed.material()
+                    : removed != null ? removed.material() : "UNKNOWN";
+            return new BlockUseRecord(id, event, op.occurred(), op.expiresAt(),
+                    origin, source, csw.location(), op.server(), target);
+        }
+        if (!(effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace)) {
+            // Entity effects still have no receipt shape.
+            return null;
+        }
+        var after = replace.replacement();
+        var destroyed = replace.expectedCurrent();
+        boolean toAir = after == null
+                || "AIR".equals(after.material() == null ? "AIR" : after.material().name());
+        String event = toAir ? "rolled-break" : "rolled-place";
+        // rolled-break names what was DESTROYED, not the air that replaced
+        // it - "ROLLBACK broke AIR" identified nothing (#269). rolled-place
+        // keeps naming what was placed.
+        String target;
+        if (toAir) {
+            target = destroyed == null || destroyed.material() == null
+                    ? "AIR" : destroyed.material().name();
+        } else {
+            target = after.material() == null ? "AIR" : after.material().name();
+        }
         return new BlockUseRecord(id, event, op.occurred(), op.expiresAt(),
                 origin, source, replace.location(), op.server(), target);
     }

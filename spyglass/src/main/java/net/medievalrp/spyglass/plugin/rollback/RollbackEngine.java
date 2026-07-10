@@ -1482,7 +1482,7 @@ public final class RollbackEngine {
                     if (r instanceof RollbackResult.Applied a
                             && a.effect() instanceof RollbackEffect.BlockReplace br) {
                         rolledRecords.add(buildRollbackSourceRecord(
-                                operatorName, br.location(), br.replacement()));
+                                operatorName, br.location(), br.expectedCurrent(), br.replacement()));
                     }
                 }
                 recorder.recordAll(rolledRecords);
@@ -1682,7 +1682,8 @@ public final class RollbackEngine {
     // carrying the before/after snapshot blobs that BlockPlaceRecord
     // would, which mattered: at 150 blocks the snapshot pairs combined
     // with FAWE's write buffer were enough to tip the heap into OOM.
-    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location, BlockSnapshot after) {
+    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location,
+                                                   BlockSnapshot destroyed, BlockSnapshot after) {
         Instant occurred = support.now();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operatorName);
@@ -1697,7 +1698,12 @@ public final class RollbackEngine {
         // Lowercase-hyphenated form matches shulker-open etc. and
         // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
         String event = toAir ? "rolled-break" : "rolled-place";
-        String target = (after == null ? Material.AIR : after.material()).name();
+        // rolled-break names what was DESTROYED, not the air that replaced
+        // it (#269); rolled-place keeps naming what was placed.
+        String target = toAir
+                ? (destroyed == null || destroyed.material() == null
+                        ? Material.AIR : destroyed.material()).name()
+                : after.material().name();
         return new BlockUseRecord(
                 ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
                 ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);

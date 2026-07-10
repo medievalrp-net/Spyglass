@@ -125,10 +125,12 @@ class RolledSynthesisTest {
         List<EventRecord> rolled = new RolledSynthesis(store)
                 .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
 
-        // Restoring a break re-applies it: the block becomes air.
+        // Restoring a break re-applies it: the block becomes air. The
+        // entry names the STONE that was re-broken, not the air that
+        // replaced it - "ROLLBACK broke AIR" identified nothing (#269).
         assertThat(rolled).hasSize(1);
         assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
-        assertThat(rolled.get(0).target()).isEqualTo("AIR");
+        assertThat(rolled.get(0).target()).isEqualTo("STONE");
     }
 
     @Test
