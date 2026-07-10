@@ -67,6 +67,7 @@ class SalvageWithdrawalsTest {
 
         UUID id = UUID.randomUUID();
         SalvageSnapshot snap = snapshotWithOneItem(id, 5);
+        when(store.get(id)).thenReturn(java.util.Optional.of(snap));
         Player player = playerWithRoom();
         ItemStack diamond = oneDiamond();
 
@@ -79,7 +80,9 @@ class SalvageWithdrawalsTest {
             verify(store, never()).delete(any());
 
             // Second take on the same slot before the write settles: refused, and
-            // the player is not given a second diamond.
+            // the player is not given a second diamond. (The store still returns
+            // the old snapshot - the write hasn't landed - so the in-flight mark
+            // is what stands between the click and a dupe here.)
             SalvageWithdrawals.Outcome second = withdrawals.withdraw(player, snap, 0);
             assertThat(second.status()).isEqualTo(SalvageWithdrawals.Status.REFUSED);
             verify(player.getInventory()).addItem(any(ItemStack.class)); // exactly once
@@ -87,6 +90,39 @@ class SalvageWithdrawalsTest {
             // Settle the write: the slot clears and the store is mutated once.
             pending.forEach(Runnable::run);
             verify(store).delete(id);
+        }
+    }
+
+    // #291: a GUI window that missed its refresh keeps offering a stack
+    // that was already taken and persisted. The stale view must not pay
+    // again - the store is the authority.
+    @Test
+    void staleViewCannotTakeAnAlreadyPersistedSlot() {
+        SalvageStore store = mock(SalvageStore.class);
+        Executor direct = Runnable::run;   // writes settle immediately
+        SalvageWithdrawals withdrawals =
+                new SalvageWithdrawals(store, direct, null, Logger.getLogger("test"));
+
+        UUID id = UUID.randomUUID();
+        SalvageSnapshot snap = snapshotWithOneItem(id, 5);
+        // First read sees the item; after the settled delete, the store has
+        // nothing left for this snapshot.
+        when(store.get(id)).thenReturn(java.util.Optional.of(snap))
+                .thenReturn(java.util.Optional.empty());
+        Player player = playerWithRoom();
+        ItemStack diamond = oneDiamond();
+
+        try (MockedStatic<ItemSerialization> ms = mockStatic(ItemSerialization.class)) {
+            ms.when(() -> ItemSerialization.decode(anyString())).thenReturn(diamond);
+
+            SalvageWithdrawals.Outcome first = withdrawals.withdraw(player, snap, 0);
+            assertThat(first.status()).isEqualTo(SalvageWithdrawals.Status.EMPTIED);
+            verify(store).delete(id);
+
+            // The stale window clicks the same rendered stack again.
+            SalvageWithdrawals.Outcome second = withdrawals.withdraw(player, snap, 0);
+            assertThat(second.status()).isEqualTo(SalvageWithdrawals.Status.EMPTIED);
+            verify(player.getInventory()).addItem(any(ItemStack.class)); // exactly once
         }
     }
 
@@ -100,6 +136,7 @@ class SalvageWithdrawalsTest {
 
         UUID id = UUID.randomUUID();
         SalvageSnapshot snap = snapshotWithOneItem(id, 5);
+        when(store.get(id)).thenReturn(java.util.Optional.of(snap));
         Player player = playerWithRoom();
         ItemStack diamond = oneDiamond();
 
