@@ -70,45 +70,79 @@ public final class SalvageWithdrawals {
     /**
      * Take the single item at {@code index} of {@code snap} into the player's
      * inventory (GUI path). Must run on the main thread.
+     *
+     * <p>{@code snap} only names the snapshot and the clicked slot; what is
+     * actually taken comes from a fresh store read. A GUI window that missed
+     * its refresh keeps offering stacks that were already taken, and trusting
+     * the caller's view turned one salvage entry into an unlimited printer
+     * (#291) - the store is the authority. The read is synchronous on the
+     * main thread; salvage clicks are human-rate and the by-id lookup is a
+     * primary-key hit on every backend.
      */
     Outcome withdraw(Player player, SalvageSnapshot snap, int index) {
         List<StoredItem> items = snap.items();
         if (index < 0 || index >= items.size()) {
             return new Outcome(Status.SKIPPED, snap);
         }
-        StoredItem storedItem = items.get(index);
-        int slot = storedItem.slot();
-        if (!inFlight.markInFlight(snap.id(), slot)) {
-            logger.fine("Spyglass salvage take refused: slot " + slot
-                    + " of snapshot " + snap.id() + " is already in-flight");
-            return new Outcome(Status.REFUSED, snap);
+        int slot = items.get(index).slot();
+        SalvageSnapshot fresh = store.get(snap.id()).orElse(null);
+        if (fresh == null) {
+            // Snapshot fully taken (or tombstoned by an undo, #292) since
+            // this view rendered.
+            return new Outcome(Status.EMPTIED, null);
         }
-        Taken taken = takeMarkedSlot(player, snap, storedItem);
+        int freshIndex = indexOfSlot(fresh.items(), slot);
+        if (freshIndex < 0) {
+            // This slot was already taken through another view.
+            return new Outcome(Status.SKIPPED, fresh);
+        }
+        StoredItem storedItem = fresh.items().get(freshIndex);
+        if (!inFlight.markInFlight(fresh.id(), slot)) {
+            logger.fine("Spyglass salvage take refused: slot " + slot
+                    + " of snapshot " + fresh.id() + " is already in-flight");
+            return new Outcome(Status.REFUSED, fresh);
+        }
+        Taken taken = takeMarkedSlot(player, fresh, storedItem);
         if (taken == null) {              // decoded to air/null - nothing to take
-            inFlight.clear(snap.id(), slot);
-            return new Outcome(Status.SKIPPED, snap);
+            inFlight.clear(fresh.id(), slot);
+            return new Outcome(Status.SKIPPED, fresh);
         }
         if (taken.amount() == 0) {        // inventory full
-            inFlight.clear(snap.id(), slot);
-            return new Outcome(Status.FULL, snap);
+            inFlight.clear(fresh.id(), slot);
+            return new Outcome(Status.FULL, fresh);
         }
-        List<StoredItem> updated = new ArrayList<>(items);
+        List<StoredItem> updated = new ArrayList<>(fresh.items());
         if (taken.leftover() == null) {
-            updated.remove(index);
+            updated.remove(freshIndex);
         } else {
-            updated.set(index, taken.leftover());
+            updated.set(freshIndex, taken.leftover());
         }
-        persist(snap.id(), updated, List.of(slot));
+        persist(fresh.id(), updated, List.of(slot));
         return updated.isEmpty()
                 ? new Outcome(Status.EMPTIED, null)
-                : new Outcome(Status.TAKEN, snap.withItems(updated));
+                : new Outcome(Status.TAKEN, fresh.withItems(updated));
+    }
+
+    private static int indexOfSlot(List<StoredItem> items, int slot) {
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).slot() == slot) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
      * Take every remaining item of {@code snap} into the player's inventory
      * (command path). Must run on the main thread; issues one store write.
+     * Re-reads the snapshot first for the same stale-view reason as
+     * {@link #withdraw} (#291).
      */
-    public BulkResult withdrawAll(Player player, SalvageSnapshot snap) {
+    public BulkResult withdrawAll(Player player, SalvageSnapshot staleSnap) {
+        SalvageSnapshot snap = store.get(staleSnap.id()).orElse(null);
+        if (snap == null) {
+            return new BulkResult(0, 0, true, false);
+        }
         List<StoredItem> leftovers = new ArrayList<>();
         List<Integer> marked = new ArrayList<>();
         int stacks = 0;
