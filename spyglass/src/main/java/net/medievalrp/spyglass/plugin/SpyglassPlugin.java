@@ -277,7 +277,9 @@ public final class SpyglassPlugin extends JavaPlugin {
                 // search, the public API, IP resolution — behind the
                 // same merge; writes and the rollback's streaming page
                 // reads delegate untouched.
-                recordStore = new SynthesizingRecordStore(recordStore, true);
+                recordStore = new SynthesizingRecordStore(recordStore, true,
+                        net.medievalrp.spyglass.plugin.rollback.RollbackEngine
+                                .containerMaterialNames());
             }
             getLogger().info("Spyglass: backend = " + config.database().backend()
                     + (config.storage().rolledAuditSynthesized()
