@@ -148,6 +148,17 @@ final class PredicateEvaluator {
             case "message" -> messageOf(record);
             case "commandLine" -> record instanceof CommandRecord c ? c.commandLine() : null;
             case "recipients" -> record instanceof ChatRecord c ? c.recipients() : null;
+            // The container's own material (#263). ClickHouse pushes this to
+            // its container_type column and Mongo to the BSON field; SQLite
+            // and MariaDB fold it into the blob, so the container-aware b:
+            // predicate lands here as a residual filter. Null on everything
+            // that is not a container transaction, which is what the b:
+            // predicate's Exists guard keys on.
+            case "containerType" -> switch (record) {
+                case ContainerDepositRecord c -> c.containerType();
+                case ContainerWithdrawRecord w -> w.containerType();
+                default -> null;
+            };
             default -> itemPathValue(record, field);
         };
     }

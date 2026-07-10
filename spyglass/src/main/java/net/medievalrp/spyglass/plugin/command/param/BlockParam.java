@@ -52,11 +52,32 @@ public final class BlockParam implements QueryParamHandler {
         return clauses.size() == 1 ? clauses.getFirst() : new QueryPredicate.And(clauses);
     }
 
-    private static QueryPredicate membership(List<String> names) {
-        if (names.size() == 1) {
-            return new QueryPredicate.Eq("target", names.getFirst());
-        }
-        return new QueryPredicate.In("target", names);
+    /**
+     * {@code block:X} means the BLOCK (#263). On container transactions the
+     * record's {@code target} is the moved ITEM and the container's own
+     * material lives in {@code containerType}, so a bare target match made
+     * {@code b:} an item filter (identical to {@code i:}) that could neither
+     * find nor exclude a chest's transactions - and {@code block:!chest}
+     * silently emptied the "protected" chest. Match {@code containerType}
+     * where the record has one, {@code target} otherwise.
+     *
+     * <p>Both branches carry an {@link QueryPredicate.Exists} guard: on the
+     * SQL backends {@code containerType} is a nullable column, and an
+     * unguarded {@code Not(Or(...))} evaluates to NULL for every plain block
+     * row under three-valued logic, silently dropping them from an exclude.
+     */
+    static QueryPredicate membership(List<String> names) {
+        QueryPredicate onContainer = names.size() == 1
+                ? new QueryPredicate.Eq("containerType", names.getFirst())
+                : new QueryPredicate.In("containerType", names);
+        QueryPredicate onTarget = names.size() == 1
+                ? new QueryPredicate.Eq("target", names.getFirst())
+                : new QueryPredicate.In("target", names);
+        return new QueryPredicate.Or(List.of(
+                new QueryPredicate.And(List.of(
+                        new QueryPredicate.Exists("containerType", true), onContainer)),
+                new QueryPredicate.And(List.of(
+                        new QueryPredicate.Exists("containerType", false), onTarget))));
     }
 
     @Override
