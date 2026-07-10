@@ -1457,7 +1457,6 @@ public final class RollbackEngine {
         long applied = 0;
         long changed = 0;
         long unparse = 0;
-        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
             if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
                 continue; // counted at classify time on the main thread
@@ -1482,7 +1481,6 @@ public final class RollbackEngine {
         cc.applied = applied;
         cc.blockChanged = changed;
         cc.unparseable = unparse;
-        cc.protectedCells = protectedCount;
     }
 
     // Main-thread fallback for a chunk whose prepareChunk failed: single
@@ -1490,7 +1488,6 @@ public final class RollbackEngine {
     private void writeColumnChunkMain(World world, BlockColumns cols, int[] order, ColChunk cc) {
         long applied = 0;
         long unparse = 0;
-        long protectedCount = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
             if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
                 continue; // counted at classify time on the main thread
@@ -1514,7 +1511,6 @@ public final class RollbackEngine {
         }
         cc.applied = applied;
         cc.unparseable = unparse;
-        cc.protectedCells = protectedCount;
     }
 
     // One chunk's columnar work unit: the [from, rangeEnd) slice of the
