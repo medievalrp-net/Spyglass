@@ -127,7 +127,11 @@ public record SpyglassConfig(
                         root.node("limits", "rollback-tick-budget-ms").getLong(15L)),
                 Map.copyOf(events),
                 commandRedact,
-                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
+                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false),
+                        // How far back the wand's inspect looks. A point query
+                        // on one block, already capped by limits.search-result,
+                        // so a long default is cheap (#271).
+                        Duration.parse(root.node("tool", "lookback").getString("26w"))),
                 new Server(root.node("server", "name").getString("default")),
                 parseMetrics(root),
                 parseAnalytics(root),
@@ -471,9 +475,10 @@ public record SpyglassConfig(
     public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds) {
     }
 
-    public record Tool(Material material) {
+    public record Tool(Material material, Duration lookback) {
         public Tool {
             material = material == null ? Material.REDSTONE_LAMP : material;
+            lookback = lookback == null ? Duration.parse("26w") : lookback;
         }
     }
 
