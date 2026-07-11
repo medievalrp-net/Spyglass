@@ -41,16 +41,16 @@ public record SpyglassConfig(
      * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
      * A config with an older {@code config-version} is migrated on load.
      */
-    public static final int CONFIG_VERSION = 4;
+    public static final int CONFIG_VERSION = 2;
 
-    // v1 -> v2: the bare database.uri/name/collection keys moved under a
-    // mongo { } block, and `name` became `database`.
-    // v2 -> v3: storage.durability removed with the wal-batched mode (#307);
-    // a null target drops the key. Map.of rejects null values, so the table
-    // is built by hand. Package-visible so ConfigMigratorTest exercises the
-    // real table instead of a mirror.
-    // v3 -> v4: storage.rolled-audit removed; synthesized is the only
-    // rollback-audit behavior (#312).
+    // v1 -> v2 (v1 = the unversioned format up through release 1.0.8; #311,
+    // #307, and #312 all land in one release, so they share one hop): the
+    // bare database.uri/name/collection keys moved under a mongo { } block
+    // with `name` becoming `database`, and storage.durability (#307) +
+    // storage.rolled-audit (#312) were removed - a null target drops the
+    // key. Map.of rejects null values, so the table is built by hand.
+    // Package-visible so ConfigMigratorTest exercises the real table
+    // instead of a mirror.
     static final Map<String, String> MIGRATION_REMAP;
 
     static {
@@ -97,6 +97,22 @@ public record SpyglassConfig(
             }
             plugin.getLogger().info("Spyglass: migrated config v" + version + " -> v" + CONFIG_VERSION
                     + "; previous file backed up to " + saved.getFileName());
+        } else {
+            // A hand-stamped config-version on an old-format file skips
+            // migration, so its pre-move keys would be silently ignored
+            // (e.g. bare database.uri no longer selects the Mongo target).
+            // Say so instead of misreading the operator's intent quietly.
+            ConfigurationNode current = root;
+            java.util.List<String> stale = MIGRATION_REMAP.keySet().stream()
+                    .filter(key -> !current.node((Object[]) key.split("\\.")).virtual())
+                    .sorted()
+                    .toList();
+            if (!stale.isEmpty()) {
+                plugin.getLogger().warning("Spyglass: config-version is current (" + version
+                        + ") but the file still contains pre-v" + CONFIG_VERSION + " keys "
+                        + stale + "; they are IGNORED. Remove the hand-set config-version"
+                        + " line to migrate them, or delete the old keys.");
+            }
         }
 
         // Auto-merge: any event present in the jar's default config.conf but missing from

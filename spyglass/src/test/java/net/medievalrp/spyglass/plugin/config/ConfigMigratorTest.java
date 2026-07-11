@@ -166,47 +166,58 @@ class ConfigMigratorTest {
         assertThat(written).contains("recommended for large servers");
     }
 
-    // The upgrade the wal-batched removal (#307) leans on: an operator who
-    // opted into the knob boots the new jar with every other setting intact
-    // and the dead key gone. Before v3 a leftover unrecognized durability
-    // value would have hard-disabled the plugin at config load.
+    // The upgrade the #307/#312 removals lean on: a 1.0.8 operator who opted
+    // into wal-batched durability and receipts rolled-audit (both removed)
+    // boots the new jar with every other setting intact and the dead keys
+    // gone. Before this, a leftover unrecognized durability value would have
+    // hard-disabled the plugin at config load.
     @Test
-    void versionTwoConfigWithWalBatchedMigratesCleanly() throws SerializationException {
+    void unversionedConfigWithBothRemovedKnobsMigratesCleanly() throws SerializationException {
         ConfigurationNode user = BasicConfigurationNode.root();
-        user.node("config-version").set(2);
         user.node("storage", "durability").set("wal-batched");
+        user.node("storage", "rolled-audit").set("receipts");
         user.node("storage", "retention").set("8w");
+        user.node("storage", "queue-max").set(250_000);
         user.node("database", "backend").set("clickhouse");
 
         ConfigurationNode template = freshV2Template();
         template.node("storage", "retention").set("26w");
+        template.node("storage", "queue-max").set(500_000);
         ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
 
         assertThat(template.node("storage", "durability").virtual()).isTrue();
+        assertThat(template.node("storage", "rolled-audit").virtual()).isTrue();
         assertThat(template.node("storage", "retention").getString()).isEqualTo("8w");
+        assertThat(template.node("storage", "queue-max").getInt()).isEqualTo(250_000);
         assertThat(template.node("database", "backend").getString()).isEqualTo("clickhouse");
         assertThat(template.node("config-version").getInt())
                 .isEqualTo(SpyglassConfig.CONFIG_VERSION);
     }
 
-    // Same shape for the v4 removal (#312): an operator who opted into
-    // receipts mode migrates to always-synthesized with the dead key
-    // dropped and everything else intact.
+    // A half-updated file (the operator pasted the new mongo block but left
+    // the old bare keys) must resolve to the explicit new-format value no
+    // matter which block comes first - not to whichever the overlay happens
+    // to visit last.
     @Test
-    void versionThreeConfigWithReceiptsRolledAuditMigratesCleanly() throws SerializationException {
-        ConfigurationNode user = BasicConfigurationNode.root();
-        user.node("config-version").set(3);
-        user.node("storage", "rolled-audit").set("receipts");
-        user.node("storage", "queue-max").set(250_000);
-
-        ConfigurationNode template = freshV2Template();
-        template.node("storage", "queue-max").set(500_000);
-        ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
-
-        assertThat(template.node("storage", "rolled-audit").virtual()).isTrue();
-        assertThat(template.node("storage", "queue-max").getInt()).isEqualTo(250_000);
-        assertThat(template.node("config-version").getInt())
-                .isEqualTo(SpyglassConfig.CONFIG_VERSION);
+    void halfUpdatedConfigKeepsTheExplicitNewFormatValueInEitherOrder() throws Exception {
+        String bareFirst = "database {\n"
+                + "  uri = \"mongodb://old.example:27017\"\n"
+                + "  mongo { uri = \"mongodb://new.example:27017\" }\n"
+                + "}\n";
+        String blockFirst = "database {\n"
+                + "  mongo { uri = \"mongodb://new.example:27017\" }\n"
+                + "  uri = \"mongodb://old.example:27017\"\n"
+                + "}\n";
+        for (String content : List.of(bareFirst, blockFirst)) {
+            ConfigurationNode user = HoconConfigurationLoader.builder()
+                    .source(() -> new java.io.BufferedReader(new java.io.StringReader(content)))
+                    .build().load();
+            ConfigurationNode template = freshV2Template();
+            ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
+            assertThat(template.node("database", "mongo", "uri").getString())
+                    .as("explicit mongo.uri wins over the relocated bare uri")
+                    .isEqualTo("mongodb://new.example:27017");
+        }
     }
 
     private static ConfigurationNode freshV2Template() throws SerializationException {
