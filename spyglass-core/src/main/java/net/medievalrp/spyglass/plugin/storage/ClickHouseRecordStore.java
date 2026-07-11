@@ -1252,8 +1252,8 @@ public final class ClickHouseRecordStore implements RecordStore {
      * wait_for_async_insert=0} (fire-and-forget), so an acked row sits in the
      * buffer for up to ~1s before a query can see it; the recorder calls this at
      * the end of a read-your-writes flush so a rollback issued right after a
-     * burst doesn't read a partial picture. Durability is already covered by the
-     * Spyglass WAL; this closes the visibility gap.
+     * burst doesn't read a partial picture. Persistence retry lives in the
+     * recorder's drain loop; this only closes the visibility gap.
      */
     @Override
     public void flushPendingWrites() {

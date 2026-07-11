@@ -41,14 +41,24 @@ public record SpyglassConfig(
      * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
      * A config with an older {@code config-version} is migrated on load.
      */
-    public static final int CONFIG_VERSION = 2;
+    public static final int CONFIG_VERSION = 3;
 
     // v1 -> v2: the bare database.uri/name/collection keys moved under a
     // mongo { } block, and `name` became `database`.
-    private static final Map<String, String> MIGRATION_REMAP = Map.of(
-            "database.uri", "database.mongo.uri",
-            "database.name", "database.mongo.database",
-            "database.collection", "database.mongo.collection");
+    // v2 -> v3: storage.durability removed with the wal-batched mode (#307);
+    // a null target drops the key. Map.of rejects null values, so the table
+    // is built by hand. Package-visible so ConfigMigratorTest exercises the
+    // real table instead of a mirror.
+    static final Map<String, String> MIGRATION_REMAP;
+
+    static {
+        Map<String, String> remap = new java.util.HashMap<>();
+        remap.put("database.uri", "database.mongo.uri");
+        remap.put("database.name", "database.mongo.database");
+        remap.put("database.collection", "database.mongo.collection");
+        remap.put("storage.durability", null);
+        MIGRATION_REMAP = java.util.Collections.unmodifiableMap(remap);
+    }
 
     public static SpyglassConfig load(JavaPlugin plugin) throws IOException {
         Path path = plugin.getDataFolder().toPath().resolve("config.conf");
@@ -151,7 +161,6 @@ public record SpyglassConfig(
                         root.node("storage", "spill-to-disk").getBoolean(true),
                         root.node("storage", "spill-drain-rate").getInt(20_000),
                         Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
-                        parseDurability(root.node("storage", "durability").getString("ram")),
                         "synthesized".equalsIgnoreCase(
                                 root.node("storage", "rolled-audit").getString("synthesized"))),
                 new Defaults(
@@ -388,43 +397,10 @@ public record SpyglassConfig(
      *                      window to recover a big backlog faster.
      * @param flushTimeout  upper bound on how long {@code onDisable} will
      *                      wait for the queue to drain before returning.
-     * @param durability    how aggressive the write path is about
-     *                      surviving hard JVM crashes. {@link
-     *                      Durability#RAM} (default) keeps the in-flight
-     *                      queue purely in memory — fast, but anything
-     *                      between event-fired and DB-acked is lost on
-     *                      power-cut / OOM / SIGKILL. {@link
-     *                      Durability#WAL_BATCHED} writes each drain
-     *                      batch to an append-only file with one
-     *                      {@code fsync} before pushing to the database
-     *                      and deletes it after the DB acks; on next
-     *                      startup any leftover files are replayed.
-     *                      One fsync amortised over a 512-row batch is
-     *                      cheap; per-event overhead is negligible.
      */
     public record Storage(Duration retention, int queueCapacity, int queueMax,
                           boolean spillToDisk, int spillDrainRate, Duration flushTimeout,
-                          Durability durability, boolean rolledAuditSynthesized) {
-    }
-
-    /**
-     * Crash-recovery contract for the in-flight ingest queue.
-     */
-    public enum Durability {
-        /**
-         * In-RAM queue only. Hard JVM crash loses everything queued
-         * but not yet pushed to the DB (typically the last ~250 ms
-         * of events). Fastest option; fine for community servers.
-         */
-        RAM,
-        /**
-         * Append-only write-ahead log per drain batch with one
-         * {@code fsync} before the DB push. Crash recovery replays
-         * any pending files on next startup. Right choice for
-         * servers that crash regularly or for compliance-style
-         * audit logs.
-         */
-        WAL_BATCHED
+                          boolean rolledAuditSynthesized) {
     }
 
     /**
@@ -503,16 +479,6 @@ public record SpyglassConfig(
         });
         return new net.medievalrp.spyglass.plugin.storage.RetentionPolicy(
                 storage.retention().seconds(), overrides);
-    }
-
-    private static Durability parseDurability(String raw) {
-        String key = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
-        return switch (key) {
-            case "wal_batched", "wal" -> Durability.WAL_BATCHED;
-            case "ram", "" -> Durability.RAM;
-            default -> throw new IllegalArgumentException(
-                    "Unknown storage.durability: " + raw + " (expected 'ram' or 'wal-batched')");
-        };
     }
 
     public record Defaults(boolean enabled, int radius, Duration time) {

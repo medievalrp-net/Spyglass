@@ -16,13 +16,11 @@ import org.jetbrains.annotations.ApiStatus;
  * <ul>
  *   <li>{@code event_records} — the primary forensic event log.
  *       ReplacingMergeTree keyed on {@code (event, occurred, id)} so
- *       WAL replay after a mid-batch crash deduplicates automatically
- *       on the next part merge; monthly partitions, {@code by_player}
- *       projection for player-scoped lookups, TTL on
+ *       a replayed batch (spill recovery after a crash) deduplicates
+ *       automatically on the next part merge; monthly partitions,
+ *       {@code by_player} projection for player-scoped lookups, TTL on
  *       {@code expires_at}. Reads see at-most-one duplicate per
- *       record id during the merge window — see {@link
- *       net.medievalrp.spyglass.plugin.pipeline.WalDurability}
- *       for the recovery contract.</li>
+ *       record id during the merge window.</li>
  *   <li>{@code undo_history} — per-player rollback ledger. MergeTree
  *       sorted by {@code (player_id, created_at)} for efficient pop;
  *       1-day TTL.</li>

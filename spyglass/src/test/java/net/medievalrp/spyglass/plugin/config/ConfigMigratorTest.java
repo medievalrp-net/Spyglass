@@ -16,11 +16,9 @@ import org.spongepowered.configurate.serialize.SerializationException;
 
 class ConfigMigratorTest {
 
-    // The v1 -> v2 remap, mirroring SpyglassConfig.MIGRATION_REMAP.
-    private static final Map<String, String> MONGO_REMAP = Map.of(
-            "database.uri", "database.mongo.uri",
-            "database.name", "database.mongo.database",
-            "database.collection", "database.mongo.collection");
+    // The production remap table - drift here would mean testing a migration
+    // the plugin never runs.
+    private static final Map<String, String> REMAP = SpyglassConfig.MIGRATION_REMAP;
 
     @Test
     void movesMongoKeysUnderTheBlockAndRenamesName() throws SerializationException {
@@ -31,7 +29,7 @@ class ConfigMigratorTest {
         user.node("database", "collection").set("Events");
 
         ConfigurationNode template = freshV2Template();
-        ConfigMigrator.migrate(user, template, MONGO_REMAP, 2);
+        ConfigMigrator.migrate(user, template, REMAP, 2);
 
         assertThat(template.node("database", "mongo", "uri").getString())
                 .isEqualTo("mongodb://db.internal:27017");
@@ -56,7 +54,7 @@ class ConfigMigratorTest {
         template.node("limits", "max-radius").set(500);   // new shipped default
         template.node("storage", "retention").set("26w");
 
-        ConfigMigrator.migrate(user, template, MONGO_REMAP, 2);
+        ConfigMigrator.migrate(user, template, REMAP, 2);
 
         assertThat(template.node("limits", "max-radius").getInt()).isEqualTo(250);
         assertThat(template.node("storage", "retention").getString()).isEqualTo("8w");
@@ -70,7 +68,7 @@ class ConfigMigratorTest {
         ConfigurationNode template = freshV2Template();
         template.node("metrics", "enabled").set(true);   // a key the old config never had
 
-        ConfigMigrator.migrate(user, template, MONGO_REMAP, 2);
+        ConfigMigrator.migrate(user, template, REMAP, 2);
 
         assertThat(template.node("server", "name").getString()).isEqualTo("lobby");
         assertThat(template.node("metrics", "enabled").getBoolean()).isTrue();
@@ -84,7 +82,7 @@ class ConfigMigratorTest {
         ConfigurationNode template = freshV2Template();
         template.node("events", "command", "redact").set(List.of("a", "b", "c", "d"));
 
-        ConfigMigrator.migrate(user, template, MONGO_REMAP, 2);
+        ConfigMigrator.migrate(user, template, REMAP, 2);
 
         assertThat(template.node("events", "command", "redact").getList(String.class))
                 .containsExactly("login", "reg");
@@ -126,7 +124,8 @@ class ConfigMigratorTest {
                     .build().load();
         }
 
-        // A pre-v2 on-disk config: bare mongo keys plus a value the operator kept.
+        // A pre-v2 on-disk config: bare mongo keys, a value the operator kept,
+        // and the durability knob v3 removed (#307).
         Path file = dir.resolve("config.conf");
         Files.writeString(file, "database {\n"
                 + "  backend = \"mongo\"\n"
@@ -134,12 +133,13 @@ class ConfigMigratorTest {
                 + "  name = \"ProdDb\"\n"
                 + "  collection = \"Events\"\n"
                 + "}\n"
+                + "storage { durability = \"wal-batched\" }\n"
                 + "limits { max-radius = 250 }\n");
         HoconConfigurationLoader loader = HoconConfigurationLoader.builder().path(file).build();
         ConfigurationNode user = loader.load();
 
         assertThat(ConfigMigrator.readVersion(user)).isEqualTo(1);
-        ConfigMigrator.migrate(user, template, MONGO_REMAP, 2);
+        ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
         loader.save(template);
 
         // Re-parse the written file: structure and values are correct.
@@ -155,13 +155,38 @@ class ConfigMigratorTest {
         assertThat(result.node("database", "uri").virtual()).isTrue();            // bare key relocated
         assertThat(result.node("database", "backend").getString()).isEqualTo("mongo");
         assertThat(result.node("limits", "max-radius").getInt()).isEqualTo(250);  // kept, not reset to 500
-        assertThat(result.node("config-version").getInt()).isEqualTo(2);
+        // The removed durability knob was dropped, not carried into the new file.
+        assertThat(result.node("storage", "durability").virtual()).isTrue();
+        assertThat(result.node("config-version").getInt()).isEqualTo(SpyglassConfig.CONFIG_VERSION);
 
         // The template's comments made it into the upgraded file - the reason we
         // rebuild from the template rather than editing the old file in place.
         String written = Files.readString(file);
         assertThat(written).contains("Storage backend");
         assertThat(written).contains("recommended for large servers");
+    }
+
+    // The upgrade the wal-batched removal (#307) leans on: an operator who
+    // opted into the knob boots the new jar with every other setting intact
+    // and the dead key gone. Before v3 a leftover unrecognized durability
+    // value would have hard-disabled the plugin at config load.
+    @Test
+    void versionTwoConfigWithWalBatchedMigratesCleanly() throws SerializationException {
+        ConfigurationNode user = BasicConfigurationNode.root();
+        user.node("config-version").set(2);
+        user.node("storage", "durability").set("wal-batched");
+        user.node("storage", "retention").set("8w");
+        user.node("database", "backend").set("clickhouse");
+
+        ConfigurationNode template = freshV2Template();
+        template.node("storage", "retention").set("26w");
+        ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
+
+        assertThat(template.node("storage", "durability").virtual()).isTrue();
+        assertThat(template.node("storage", "retention").getString()).isEqualTo("8w");
+        assertThat(template.node("database", "backend").getString()).isEqualTo("clickhouse");
+        assertThat(template.node("config-version").getInt())
+                .isEqualTo(SpyglassConfig.CONFIG_VERSION);
     }
 
     private static ConfigurationNode freshV2Template() throws SerializationException {

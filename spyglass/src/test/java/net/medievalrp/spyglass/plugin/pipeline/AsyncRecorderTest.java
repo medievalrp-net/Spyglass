@@ -323,7 +323,7 @@ class AsyncRecorderTest {
         int total = 5_000;
         GatedStore store = new GatedStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000L, queueMax, store,
                 () -> false, Logger.getLogger("test"));
         AtomicInteger admitted = new AtomicInteger();
         Thread producer = new Thread(() -> {
@@ -377,7 +377,7 @@ class AsyncRecorderTest {
         // thread, so completing the loop at all is the proof.
         GatedStore store = new GatedStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000L, 10L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000L, 10L, store,
                 () -> true, Logger.getLogger("test"));
         try {
             for (int i = 0; i < 100; i++) {
@@ -417,7 +417,7 @@ class AsyncRecorderTest {
         SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
         GatedStore store = new GatedStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000L, queueMax, store,
                 spill, () -> false, Logger.getLogger("test"));
         AtomicInteger submitted = new AtomicInteger();
         Thread producer = new Thread(() -> {
@@ -483,7 +483,7 @@ class AsyncRecorderTest {
         SpillBuffer spill = new SpillBuffer(dataFolder, true, Logger.getLogger("test"));
         GatedStore store = new GatedStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000L, 10L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000L, 10L, store,
                 spill, () -> true, Logger.getLogger("test")); // () -> true: every caller is "main"
         try {
             // Several main-thread batches: the first fills the queue past the
@@ -535,7 +535,7 @@ class AsyncRecorderTest {
         }
         SlowGatedStore store = new SlowGatedStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000_000L, queueMax, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000_000L, queueMax, store,
                 spill, () -> true, Logger.getLogger("test"));
         AtomicBoolean producing = new AtomicBoolean(true);
         Thread producer = new Thread(() -> {
@@ -592,7 +592,7 @@ class AsyncRecorderTest {
         }
         CapturingStore store = new CapturingStore();
         AsyncRecorder recorder = new AsyncRecorder(
-                1_000_000L, 1_000L, store, new WalDurability(null, false, Logger.getLogger("test")),
+                1_000_000L, 1_000L, store,
                 spill, () -> true, Logger.getLogger("test"));
         recorder.setSpillDrainRate(1L); // 1 record/sec — extremely slow on purpose
         try {
