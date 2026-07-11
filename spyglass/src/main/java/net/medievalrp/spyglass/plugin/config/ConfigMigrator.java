@@ -59,25 +59,29 @@ public final class ConfigMigrator {
     /**
      * Overlays the operator's values from {@code user} onto {@code template} and
      * stamps {@code toVersion}. {@code remaps} maps an old dotted key path to its
-     * new location; a null target drops the key. Lists and scalars are copied
-     * whole (so a list value replaces the default rather than index-merging with
-     * it); maps are recursed. Mutates and returns {@code template}.
+     * new location; a null target drops the key, and a relocation is skipped when
+     * the user's file already sets the new location explicitly (a half-updated
+     * config keeps the new-format value, whatever order its blocks are in).
+     * Lists and scalars are copied whole (so a list value replaces the default
+     * rather than index-merging with it); maps are recursed. Mutates and returns
+     * {@code template}.
      */
     public static ConfigurationNode migrate(ConfigurationNode user, ConfigurationNode template,
                                             Map<String, String> remaps, int toVersion)
             throws SerializationException {
-        overlay(user, template, remaps, new ArrayDeque<>());
+        overlay(user, user, template, remaps, new ArrayDeque<>());
         template.node("config-version").set(toVersion);
         return template;
     }
 
-    private static void overlay(ConfigurationNode node, ConfigurationNode template,
+    private static void overlay(ConfigurationNode userRoot, ConfigurationNode node,
+                                ConfigurationNode template,
                                 Map<String, String> remaps, Deque<Object> path)
             throws SerializationException {
         if (node.isMap()) {
             for (Map.Entry<Object, ? extends ConfigurationNode> child : node.childrenMap().entrySet()) {
                 path.addLast(child.getKey());
-                overlay(child.getValue(), template, remaps, path);
+                overlay(userRoot, child.getValue(), template, remaps, path);
                 path.removeLast();
             }
             return;
@@ -96,7 +100,14 @@ public final class ConfigMigrator {
             if (target == null) {
                 return;
             }
-            template.node((Object[]) target.split("\\.")).set(node.raw());
+            Object[] targetPath = target.split("\\.");
+            // The user's file may carry both the old key and an explicit value
+            // at its new location; the new-format value wins over relocation
+            // regardless of which block comes first in the file.
+            if (!userRoot.node(targetPath).virtual()) {
+                return;
+            }
+            template.node(targetPath).set(node.raw());
         } else {
             template.node(path.toArray()).set(node.raw());
         }
