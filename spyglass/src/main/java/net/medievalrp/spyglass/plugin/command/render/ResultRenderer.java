@@ -8,6 +8,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
@@ -56,6 +57,12 @@ public final class ResultRenderer {
     public Component renderAggregation(QueryResult.RecordAggregation aggregation,
                                        java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
                                        boolean showIp) {
+        return renderAggregation(aggregation, flags, showIp, false);
+    }
+
+    public Component renderAggregation(QueryResult.RecordAggregation aggregation,
+                                       java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                       boolean showIp, boolean rolledBack) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
         java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
@@ -65,21 +72,26 @@ public final class ResultRenderer {
         // skipped because any one sample.location() would be misleading.
         // The flags ride through so the drill-down click command can
         // carry the parent search's scope (notably -g) forward.
-        return line(sample, count, true, false, safe, showIp);
+        return line(sample, count, true, false, safe, showIp, rolledBack);
     }
 
     public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
                                   boolean showIp) {
+        return renderSingle(record, flags, showIp, false);
+    }
+
+    public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                  boolean showIp, boolean rolledBack) {
         java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
                 ? java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class)
                 : flags;
         boolean extended = safe.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
-        return line(record, 1, false, extended, safe, showIp);
+        return line(record, 1, false, extended, safe, showIp, rolledBack);
     }
 
     private Component line(EventRecord record, long count, boolean grouped, boolean extended,
                            java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
-                           boolean showIp) {
+                           boolean showIp, boolean rolledBack) {
         // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
         // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
@@ -165,7 +177,30 @@ public final class ResultRenderer {
                             .hoverEvent(HoverEvent.showText(
                                     Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
-        return builder.asComponent();
+        Component rendered = builder.asComponent();
+        // A reverted record renders muted + struck through so "already rolled
+        // back" reads at a glance, CoreProtect-style (#319). Applied to the
+        // finished tree so every colored span is overridden in one place.
+        return rolledBack ? mutedRolledBack(rendered) : rendered;
+    }
+
+    /**
+     * Recolor a finished row to gray and strike it through, overriding the
+     * per-span colors so the whole line reads as reverted. The click and
+     * hover ride in each node's style and survive the recolor; the hover
+     * tooltip is not a child, so it keeps its own colors.
+     */
+    private static Component mutedRolledBack(Component component) {
+        Component restyled = component.color(NamedTextColor.GRAY)
+                .decorate(TextDecoration.STRIKETHROUGH);
+        if (component.children().isEmpty()) {
+            return restyled;
+        }
+        List<Component> children = new ArrayList<>(component.children().size());
+        for (Component child : component.children()) {
+            children.add(mutedRolledBack(child));
+        }
+        return restyled.children(children);
     }
 
     /**

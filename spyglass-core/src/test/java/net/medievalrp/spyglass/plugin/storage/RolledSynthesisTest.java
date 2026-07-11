@@ -370,4 +370,97 @@ class RolledSynthesisTest {
                 EnumSet.of(Flag.NO_GROUP), false);
     }
 
+    // ---- #319: rolledBackAmong marks the ORIGINAL records a rollback reverted ----
+
+    private static QueryRequest playerLookup() {
+        return new QueryRequest(List.of(new QueryPredicate.Eq("source.playerId", GRIEFER)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST, 100,
+                EnumSet.of(Flag.NO_GROUP), false);
+    }
+
+    @Test
+    void rolledBackAmongMarksACoveredRecord() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+        BlockBreakRecord grief = griefBreak(1);
+
+        assertThat(new RolledSynthesis(store)
+                .rolledBackAmong(request(new QueryPredicate.Eq("location.worldId", WORLD)), List.of(grief)))
+                .containsExactly(grief.id());
+    }
+
+    // The headline case: a p:<griefer> lookup returns no synthesized receipt
+    // (they carry the environment source), yet the griefer's reverted rows
+    // must still be marked. rolledBackAmong ignores that receipt gate.
+    @Test
+    void rolledBackAmongMarksRevertedRowsForAPlayerLookup() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+        BlockBreakRecord grief = griefBreak(1);
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        assertThat(synthesis.synthesize(playerLookup()))
+                .as("p:-filtered synthesis is empty (receipts are environment-sourced)")
+                .isEmpty();
+        assertThat(synthesis.rolledBackAmong(playerLookup(), List.of(grief)))
+                .as("but the griefer's reverted row is still marked")
+                .containsExactly(grief.id());
+    }
+
+    @Test
+    void rolledBackAmongRespectsTheCeiling() {
+        MemoryStore store = new MemoryStore();
+        // Ceiling BEFORE the grief: the op ran before this row existed.
+        store.save(List.of(op(griefQuery(), "ROLLBACK", GRIEF_TIME.minusSeconds(60))));
+
+        assertThat(new RolledSynthesis(store)
+                .rolledBackAmong(playerLookup(), List.of(griefBreak(1))))
+                .isEmpty();
+    }
+
+    @Test
+    void rolledBackAmongIgnoresRecordsOutsideTheOpQuery() {
+        MemoryStore store = new MemoryStore();
+        // Op covered breaks by the griefer; a place is not in its query.
+        store.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+
+        assertThat(new RolledSynthesis(store)
+                .rolledBackAmong(playerLookup(), List.of(chestPlace(1))))
+                .isEmpty();
+    }
+
+    @Test
+    void rolledBackAmongHonorsTheContainersFlag() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(op(griefQueryWithFlags(), "ROLLBACK", OP_TIME)));
+        // Without --containers the engine skipped the chest cell (#302),
+        // so the row must not be marked reverted.
+        assertThat(new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .rolledBackAmong(playerLookup(), List.of(chestPlace(1))))
+                .isEmpty();
+
+        MemoryStore withFlag = new MemoryStore();
+        withFlag.save(List.of(op(griefQueryWithFlags(Flag.INCLUDE_CONTAINERS), "ROLLBACK", OP_TIME)));
+        var chest = chestPlace(1);
+        assertThat(new RolledSynthesis(withFlag, java.util.Set.of("CHEST"))
+                .rolledBackAmong(playerLookup(), List.of(chest)))
+                .containsExactly(chest.id());
+    }
+
+    @Test
+    void rolledBackAmongIsEmptyWithNoOpsOrNoCandidates() {
+        MemoryStore empty = new MemoryStore();
+        assertThat(new RolledSynthesis(empty)
+                .rolledBackAmong(playerLookup(), List.of(griefBreak(1))))
+                .as("no ops in the store")
+                .isEmpty();
+
+        MemoryStore withOp = new MemoryStore();
+        withOp.save(List.of(op(griefQuery(), "ROLLBACK", OP_TIME)));
+        assertThat(new RolledSynthesis(withOp)
+                .rolledBackAmong(playerLookup(), List.of()))
+                .as("no candidates to mark")
+                .isEmpty();
+    }
+
 }
