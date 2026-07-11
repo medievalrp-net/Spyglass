@@ -197,6 +197,49 @@ class LazyOperatorConfigTest {
     }
 
     @Test
+    void unwritableDataFolderMigratesInMemoryInsteadOfDisabling(@TempDir Path dataFolder)
+            throws Exception {
+        // A read-only mount (or locked-down panel) booted the old jar fine;
+        // the migration rewrite must not turn that setup into a dead plugin.
+        Path file = write(dataFolder, "storage {\n"
+                + "  durability = \"wal-batched\"\n"
+                + "  retention = \"8w\"\n"
+                + "}\n");
+        String original = Files.readString(file);
+        assertThat(dataFolder.toFile().setWritable(false)).isTrue();
+        try {
+            SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+            // The migrated settings drive the boot...
+            assertThat(config.storage().retention().seconds())
+                    .isEqualTo(java.time.Duration.ofDays(7 * 8).toSeconds());
+            // ...and the operator's file was left alone, with no backups minted.
+            assertThat(Files.readString(file)).isEqualTo(original);
+            try (Stream<Path> siblings = Files.list(dataFolder)) {
+                assertThat(siblings.filter(p -> p.getFileName().toString().contains(".bak")))
+                        .isEmpty();
+            }
+        } finally {
+            assertThat(dataFolder.toFile().setWritable(true)).isTrue();
+        }
+    }
+
+    @Test
+    void repeatedFailedBootsReuseTheSameCorruptBackup(@TempDir Path dataFolder) throws Exception {
+        // An operator in a restart loop on a broken file must not collect one
+        // .corrupt.bak per boot.
+        write(dataFolder, "database {\n  backend = \"mongo\"\n");
+        for (int boot = 0; boot < 3; boot++) {
+            assertThatThrownBy(() -> SpyglassConfig.load(pluginIn(dataFolder)))
+                    .isInstanceOf(IOException.class);
+        }
+        try (Stream<Path> siblings = Files.list(dataFolder)) {
+            assertThat(siblings.filter(p -> p.getFileName().toString().contains(".corrupt.bak")))
+                    .hasSize(1);
+        }
+    }
+
+    @Test
     void eventEntryWithWrongShapeFallsBackToDefaults(@TempDir Path dataFolder) throws Exception {
         write(dataFolder, "events { break = \"yes\" }\n");
 

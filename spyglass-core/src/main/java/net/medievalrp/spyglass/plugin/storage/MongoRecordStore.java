@@ -475,7 +475,7 @@ public final class MongoRecordStore implements RecordStore {
             String killer = doc.containsKey(RecordFields.KILLER_TYPE)
                     && doc.get(RecordFields.KILLER_TYPE).isString()
                     ? doc.getString(RecordFields.KILLER_TYPE).getValue() : null;
-            if (!"player".equalsIgnoreCase(killer)) {
+            if (!EntityDeathRecord.isPlayerKill(killer)) {
                 sink.skip(occurred, id);
                 return;
             }

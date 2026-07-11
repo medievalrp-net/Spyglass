@@ -40,4 +40,24 @@ class EntityDeathRecordTest {
             assertThat(record.restoreEffect()).as("killer=" + killer).isNull();
         }
     }
+
+    // CoreProtect-imported kill rows carry the namespaced killer form; they
+    // are player kills and must stay resurrectable, or an import's history
+    // silently loses entity coverage on rollback.
+    @Test
+    void namespacedPlayerKillerCountsAsAPlayerKill() {
+        EntityDeathRecord record = death("minecraft:player");
+        assertThat(record.resurrectable()).isTrue();
+        assertThat(record.rollbackEffect()).isInstanceOf(RollbackEffect.EntitySpawn.class);
+    }
+
+    @Test
+    void isPlayerKillNormalizesTheNamespaceOnly() {
+        assertThat(EntityDeathRecord.isPlayerKill("player")).isTrue();
+        assertThat(EntityDeathRecord.isPlayerKill("PLAYER")).isTrue();
+        assertThat(EntityDeathRecord.isPlayerKill("minecraft:player")).isTrue();
+        assertThat(EntityDeathRecord.isPlayerKill("minecraft:zombie")).isFalse();
+        assertThat(EntityDeathRecord.isPlayerKill("player_head")).isFalse();
+        assertThat(EntityDeathRecord.isPlayerKill(null)).isFalse();
+    }
 }

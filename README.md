@@ -62,7 +62,7 @@ A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in
 | Recover items a rollback destroyed | ✓ |  |
 | One-command undo, any size | ✓ |  |
 | Crash-resume an interrupted rollback | ✓ |  |
-| No events lost on a crash | ✓ |  |
+| Bulk-edit overflow survives a crash (disk spill) | ✓ |  |
 | Rollback adds no new log rows | ✓ |  |
 | Preview a rollback before applying |  | ✓ |
 | Rollback runs off the main thread | ✓ |  |

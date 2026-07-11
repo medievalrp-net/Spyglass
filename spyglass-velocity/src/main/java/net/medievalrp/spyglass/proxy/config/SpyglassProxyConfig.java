@@ -43,19 +43,24 @@ public record SpyglassProxyConfig(
                     + " (expected 'sqlite', 'mongo', 'clickhouse', or 'mariadb')");
         };
 
+        // Decided once, before any mongo read: default-valued reads attach
+        // the node they touch (implicit initialization), so probing the
+        // block's presence between reads would flip with evaluation order.
+        boolean legacyMongoLayout = root.node("database", "mongo").virtual();
+
         return new SpyglassProxyConfig(
                 new Database(
                         backend,
                         new Mongo(
                                 MongoConnectionString.resolve(
-                                        mongoSetting(root, "uri", "uri", ""),
+                                        mongoSetting(root, "uri", "uri", "", legacyMongoLayout),
                                         root.node("database", "mongo", "host").getString("localhost"),
                                         root.node("database", "mongo", "port").getInt(27017),
                                         root.node("database", "mongo", "user").getString(""),
                                         root.node("database", "mongo", "password").getString(""),
                                         root.node("database", "mongo", "ssl").getBoolean(false)),
-                                mongoSetting(root, "database", "name", "Spyglass"),
-                                mongoSetting(root, "collection", "collection", "EventRecords")),
+                                mongoSetting(root, "database", "name", "Spyglass", legacyMongoLayout),
+                                mongoSetting(root, "collection", "collection", "EventRecords", legacyMongoLayout)),
                         new ClickHouse(
                                 root.node("database", "clickhouse", "host").getString("localhost"),
                                 root.node("database", "clickhouse", "port").getInt(8123),
@@ -164,9 +169,17 @@ public record SpyglassProxyConfig(
     // back to the pre-v2 top-level database.<oldKey> for a proxy config an
     // operator hasn't restructured yet. The proxy config is hand-maintained, so
     // it keeps this fallback rather than running the plugin's config migrator.
-    private static String mongoSetting(ConfigurationNode root, String key, String oldKey, String def) {
-        ConfigurationNode current = root.node("database", "mongo", key);
-        return (current.virtual() ? root.node("database", oldKey) : current).getString(def);
+    // The fallback applies only when the config had no mongo { } block at all:
+    // once the operator adopts the block it is authoritative, so a stale
+    // top-level uri left above it can't silently override the discrete fields
+    // (the old default file shipped an active uri = "mongodb://localhost:27017"
+    // line, which would otherwise repoint every half-updated config there).
+    private static String mongoSetting(ConfigurationNode root, String key, String oldKey,
+                                       String def, boolean legacyMongoLayout) {
+        if (legacyMongoLayout) {
+            return root.node("database", oldKey).getString(def);
+        }
+        return root.node("database", "mongo", key).getString(def);
     }
 
     private static String defaultConfig() {

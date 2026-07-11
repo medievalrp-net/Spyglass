@@ -43,7 +43,7 @@ public record SpyglassConfig(
      */
     public static final int CONFIG_VERSION = 2;
 
-    // v1 -> v2 (v1 = the unversioned format up through release 1.0.8; #311,
+    // v1 -> v2 (v1 = the unversioned format up through release 1.0.9; #311,
     // #307, and #312 all land in one release, so they share one hop): the
     // bare database.uri/name/collection keys moved under a mongo { } block
     // with `name` becoming `database`, and storage.durability (#307) +
@@ -86,17 +86,32 @@ public record SpyglassConfig(
 
         int version = ConfigMigrator.readVersion(root);
         if (version < CONFIG_VERSION) {
-            Path saved = ConfigMigrator.backup(path, "v" + version);
             try {
                 root = ConfigMigrator.migrate(root, loadBundledDefaults(plugin),
                         MIGRATION_REMAP, CONFIG_VERSION);
-                loader.save(root);
             } catch (org.spongepowered.configurate.serialize.SerializationException ex) {
-                throw new IOException("Spyglass config migration failed; your original config is at "
-                        + saved.getFileName(), ex);
+                throw new IOException(
+                        "Spyglass config migration failed; your config.conf was not modified.", ex);
             }
-            plugin.getLogger().info("Spyglass: migrated config v" + version + " -> v" + CONFIG_VERSION
-                    + "; previous file backed up to " + saved.getFileName());
+            // Persisting the rewrite is a convenience, not a requirement: the
+            // migrated settings drive this boot either way. A data folder that
+            // can't be written (read-only mount, odd symlink target) migrates
+            // in memory on every boot instead of hard-disabling the plugin -
+            // the old jar booted the same folder without complaint. Backup
+            // strictly precedes the rewrite, so the operator's file is only
+            // ever replaced once a copy of it exists.
+            try {
+                Path saved = ConfigMigrator.backup(path, "v" + version);
+                loader.save(root);
+                plugin.getLogger().info("Spyglass: migrated config v" + version + " -> v" + CONFIG_VERSION
+                        + "; previous file backed up to " + saved.getFileName());
+            } catch (IOException persistFailure) {
+                plugin.getLogger().warning("Spyglass: config migrated v" + version + " -> v"
+                        + CONFIG_VERSION + " in memory, but the file could not be rewritten ("
+                        + persistFailure.getMessage() + "). Running on the migrated settings;"
+                        + " fix the data-folder permissions to persist the upgrade and silence"
+                        + " this warning.");
+            }
         } else {
             // A hand-stamped config-version on an old-format file skips
             // migration, so its pre-move keys would be silently ignored
@@ -121,7 +136,15 @@ public record SpyglassConfig(
         ConfigurationNode bundled = loadBundledDefaults(plugin);
         boolean changed = mergeMissingEvents(root, bundled);
         if (changed) {
-            loader.save(root);
+            try {
+                loader.save(root);
+            } catch (IOException persistFailure) {
+                // Same convenience-not-requirement rule as the migration
+                // rewrite above: the merged defaults drive this boot either
+                // way, so an unwritable folder costs a warning, not the plugin.
+                plugin.getLogger().warning("Spyglass: new event defaults merged in memory, but "
+                        + "config.conf could not be rewritten (" + persistFailure.getMessage() + ").");
+            }
         }
 
         Map<String, EventSettings> events = new LinkedHashMap<>();

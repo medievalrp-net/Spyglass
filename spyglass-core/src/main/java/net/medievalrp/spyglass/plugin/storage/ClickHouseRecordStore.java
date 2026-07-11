@@ -813,7 +813,7 @@ public final class ClickHouseRecordStore implements RecordStore {
             // player kill produces an effect in either direction; environment
             // deaths stay searchable but never resurrect (or re-remove).
             String killer = row.getString("entity_killer_type");
-            if (!"player".equalsIgnoreCase(killer)) {
+            if (!EntityDeathRecord.isPlayerKill(killer)) {
                 sink.skip(occurred, id);
                 return;
             }

@@ -97,6 +97,20 @@ class ConfigMigratorTest {
     }
 
     @Test
+    void backupReusesAByteIdenticalExistingOne(@TempDir Path dir) throws IOException {
+        Path config = dir.resolve("config.conf");
+        Files.writeString(config, "config-version = 1\n");
+
+        Path first = ConfigMigrator.backup(config, "v1");
+        Path second = ConfigMigrator.backup(config, "v1");
+
+        assertThat(second).isEqualTo(first);
+        try (var files = Files.list(dir)) {
+            assertThat(files.filter(p -> p.getFileName().toString().contains(".bak"))).hasSize(1);
+        }
+    }
+
+    @Test
     void backupDoesNotClobberAnExistingOne(@TempDir Path dir) throws IOException {
         Path config = dir.resolve("config.conf");
         Files.writeString(config, "config-version = 1\n");
