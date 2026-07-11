@@ -67,8 +67,8 @@ public final class SynthesizingRecordStore implements RecordStore {
         // MUST delegate explicitly: this method has an interface default
         // (returns null = "unknown"), so a decorator that doesn't forward it
         // silently disables the backend's imported-player name resolution -
-        // exactly what happened live (the plugin wraps every store in this
-        // decorator when rolled-audit=synthesized, which is the default).
+        // exactly what happened live (the plugin always wraps every store
+        // in this decorator).
         return delegate.resolvePlayerId(playerName);
     }
 

@@ -41,7 +41,7 @@ public record SpyglassConfig(
      * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
      * A config with an older {@code config-version} is migrated on load.
      */
-    public static final int CONFIG_VERSION = 3;
+    public static final int CONFIG_VERSION = 4;
 
     // v1 -> v2: the bare database.uri/name/collection keys moved under a
     // mongo { } block, and `name` became `database`.
@@ -49,6 +49,8 @@ public record SpyglassConfig(
     // a null target drops the key. Map.of rejects null values, so the table
     // is built by hand. Package-visible so ConfigMigratorTest exercises the
     // real table instead of a mirror.
+    // v3 -> v4: storage.rolled-audit removed; synthesized is the only
+    // rollback-audit behavior (#312).
     static final Map<String, String> MIGRATION_REMAP;
 
     static {
@@ -57,6 +59,7 @@ public record SpyglassConfig(
         remap.put("database.name", "database.mongo.database");
         remap.put("database.collection", "database.mongo.collection");
         remap.put("storage.durability", null);
+        remap.put("storage.rolled-audit", null);
         MIGRATION_REMAP = java.util.Collections.unmodifiableMap(remap);
     }
 
@@ -160,9 +163,7 @@ public record SpyglassConfig(
                         root.node("storage", "queue-max").getInt(500_000),
                         root.node("storage", "spill-to-disk").getBoolean(true),
                         root.node("storage", "spill-drain-rate").getInt(20_000),
-                        Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
-                        "synthesized".equalsIgnoreCase(
-                                root.node("storage", "rolled-audit").getString("synthesized"))),
+                        Duration.parse(root.node("storage", "flush-timeout").getString("5s"))),
                 new Defaults(
                         root.node("defaults", "enabled").getBoolean(true),
                         root.node("defaults", "radius").getInt(250),
@@ -399,8 +400,7 @@ public record SpyglassConfig(
      *                      wait for the queue to drain before returning.
      */
     public record Storage(Duration retention, int queueCapacity, int queueMax,
-                          boolean spillToDisk, int spillDrainRate, Duration flushTimeout,
-                          boolean rolledAuditSynthesized) {
+                          boolean spillToDisk, int spillDrainRate, Duration flushTimeout) {
     }
 
     /**

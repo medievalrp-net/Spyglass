@@ -189,6 +189,26 @@ class ConfigMigratorTest {
                 .isEqualTo(SpyglassConfig.CONFIG_VERSION);
     }
 
+    // Same shape for the v4 removal (#312): an operator who opted into
+    // receipts mode migrates to always-synthesized with the dead key
+    // dropped and everything else intact.
+    @Test
+    void versionThreeConfigWithReceiptsRolledAuditMigratesCleanly() throws SerializationException {
+        ConfigurationNode user = BasicConfigurationNode.root();
+        user.node("config-version").set(3);
+        user.node("storage", "rolled-audit").set("receipts");
+        user.node("storage", "queue-max").set(250_000);
+
+        ConfigurationNode template = freshV2Template();
+        template.node("storage", "queue-max").set(500_000);
+        ConfigMigrator.migrate(user, template, REMAP, SpyglassConfig.CONFIG_VERSION);
+
+        assertThat(template.node("storage", "rolled-audit").virtual()).isTrue();
+        assertThat(template.node("storage", "queue-max").getInt()).isEqualTo(250_000);
+        assertThat(template.node("config-version").getInt())
+                .isEqualTo(SpyglassConfig.CONFIG_VERSION);
+    }
+
     private static ConfigurationNode freshV2Template() throws SerializationException {
         ConfigurationNode template = BasicConfigurationNode.root();
         template.node("config-version").set(2);
