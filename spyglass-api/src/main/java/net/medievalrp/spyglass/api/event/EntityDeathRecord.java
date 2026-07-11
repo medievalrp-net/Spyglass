@@ -47,10 +47,26 @@ public record EntityDeathRecord(
      * generic area rollback - one fresh-world night left 453 burned
      * zombies waiting to come back. The Mongo and ClickHouse emitEffect
      * mirrors apply this same rule from their killer column; keep them in
-     * lockstep with this method.
+     * lockstep by calling {@link #isPlayerKill}.
      */
     public boolean resurrectable() {
-        return "player".equalsIgnoreCase(killerType);
+        return isPlayerKill(killerType);
+    }
+
+    /**
+     * The killer-gate predicate shared with the lean store paths. Live
+     * listeners write the bare form ({@code "player"}); CoreProtect-imported
+     * rows carry the namespaced form ({@code "minecraft:player"}) - both are
+     * player kills, so both must pass or imported history silently stops
+     * being resurrectable.
+     */
+    public static boolean isPlayerKill(String killerType) {
+        if (killerType == null) {
+            return false;
+        }
+        int namespace = killerType.lastIndexOf(':');
+        String bare = namespace >= 0 ? killerType.substring(namespace + 1) : killerType;
+        return "player".equalsIgnoreCase(bare);
     }
 
     @Override

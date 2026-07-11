@@ -40,8 +40,11 @@ public final class ConfigMigrator {
 
     /**
      * Copies {@code configFile} to a sibling {@code <name>.<label>.bak}, adding a
-     * numeric suffix rather than overwriting an existing backup, and returns the
-     * path written. Called before any migration touches the original, so a failed
+     * numeric suffix rather than overwriting an existing, different backup, and
+     * returns the path written. A byte-identical existing backup is reused
+     * instead of copied again, so a boot loop (a save that keeps failing, a
+     * corrupt file the operator hasn't fixed yet) doesn't mint one backup per
+     * restart. Called before any migration touches the original, so a failed
      * or half-written migration always leaves the operator's file recoverable.
      */
     public static Path backup(Path configFile, String label) throws IOException {
@@ -50,6 +53,9 @@ public final class ConfigMigrator {
         Path target = dir.resolve(base);
         int suffix = 1;
         while (Files.exists(target)) {
+            if (Files.mismatch(configFile, target) == -1L) {
+                return target;
+            }
             target = dir.resolve(base + "." + suffix++);
         }
         Files.copy(configFile, target, StandardCopyOption.COPY_ATTRIBUTES);
