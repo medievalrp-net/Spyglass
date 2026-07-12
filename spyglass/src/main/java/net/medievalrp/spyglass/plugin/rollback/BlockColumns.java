@@ -41,6 +41,14 @@ public final class BlockColumns {
     private int[] expId;
     private int count;
 
+    // Cell index for per-cell coalescing (#321): packed (x,y,z) -> row,
+    // open-addressed with linear probing at <= 50% load, primitives only
+    // (same no-boxing rule as the columns themselves). Rows enter it only
+    // through addOrReplace; plain add() stays index-blind.
+    private long[] cellKeys;
+    private int[] cellRows;
+    private int cellCount;
+
     // Tiny per-window palette: a bulk rollback repeats a handful of
     // materials, so each cell carries an int id into this shared table
     // instead of its own block-data string reference.
@@ -64,6 +72,30 @@ public final class BlockColumns {
         zs = new int[cap];
         replId = new int[cap];
         expId = new int[cap];
+        int tableLen = tableSizeFor(cap);
+        cellKeys = new long[tableLen];
+        cellRows = new int[tableLen];
+        Arrays.fill(cellRows, -1);
+    }
+
+    /** Smallest power of two holding {@code rows} at <= 50% load. */
+    private static int tableSizeFor(int rows) {
+        int needed = Math.max(32, rows * 2);
+        return Integer.highestOneBit(needed - 1) << 1;
+    }
+
+    /**
+     * One long per cell: x/z span 26 bits (the world border sits at
+     * |30M|, well inside +/-33.5M), y spans 12 (build limits are
+     * hundreds). Distinct in-world cells can never collide.
+     */
+    private static long packCell(int x, int y, int z) {
+        return ((x & 0x3FFFFFFL) << 38) | ((z & 0x3FFFFFFL) << 12) | (y & 0xFFFL);
+    }
+
+    private static int spread(long key) {
+        long h = key * 0x9E3779B97F4A7C15L;
+        return (int) (h ^ (h >>> 32));
     }
 
     /** Intern a block-data string to its palette id; {@code -1} for null. */
@@ -106,6 +138,61 @@ public final class BlockColumns {
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
         if (z > maxZ) maxZ = z;
+    }
+
+    /**
+     * Append one cell, or - when this (x,y,z) already has a row - fold
+     * into it (#321). Effects stream in apply order, so the write that
+     * arrives last is the one per-event replay would have left in the
+     * world: it wins the row's write side. The first arrival's
+     * expected-current stays - it names what is physically at the cell
+     * before any write. Only rows inserted here are foldable; raw
+     * {@link #add} appends are invisible to the index.
+     *
+     * @return {@code true} when a new row was appended, {@code false}
+     *     when an existing row absorbed the write
+     */
+    public boolean addOrReplace(int x, int y, int z, int replPaletteId, int expPaletteId) {
+        long key = packCell(x, y, z);
+        int mask = cellKeys.length - 1;
+        int slot = spread(key) & mask;
+        while (true) {
+            int row = cellRows[slot];
+            if (row < 0) {
+                cellKeys[slot] = key;
+                cellRows[slot] = count;
+                add(x, y, z, replPaletteId, expPaletteId);
+                if (++cellCount * 2 > cellKeys.length) {
+                    growCellTable();
+                }
+                return true;
+            }
+            if (cellKeys[slot] == key) {
+                replId[row] = replPaletteId;
+                return false;
+            }
+            slot = (slot + 1) & mask;
+        }
+    }
+
+    private void growCellTable() {
+        long[] oldKeys = cellKeys;
+        int[] oldRows = cellRows;
+        cellKeys = new long[oldKeys.length * 2];
+        cellRows = new int[oldRows.length * 2];
+        Arrays.fill(cellRows, -1);
+        int mask = cellKeys.length - 1;
+        for (int i = 0; i < oldRows.length; i++) {
+            if (oldRows[i] < 0) {
+                continue;
+            }
+            int slot = spread(oldKeys[i]) & mask;
+            while (cellRows[slot] >= 0) {
+                slot = (slot + 1) & mask;
+            }
+            cellKeys[slot] = oldKeys[i];
+            cellRows[slot] = oldRows[i];
+        }
     }
 
     public int count() {

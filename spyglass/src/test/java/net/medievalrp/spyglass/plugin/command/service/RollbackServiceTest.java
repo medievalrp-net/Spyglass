@@ -16,7 +16,9 @@ import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
+import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
+import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
@@ -45,11 +47,17 @@ class RollbackServiceTest {
     private static final UUID WORLD = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
 
     private static BlockBreakRecord record() {
+        return recordAt(0, Material.STONE, "minecraft:stone");
+    }
+
+    // Break of `beforeMat` at (x, 64, 0): its rollback effect writes the
+    // broken block back and expects the air the break left behind.
+    private static BlockBreakRecord recordAt(int x, Material beforeMat, String beforeData) {
         Instant now = Instant.now();
         BlockSnapshot air = new BlockSnapshot(
                 Material.AIR, "minecraft:air", List.of(), List.of(), List.of(), List.of(), null);
-        BlockSnapshot stone = new BlockSnapshot(
-                Material.STONE, "minecraft:stone", List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot before = new BlockSnapshot(
+                beforeMat, beforeData, List.of(), List.of(), List.of(), List.of(), null);
         return new BlockBreakRecord(
                 UUID.randomUUID(),
                 "break",
@@ -57,10 +65,10 @@ class RollbackServiceTest {
                 now.plusSeconds(60),
                 Origin.player(),
                 Source.player(UUID.randomUUID(), "Alice"),
-                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", 0, 64, 0),
+                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", x, 64, 0),
                 "test",
-                "STONE",
-                stone,
+                beforeMat.name(),
+                before,
                 air);
     }
 
@@ -75,6 +83,10 @@ class RollbackServiceTest {
                 mock(net.medievalrp.spyglass.plugin.pipeline.Recorder.class);
         final net.medievalrp.spyglass.plugin.storage.RecordStore store =
                 mock(net.medievalrp.spyglass.plugin.storage.RecordStore.class);
+        // Real store spied (not mocked) so a test can verify the cursor a
+        // checkpoint wrote even though a clean run's markFinish deletes the
+        // on-disk marker before execute() returns (#321 resume coverage).
+        final RollbackResumeStore resumeStore;
         final RollbackService subject;
 
         TestFixture() {
@@ -104,15 +116,19 @@ class RollbackServiceTest {
             RollbackJobQueue queue = new RollbackJobQueue();
             // Test resume store points at a temp dir — no real
             // persistence is needed for these tests, but the
-            // constructor demands one.
-            RollbackResumeStore resumeStore;
+            // constructor demands one. Spied (Mockito 5's default inline
+            // mock maker handles the final class) so tests can verify
+            // markProgress/markFinish calls; behavior is untouched since a
+            // spy delegates to the real method unless stubbed.
+            RollbackResumeStore realResumeStore;
             try {
-                resumeStore = new RollbackResumeStore(
+                realResumeStore = new RollbackResumeStore(
                         java.nio.file.Files.createTempDirectory("spyglass-test-"),
                         Logger.getLogger("test"));
             } catch (java.io.IOException ex) {
                 throw new RuntimeException(ex);
             }
+            resumeStore = org.mockito.Mockito.spy(realResumeStore);
             IpQueryResolver ipResolver = new IpQueryResolver(
                     parser, new net.medievalrp.spyglass.plugin.command.param.IpParam(ip -> java.util.List.of()),
                     ServiceSupport.synchronous(), Logger.getLogger("test"));
@@ -352,11 +368,9 @@ class RollbackServiceTest {
         TestFixture fixture = new TestFixture();
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
-        // Distinct records, identical block-data — the columnar fold (#67)
-        // collapses both cells into one BlockColumns whose palette holds one
-        // entry per distinct block-data (stone + air), so the per-cell cost
-        // is two int ids, not a graph of snapshot objects that MTT=1 would
-        // promote to old gen.
+        // Two events at the SAME cell: the palette dedupes the repeated
+        // block-data (#67) and the cell fold collapses the rows to one
+        // net write (#321), so the summary counts the cell once.
         BlockBreakRecord a = record();
         BlockBreakRecord b = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -373,16 +387,295 @@ class RollbackServiceTest {
                     counts.applied = cols.count();
                     return CompletableFuture.completedFuture(counts);
                 });
-        ServiceTestSupport.captureMessages(fixture.sender);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
 
         BlockColumns cols = captured.get();
         assertThat(cols).isNotNull();
-        assertThat(cols.count()).isEqualTo(2);
-        // Two cells, each writing stone and expecting air = 4 intern calls,
-        // but only the two distinct strings land in the palette.
+        assertThat(cols.count()).isEqualTo(1);
+        // Stone + air are still the only palette entries.
         assertThat(cols.paletteSize()).isEqualTo(2);
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void multiEventCellAppliesOneNetWrite() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        // Three logged changes at ONE cell, streamed newest-first (#321):
+        // per-event replay would write planks last, so the coalesced row
+        // must carry the LAST streamed write - the oldest event's block.
+        BlockBreakRecord newest = recordAt(0, Material.STONE, "minecraft:stone");
+        BlockBreakRecord middle = recordAt(0, Material.DIRT, "minecraft:dirt");
+        BlockBreakRecord oldest = recordAt(0, Material.OAK_PLANKS, "minecraft:oak_planks");
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(newest, middle, oldest), null));
+        java.util.concurrent.atomic.AtomicReference<BlockColumns> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyColumnsChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    BlockColumns cols = inv.getArgument(1);
+                    captured.set(cols);
+                    RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                    counts.applied = cols.count();
+                    return CompletableFuture.completedFuture(counts);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        BlockColumns cols = captured.get();
+        assertThat(cols).isNotNull();
+        assertThat(cols.count()).isEqualTo(1);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:oak_planks");
+        // First-streamed (newest) event's expected-current is kept.
+        assertThat(cols.expData(0)).isEqualTo("minecraft:air");
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void distinctCellsDoNotCoalesce() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord a = recordAt(0, Material.STONE, "minecraft:stone");
+        BlockBreakRecord b = recordAt(1, Material.STONE, "minecraft:stone");
+        BlockBreakRecord c = recordAt(2, Material.STONE, "minecraft:stone");
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b, c), null));
+        stubColumnarApplied(fixture);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("3 reversals") && !line.contains("skipped"));
+    }
+
+    // ---- #321: fold coverage beyond the initial landing ----
+
+    // Restore of a place at (0, 64, 0): a place's restoreEffect re-applies
+    // the place, expecting the air it started from and writing `afterMat`.
+    private static BlockPlaceRecord placeAt(Instant occurred, Material afterMat, String afterData) {
+        BlockSnapshot air = new BlockSnapshot(
+                Material.AIR, "minecraft:air", List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot after = new BlockSnapshot(
+                afterMat, afterData, List.of(), List.of(), List.of(), List.of(), null);
+        return new BlockPlaceRecord(
+                UUID.randomUUID(),
+                "place",
+                occurred,
+                occurred.plusSeconds(60),
+                Origin.player(),
+                Source.player(UUID.randomUUID(), "Alice"),
+                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", 0, 64, 0),
+                "test",
+                afterMat.name(),
+                air,
+                after);
+    }
+
+    // A container deposit at (0, 64, 0): its effect is a ContainerSlotWrite,
+    // not a BlockReplace, so it always routes to the complex path - per-cell
+    // folding must leave it alone (#321).
+    private static ContainerDepositRecord depositAt(Instant occurred) {
+        return new ContainerDepositRecord(
+                UUID.randomUUID(),
+                "deposit",
+                occurred,
+                occurred.plusSeconds(60),
+                Origin.player(),
+                Source.player(UUID.randomUUID(), "Alice"),
+                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", 0, 64, 0),
+                "test",
+                "DIRT", "CHEST", 0, 8, null,
+                new net.medievalrp.spyglass.api.event.StoredItem(
+                        0, "DIRT", "", null, List.of(), List.of(), null));
+    }
+
+    // sampleRequest() with INCLUDE_CONTAINERS set, mirroring a real
+    // --containers op so the request carries the flag a container effect
+    // would actually ride in production.
+    private static QueryRequest sampleRequestWithContainers() {
+        return new QueryRequest(
+                List.of(),
+                Sort.NEWEST_FIRST,
+                10_000,
+                java.util.EnumSet.of(Flag.INCLUDE_CONTAINERS),
+                true);
+    }
+
+    @Test
+    void restoreDirectionNetsToNewestState() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        // Three places at ONE cell: restore mode streams oldest-first, so
+        // per-event replay would land on the newest placement - the
+        // LAST-streamed write must win the fold (#321), same as rollback
+        // direction but exercised the other way round.
+        Instant base = Instant.now();
+        BlockPlaceRecord oldest = placeAt(base, Material.STONE, "minecraft:stone");
+        BlockPlaceRecord middle = placeAt(base.plusSeconds(1), Material.DIRT, "minecraft:dirt");
+        BlockPlaceRecord newest = placeAt(base.plusSeconds(2), Material.OAK_PLANKS, "minecraft:oak_planks");
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(oldest, middle, newest), null));
+        java.util.concurrent.atomic.AtomicReference<BlockColumns> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyColumnsChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    BlockColumns cols = inv.getArgument(1);
+                    captured.set(cols);
+                    RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                    counts.applied = cols.count();
+                    return CompletableFuture.completedFuture(counts);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:place", RollbackMode.RESTORE);
+
+        BlockColumns cols = captured.get();
+        assertThat(cols).isNotNull();
+        assertThat(cols.count()).isEqualTo(1);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:oak_planks");
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void complexEffectsAtOneCellAreNotCoalesced() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequestWithContainers());
+        // Two deposits at the SAME cell: unlike simple block-replaces, the
+        // complex path (containers, entities, tile-entity blocks) is not
+        // folded per cell (#321) - both effects must reach the engine.
+        Instant base = Instant.now();
+        ContainerDepositRecord first = depositAt(base);
+        ContainerDepositRecord second = depositAt(base.plusSeconds(1));
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(first, second), null));
+        java.util.concurrent.atomic.AtomicReference<List<RollbackEffect>> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    List<RollbackEffect> effects = inv.getArgument(0);
+                    captured.set(effects);
+                    List<RollbackResult> results = effects.stream()
+                            .<RollbackResult>map(e -> new RollbackResult.Applied(e, e))
+                            .toList();
+                    return CompletableFuture.completedFuture(results);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:deposit", RollbackMode.ROLLBACK);
+
+        List<RollbackEffect> effects = captured.get();
+        assertThat(effects).isNotNull();
+        assertThat(effects).hasSize(2);
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("2 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void foldedRowsStillAdvanceTheResumeCursor() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        // Three break events at the SAME cell fold to one columnar row
+        // (#321). The cursor bookkeeping must still walk every row, so the
+        // checkpoint has to land on the LAST-streamed record, not stall on
+        // the first one folded.
+        BlockBreakRecord a = record();
+        BlockBreakRecord b = record();
+        BlockBreakRecord c = record();
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b, c), null));
+        stubColumnarApplied(fixture);
+        ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        // markFinish deletes the on-disk marker on this clean completion,
+        // so the on-disk state can't be inspected afterward - the spy's
+        // recorded invocation is the only place the mid-run cursor survives.
+        org.mockito.ArgumentCaptor<RollbackResumeStore.Cursor> cursor =
+                org.mockito.ArgumentCaptor.forClass(RollbackResumeStore.Cursor.class);
+        // operatorName is bare any(): fixture.sender is a plain mock whose
+        // getName() returns null, and any(String.class) does not match null.
+        verify(fixture.resumeStore, org.mockito.Mockito.atLeastOnce()).markProgress(
+                any(UUID.class), any(), any(), any(String.class),
+                any(RollbackJob.Mode.class), any(), any(Instant.class),
+                cursor.capture(), anyInt(), anyInt());
+        assertThat(cursor.getValue()).isNotNull();
+        assertThat(cursor.getValue().id()).isEqualTo(c.id());
+        assertThat(cursor.getValue().occurred()).isEqualTo(c.occurred());
+    }
+
+    @Test
+    void mixedSimpleAndComplexAtOneCellFoldOnlyTheSimpleSide() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequestWithContainers());
+        // Two breaks (simple) and a deposit (complex) at the SAME cell:
+        // the simple side folds to one columnar row while the container
+        // effect rides the object path untouched - per-cell coalescing
+        // never reaches across the simple/complex split (#321).
+        Instant base = Instant.now();
+        BlockBreakRecord newer = record();
+        BlockBreakRecord older = record();
+        ContainerDepositRecord slot = depositAt(base);
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(newer, slot, older), null));
+        java.util.concurrent.atomic.AtomicReference<BlockColumns> columns =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyColumnsChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    BlockColumns cols = inv.getArgument(1);
+                    columns.set(cols);
+                    RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                    counts.applied = cols.count();
+                    return CompletableFuture.completedFuture(counts);
+                });
+        java.util.concurrent.atomic.AtomicReference<List<RollbackEffect>> complex =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    List<RollbackEffect> effects = inv.getArgument(0);
+                    complex.set(effects);
+                    List<RollbackResult> results = effects.stream()
+                            .<RollbackResult>map(e -> new RollbackResult.Applied(e, e))
+                            .toList();
+                    return CompletableFuture.completedFuture(results);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        assertThat(columns.get()).isNotNull();
+        assertThat(columns.get().count()).isEqualTo(1);
+        assertThat(complex.get()).isNotNull();
+        assertThat(complex.get()).hasSize(1);
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("2 reversals") && !line.contains("skipped"));
     }
 
     @Test

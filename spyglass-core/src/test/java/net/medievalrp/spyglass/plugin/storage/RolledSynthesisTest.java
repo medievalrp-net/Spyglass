@@ -46,8 +46,17 @@ class RolledSynthesisTest {
         @Override
         public QueryResult query(QueryRequest request) {
             queryCount++;
+            // Honor the requested sort like every real backend does - the
+            // per-cell net fold (#321) reads the verify stream's order.
+            java.util.Comparator<EventRecord> byTime = java.util.Comparator
+                    .comparing(EventRecord::occurred)
+                    .thenComparing(r -> r.id().toString());
+            if (request.sort() != net.medievalrp.spyglass.api.query.Sort.OLDEST_FIRST) {
+                byTime = byTime.reversed();
+            }
             List<EventRecord> matched = rows.stream()
                     .filter(r -> PredicateEvaluator.matchesAll(request.predicates(), r))
+                    .sorted(byTime)
                     .limit(request.limit())
                     .toList();
             return new QueryResult(matched, List.of());
@@ -122,20 +131,28 @@ class RolledSynthesisTest {
     // ---- #302: coverage honors the op's inclusion flags ----
 
     private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x) {
+        return chestPlace(x, GRIEF_TIME);
+    }
+
+    private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x, Instant at) {
         BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
                 List.of(), List.of(), List.of(), List.of(), null);
         BlockSnapshot chest = new BlockSnapshot(Material.CHEST, "minecraft:chest",
                 List.of(), List.of(), List.of(), List.of(), null);
         return new net.medievalrp.spyglass.api.event.BlockPlaceRecord(UUID.randomUUID(), "place",
-                GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                at, at.plusSeconds(86400),
                 Origin.player(), Source.player(GRIEFER, "Griefer"),
                 new BlockLocation(WORLD, "world", x, 64, 0),
                 "test", "CHEST", air, chest);
     }
 
     private static net.medievalrp.spyglass.api.event.ContainerDepositRecord deposit(int x) {
+        return deposit(x, GRIEF_TIME);
+    }
+
+    private static net.medievalrp.spyglass.api.event.ContainerDepositRecord deposit(int x, Instant at) {
         return new net.medievalrp.spyglass.api.event.ContainerDepositRecord(UUID.randomUUID(),
-                "deposit", GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                "deposit", at, at.plusSeconds(86400),
                 Origin.player(), Source.player(GRIEFER, "Griefer"),
                 new BlockLocation(WORLD, "world", x, 64, 0), "test",
                 "DIRT", "CHEST", 0, 8, null,
@@ -231,6 +248,285 @@ class RolledSynthesisTest {
         assertThat(rolled).hasSize(1);
         assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
         assertThat(rolled.get(0).target()).isEqualTo("STONE");
+    }
+
+    // ---- #321: multi-event cells net to one receipt ----
+
+    private static net.medievalrp.spyglass.api.event.BlockPlaceRecord dirtPlace(int x, Instant at) {
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot dirt = new BlockSnapshot(Material.DIRT, "minecraft:dirt",
+                List.of(), List.of(), List.of(), List.of(), null);
+        return new net.medievalrp.spyglass.api.event.BlockPlaceRecord(UUID.randomUUID(), "place",
+                at, at.plusSeconds(86400),
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0),
+                "test", "DIRT", air, dirt);
+    }
+
+    private static BlockBreakRecord dirtBreak(int x, Instant at) {
+        BlockSnapshot dirt = new BlockSnapshot(Material.DIRT, "minecraft:dirt",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        return new BlockBreakRecord(UUID.randomUUID(), "break",
+                at, at.plusSeconds(86400),
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0),
+                "test", "DIRT", dirt, air);
+    }
+
+    private static QueryRequest grieferQuery() {
+        return request(new QueryPredicate.Eq("source.playerId", GRIEFER));
+    }
+
+    @Test
+    void multiEventCellNetsToOneReceipt() {
+        MemoryStore store = new MemoryStore();
+        // The #321 repro: place, break, place again at ONE cell. The net
+        // world change of rolling all three back is dirt -> air.
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2))));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        // One net receipt, not broke x2 + placed x1.
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("DIRT");
+    }
+
+    @Test
+    void cancellingPairSynthesizesNothing() {
+        MemoryStore store = new MemoryStore();
+        // Place then break: rolling both back returns the cell to the
+        // air it started as. No net transition, no receipt - a "broke
+        // AIR" line identifies nothing (#269).
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1))));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+
+        assertThat(new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD))))
+                .isEmpty();
+    }
+
+    @Test
+    void restoreOfMultiEventCellNetsToOnePlace() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2))));
+        store.save(List.of(op(grieferQuery(), "RESTORE", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        // Re-applying the history oldest-first lands on the newest
+        // event's outcome: dirt. Net = air -> dirt, one rolled-place.
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-place");
+        assertThat(rolled.get(0).target()).isEqualTo("DIRT");
+    }
+
+    @Test
+    void churnCellAndPlainCellEachKeepTheirOwnReceipt() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2)),
+                griefBreak(2)));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        // The churn cell nets to one rolled-break DIRT; the untouched
+        // single-event cell keeps its ordinary rolled-place STONE.
+        assertThat(rolled).hasSize(2);
+        assertThat(rolled).anyMatch(r -> "rolled-break".equals(r.event())
+                && "DIRT".equals(r.target()) && r.location().x() == 1);
+        assertThat(rolled).anyMatch(r -> "rolled-place".equals(r.event())
+                && "STONE".equals(r.target()) && r.location().x() == 2);
+    }
+
+    @Test
+    void mixedCellWithoutContainersFlagNetsOnlyPlainOriginals() {
+        MemoryStore store = new MemoryStore();
+        // Dirt churn plus a chest place at ONE cell, op stored WITHOUT
+        // --containers: the chest-covering original is gated out (#302)
+        // BEFORE the fold, so the net spans only the dirt events.
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2)),
+                chestPlace(1, GRIEF_TIME.plusSeconds(3))));
+        store.save(List.of(op(griefQueryWithFlags(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("DIRT");
+    }
+
+    @Test
+    void mixedCellWithContainersFlagNetsAcrossTheChestToo() {
+        MemoryStore store = new MemoryStore();
+        // Same churn but the op ran WITH --containers: the chest place is
+        // covered, so the net spans all four events - from the newest
+        // covered state (the chest) to the oldest restored one (air).
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2)),
+                chestPlace(1, GRIEF_TIME.plusSeconds(3))));
+        store.save(List.of(op(griefQueryWithFlags(Flag.INCLUDE_CONTAINERS), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("CHEST");
+    }
+
+    @Test
+    void netReceiptIdsAreDeterministicAcrossSearches() {
+        MemoryStore store = new MemoryStore();
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2))));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+        QueryRequest search = request(new QueryPredicate.Eq("location.worldId", WORLD));
+
+        List<EventRecord> first = synthesis.synthesize(search);
+        List<EventRecord> second = synthesis.synthesize(search);
+
+        assertThat(first).hasSize(1);
+        assertThat(second).hasSize(1);
+        assertThat(first.get(0).id()).isEqualTo(second.get(0).id());
+    }
+
+    @Test
+    void twoOpsAtTheSameCellSynthesizeDistinctReceipts() {
+        MemoryStore store = new MemoryStore();
+        // One covered cell, two separate rollback ops over it. The net-cell
+        // id keys on the OP, so the fold is per (op, cell) and never across
+        // ops - each op stamps its own receipt with its own id.
+        store.save(List.of(griefBreak(1)));
+        store.save(List.of(
+                op(griefQuery(), "ROLLBACK", OP_TIME),
+                op(griefQuery(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(2);
+        assertThat(rolled).extracting(EventRecord::id).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void orientationChangeIsNotSuppressed() {
+        MemoryStore store = new MemoryStore();
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stairsNorth = new BlockSnapshot(Material.OAK_STAIRS,
+                "minecraft:oak_stairs[facing=north]",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot stairsSouth = new BlockSnapshot(Material.OAK_STAIRS,
+                "minecraft:oak_stairs[facing=south]",
+                List.of(), List.of(), List.of(), List.of(), null);
+        // Break the north-facing stairs, then place south-facing ones in the
+        // same cell. The net rollback transition is south -> north: same
+        // material but different block data, so it is not an identity net
+        // and must keep its receipt.
+        store.save(List.of(
+                new BlockBreakRecord(UUID.randomUUID(), "break",
+                        GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                        Origin.player(), Source.player(GRIEFER, "Griefer"),
+                        new BlockLocation(WORLD, "world", 1, 64, 0),
+                        "test", "OAK_STAIRS", stairsNorth, air),
+                new net.medievalrp.spyglass.api.event.BlockPlaceRecord(UUID.randomUUID(), "place",
+                        GRIEF_TIME.plusSeconds(1), GRIEF_TIME.plusSeconds(86400),
+                        Origin.player(), Source.player(GRIEFER, "Griefer"),
+                        new BlockLocation(WORLD, "world", 1, 64, 0),
+                        "test", "OAK_STAIRS", air, stairsSouth)));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).target()).isEqualTo("OAK_STAIRS");
+    }
+
+    @Test
+    void breakThenReplaceSameMaterialSuppresses() {
+        MemoryStore store = new MemoryStore();
+        // Break DIRT then place DIRT back, same block data. The net rollback
+        // is dirt -> dirt, an identity, so nothing is synthesized.
+        store.save(List.of(
+                dirtBreak(1, GRIEF_TIME),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(1))));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+
+        assertThat(new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD))))
+                .isEmpty();
+    }
+
+    @Test
+    void groupedChurnCellCollapsesToCountOne() {
+        MemoryStore store = new MemoryStore();
+        // The P/B/P churn at ONE cell. A grouped search must show a single
+        // rolled-break aggregation counted ONCE, not the "x2" a per-event
+        // receipt would have produced (#321) - the disappearing count proof.
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2))));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+        SynthesizingRecordStore wrapped = new SynthesizingRecordStore(store, true);
+
+        QueryRequest grouped = new QueryRequest(
+                List.of(new QueryPredicate.Eq("location.worldId", WORLD)),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100, EnumSet.noneOf(Flag.class), true);
+        QueryResult result = wrapped.query(grouped);
+
+        assertThat(result.aggregations())
+                .anyMatch(aggregation -> "rolled-break".equals(aggregation.sample().event())
+                        && aggregation.count() == 1);
+    }
+
+    @Test
+    void containerReceiptsStayPerOriginal() {
+        MemoryStore store = new MemoryStore();
+        // Two deposits into the SAME container cell. Container-slot receipts
+        // are NOT folded (#321 coalesces block writes only), so each covered
+        // transaction keeps its own rolled-withdraw line with its own id.
+        store.save(List.of(
+                deposit(1, GRIEF_TIME),
+                deposit(1, GRIEF_TIME.plusSeconds(1))));
+        store.save(List.of(op(griefQueryWithFlags(Flag.INCLUDE_CONTAINERS), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store)
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(2);
+        assertThat(rolled).allMatch(r -> "rolled-withdraw".equals(r.event()));
+        assertThat(rolled).extracting(EventRecord::id).doesNotHaveDuplicates();
     }
 
     @Test

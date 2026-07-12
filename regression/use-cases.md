@@ -108,13 +108,13 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | F9 | Wither spawn breaks containment blocks | Entity grief rollback | C | rcon |
 | F10 | Lightning starts a fire | Attribution chain (natural); rollback scope correct | C | rcon |
 
-## G. Rollback semantics — G1–G14
+## G. Rollback semantics - G1-G15
 
 | # | Scenario | Verify | Dim | Auto |
 |---|---|---|---|---|
 | G1 | Standard grief → rollback | Server-truth sampling (`verify-rollback.js`): 100% of sampled cells match pre-grief | C | bot |
 | G2 | Rollback → undo | World returns to exact post-grief state (undo = inverse) | C | bot |
-| G3 | Rollback, manual edits inside region, identical rollback re-run | Changed blocks skipped with reasons; SG store grows +1 op row (synthesis); CP growth measured | C,S | bot |
+| G3 | Identical rollback re-run over the same region | Force-overwrite (#69) re-applies every matched cell to the same recorded state; world converges with zero drift | C,S | bot |
 | G4 | Two overlapping ops by one operator; undo twice | LIFO per-operator undo ordering correct both times | C | bot |
 | G5 | Player standing inside region during rollback | No suffocation in restored blocks / sane player handling both sides | U | man |
 | G6 | Preview before applying | **CP `#preview` exists; SG has none — expected CP-ahead capability cell** | K,U | man |
@@ -122,10 +122,11 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | G8 | `kill -9` the server mid-rollback, restart | SG resume marker offers continuation and completes; CP behavior documented | K,C | man |
 | G9 | Region half loaded, half unloaded | Both halves restored equally | C | bot |
 | G10 | Search `a:rolled-place` after a rollback, then attempt to roll back those entries | Audit entries visible in search; not themselves re-rollbackable into a feedback loop | C,U | bot |
-| G11 | Crater containing chests with loot | Tile entities restored with contents post-rollback | C | bot |
+| G11 | Crater containing chests with loot | Tile entities restored with contents post-rollback (needs `-containers`, opt-in since #287) | C | bot |
 | G12 | Over-broad rollback fixed by `restore` of the same query | World returns to pre-rollback state exactly | C | bot |
 | G13 | Rollback everything except chests (negation filter) | Exclusion honored both sides | C,K | bot |
 | G14 | Rollback while 600 ev/s of live traffic ingests | Read-your-writes: just-recorded grief included (flush gate); no lost or phantom restores | C,P | bot |
+| G15 | Place/break/place churn at ONE cell, then rollback | One net reversal (count=1), world back to pre-churn air, exactly one `ROLLBACK broke` receipt, undo restores dirt (#321) | C | bot |
 
 ## H. Query & search capability — H1–H12
 
