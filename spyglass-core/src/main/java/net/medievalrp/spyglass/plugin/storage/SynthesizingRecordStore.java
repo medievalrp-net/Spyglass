@@ -3,6 +3,8 @@ package net.medievalrp.spyglass.plugin.storage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.query.QueryRequest;
 import net.medievalrp.spyglass.api.query.QueryResult;
@@ -99,9 +101,17 @@ public final class SynthesizingRecordStore implements RecordStore {
         if (!enabled) {
             return base;
         }
+        // Mark the displayed originals a rollback has since reverted, so a
+        // display can strike them through (#319). This runs over the records
+        // already in hand, independent of whether any rolled-* receipt is
+        // synthesized below - so p:-filtered lookups get it too, even though
+        // no environment-sourced receipt could match such a query.
+        Set<UUID> rolledBackIds = synthesis.rolledBackAmong(request, candidates(base));
         List<EventRecord> extra = synthesis.synthesize(request);
         if (extra.isEmpty()) {
-            return base;
+            return rolledBackIds.isEmpty()
+                    ? base
+                    : new QueryResult(base.records(), base.aggregations(), rolledBackIds);
         }
         List<EventRecord> merged = new ArrayList<>(base.records());
         merged.addAll(extra);
@@ -127,7 +137,20 @@ public final class SynthesizingRecordStore implements RecordStore {
                     ? aggByOccurred : aggByOccurred.reversed());
             aggregations = combined;
         }
-        return new QueryResult(merged, aggregations);
+        return new QueryResult(merged, aggregations, rolledBackIds);
+    }
+
+    /**
+     * Displayed originals a rollback could have reverted: the record rows
+     * plus each aggregation's representative sample. Receipts are folded in
+     * later and are never candidates - their env-sourced ids never match.
+     */
+    private static List<EventRecord> candidates(QueryResult base) {
+        List<EventRecord> candidates = new ArrayList<>(base.records());
+        for (QueryResult.RecordAggregation aggregation : base.aggregations()) {
+            candidates.add(aggregation.sample());
+        }
+        return candidates;
     }
 
     /**

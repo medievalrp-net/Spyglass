@@ -68,9 +68,9 @@ class SearchServiceTest {
                 ServiceSupport.synchronous(), ipResolver, Logger.getLogger("test"));
 
         TestFixture() {
-            when(renderer.renderSingle(any(EventRecord.class), any(), anyBoolean()))
+            when(renderer.renderSingle(any(EventRecord.class), any(), anyBoolean(), anyBoolean()))
                     .thenReturn(Component.text("rendered"));
-            when(renderer.renderAggregation(any(), any(), anyBoolean()))
+            when(renderer.renderAggregation(any(), any(), anyBoolean(), anyBoolean()))
                     .thenReturn(Component.text("rendered-agg"));
         }
     }
@@ -160,5 +160,42 @@ class SearchServiceTest {
 
         assertThat(ServiceTestSupport.plainTexts(messages))
                 .anyMatch(line -> line.contains("Query failed") && line.contains("boom"));
+    }
+
+    // #319: the reverted-row set on the result must reach the renderer, so a
+    // rolled-back record is drawn muted and a live one is not.
+    @Test
+    void marksRolledBackRecordsForTheRenderer() throws Exception {
+        TestFixture fixture = new TestFixture();
+        BlockBreakRecord rolled = record();
+        BlockBreakRecord live = record();
+        QueryRequest request = new QueryRequest(
+                List.of(),
+                net.medievalrp.spyglass.api.query.Sort.NEWEST_FIRST,
+                100,
+                java.util.EnumSet.of(net.medievalrp.spyglass.api.query.Flag.NO_GROUP),
+                false);
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(request);
+        QueryResult result = new QueryResult(
+                List.of(rolled, live), List.of(), java.util.Set.of(rolled.id()));
+        when(fixture.api.query(request)).thenReturn(CompletableFuture.completedFuture(result));
+
+        org.mockito.ArgumentCaptor<java.util.function.IntFunction> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.function.IntFunction.class);
+        fixture.subject.execute(fixture.sender, "a:break -ng");
+        verify(fixture.pageCache).store(
+                ArgumentMatchers.eq(fixture.sender),
+                ArgumentMatchers.eq(2),
+                captor.capture());
+
+        // Drive the lazy line source: index 0 is the reverted row, index 1 the live one.
+        java.util.function.IntFunction<Component> lines = captor.getValue();
+        lines.apply(0);
+        lines.apply(1);
+        verify(fixture.renderer).renderSingle(
+                ArgumentMatchers.eq(rolled), any(), anyBoolean(), ArgumentMatchers.eq(true));
+        verify(fixture.renderer).renderSingle(
+                ArgumentMatchers.eq(live), any(), anyBoolean(), ArgumentMatchers.eq(false));
     }
 }

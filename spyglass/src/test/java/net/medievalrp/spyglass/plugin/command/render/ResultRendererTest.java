@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
@@ -523,5 +525,119 @@ class ResultRendererTest {
 
         // Falls back to the default SCULK_SENSOR target instead of throwing.
         assertThat(plain).contains("SCULK_SENSOR");
+    }
+
+    // ---- #319: rolled-back rows render muted + struck through ----
+
+    @Test
+    void rolledBackRecordIsGrayStruckThroughAndItalic() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(
+                useRecord(), EnumSet.noneOf(Flag.class), true, true);
+
+        // The leading "= " marker keeps its normal styling - not struck.
+        Component marker = rendered.children().get(0);
+        assertThat(PlainTextComponentSerializer.plainText().serialize(marker)).isEqualTo("= ");
+        assertThat(marker.decoration(TextDecoration.STRIKETHROUGH))
+                .isNotEqualTo(TextDecoration.State.TRUE);
+        // Everything after the marker reads as reverted: default gray + struck
+        // through + italic, overriding the usual green/aqua/white. No bold.
+        for (int index = 1; index < rendered.children().size(); index++) {
+            forEachNode(rendered.children().get(index), node -> {
+                assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.ITALIC))
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.BOLD))
+                        .isNotEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.color()).isEqualTo(NamedTextColor.GRAY);
+            });
+        }
+        // Struck, not stripped: the content is still there to read.
+        String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
+        assertThat(plain).contains("SCULK_SENSOR").contains("Alice");
+    }
+
+    @Test
+    void normalRecordIsNeitherGrayedNorStruckThrough() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(
+                useRecord(), EnumSet.noneOf(Flag.class), true, false);
+
+        forEachNode(rendered, node ->
+                assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
+                        .isNotEqualTo(TextDecoration.State.TRUE));
+        assertThat(anyNodeHasColor(rendered, NamedTextColor.GREEN))
+                .as("a normal row keeps its colored spans")
+                .isTrue();
+    }
+
+    @Test
+    void rolledBackRowKeepsHoverAndClick() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(
+                useRecord(), EnumSet.noneOf(Flag.class), true, true);
+
+        // Muting recolors the style but leaves the teleport click intact.
+        assertThat(rendered.clickEvent()).isNotNull();
+        assertThat(rendered.clickEvent().value()).contains("/spyglass tele");
+        // The hover tooltip is not a child, so it stays readable (unstruck).
+        Component hover = extractHover(rendered);
+        assertThat(hover).isNotNull();
+        assertThat(PlainTextComponentSerializer.plainText().serialize(hover))
+                .contains("Source: Alice");
+    }
+
+    @Test
+    void rolledBackAggregationRowIsStruckThrough() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderAggregation(
+                new net.medievalrp.spyglass.api.query.QueryResult.RecordAggregation(useRecord(), 5),
+                EnumSet.noneOf(Flag.class), true, true);
+
+        // Marker stays normal; the content after it is struck + italic.
+        assertThat(rendered.children().get(0).decoration(TextDecoration.STRIKETHROUGH))
+                .isNotEqualTo(TextDecoration.State.TRUE);
+        for (int index = 1; index < rendered.children().size(); index++) {
+            forEachNode(rendered.children().get(index), node -> {
+                assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.ITALIC))
+                        .isEqualTo(TextDecoration.State.TRUE);
+            });
+        }
+        // The count is still rendered, just muted.
+        assertThat(PlainTextComponentSerializer.plainText().serialize(rendered)).contains("x5");
+    }
+
+    private static void forEachNode(Component component, java.util.function.Consumer<Component> check) {
+        check.accept(component);
+        for (Component child : component.children()) {
+            forEachNode(child, check);
+        }
+    }
+
+    private static boolean anyNodeHasColor(Component component, NamedTextColor color) {
+        if (color.equals(component.color())) {
+            return true;
+        }
+        for (Component child : component.children()) {
+            if (anyNodeHasColor(child, color)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

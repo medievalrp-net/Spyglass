@@ -3,7 +3,9 @@ package net.medievalrp.spyglass.plugin.storage;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -107,6 +109,67 @@ public final class RolledSynthesis {
             expandOp(request, op, ref, out);
         }
         return out;
+    }
+
+    /**
+     * The subset of {@code candidates} that a rollback operation has
+     * reverted, keyed by record id. Unlike {@link #synthesize}, this
+     * ignores the rolled-* receipt gates (event filter, source
+     * feasibility): it marks the ORIGINAL records a display shows, so a
+     * {@code p:<griefer>} lookup still flags that griefer's reverted rows
+     * even though no environment-sourced receipt could match such a query.
+     *
+     * <p>Coverage is evaluated in memory against the candidates already in
+     * hand, so the cost is one op-list query with no per-op expansion - the
+     * per-op store grind {@link #sourcePredicatesFeasible} avoids (#33)
+     * never happens here. "Reverted" means what a receipt means: the op's
+     * stored query matches the record at or before the op's ceiling,
+     * honoring the op's {@code --containers} inclusion (#302).
+     */
+    public Set<UUID> rolledBackAmong(QueryRequest request, Collection<EventRecord> candidates) {
+        if (candidates.isEmpty()) {
+            return Set.of();
+        }
+        List<EventRecord> ops = findOps(request);
+        if (ops.isEmpty()) {
+            return Set.of();
+        }
+        Set<UUID> reverted = new HashSet<>();
+        for (EventRecord candidate : ops) {
+            if (!(candidate instanceof RollbackOpRecord op) || op.reference() == null) {
+                continue;
+            }
+            UndoReferenceBson.Reference ref;
+            try {
+                ref = UndoReferenceBson.decodeBase64(op.reference());
+            } catch (RuntimeException ex) {
+                continue; // unreadable blob — skip the op, never the mark
+            }
+            if (ref.request() == null) {
+                continue; // v-less reference carries no query to match against
+            }
+            boolean rollback = "ROLLBACK".equalsIgnoreCase(ref.mode());
+            boolean includedContainers = ref.request().flags().contains(Flag.INCLUDE_CONTAINERS);
+            Instant ceiling = ref.ceiling();
+            for (EventRecord record : candidates) {
+                if (reverted.contains(record.id())) {
+                    continue; // already covered by an earlier op
+                }
+                if (!(record instanceof Rollbackable rollbackable)) {
+                    continue; // only block/container writes have a rolled receipt
+                }
+                if (ceiling != null && record.occurred().isAfter(ceiling)) {
+                    continue; // happened after the op ran - the op never touched it
+                }
+                if (!includedContainers && coversContainer(rollbackable, rollback)) {
+                    continue; // op ran without --containers, so it left this cell alone (#302)
+                }
+                if (PredicateEvaluator.matchesAll(ref.request().predicates(), record)) {
+                    reverted.add(record.id());
+                }
+            }
+        }
+        return reverted;
     }
 
     /**
