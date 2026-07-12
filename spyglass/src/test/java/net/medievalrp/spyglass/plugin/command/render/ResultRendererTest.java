@@ -530,7 +530,7 @@ class ResultRendererTest {
     // ---- #319: rolled-back rows render muted + struck through ----
 
     @Test
-    void rolledBackRecordIsGrayAndStruckThrough() {
+    void rolledBackRecordIsGrayStruckThroughAndItalic() {
         SpyglassApi api = mock(SpyglassApi.class);
         when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
         ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
@@ -538,13 +538,24 @@ class ResultRendererTest {
         Component rendered = renderer.renderSingle(
                 useRecord(), EnumSet.noneOf(Flag.class), true, true);
 
-        // Every span reads as reverted: gray + struck through, overriding
-        // the usual green/aqua/white so the whole line is uniformly muted.
-        forEachNode(rendered, node -> {
-            assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
-                    .isEqualTo(TextDecoration.State.TRUE);
-            assertThat(node.color()).isEqualTo(NamedTextColor.GRAY);
-        });
+        // The leading "= " marker keeps its normal styling - not struck.
+        Component marker = rendered.children().get(0);
+        assertThat(PlainTextComponentSerializer.plainText().serialize(marker)).isEqualTo("= ");
+        assertThat(marker.decoration(TextDecoration.STRIKETHROUGH))
+                .isNotEqualTo(TextDecoration.State.TRUE);
+        // Everything after the marker reads as reverted: default gray + struck
+        // through + italic, overriding the usual green/aqua/white. No bold.
+        for (int index = 1; index < rendered.children().size(); index++) {
+            forEachNode(rendered.children().get(index), node -> {
+                assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.ITALIC))
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.BOLD))
+                        .isNotEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.color()).isEqualTo(NamedTextColor.GRAY);
+            });
+        }
         // Struck, not stripped: the content is still there to read.
         String plain = PlainTextComponentSerializer.plainText().serialize(rendered);
         assertThat(plain).contains("SCULK_SENSOR").contains("Alice");
@@ -596,9 +607,17 @@ class ResultRendererTest {
                 new net.medievalrp.spyglass.api.query.QueryResult.RecordAggregation(useRecord(), 5),
                 EnumSet.noneOf(Flag.class), true, true);
 
-        forEachNode(rendered, node ->
+        // Marker stays normal; the content after it is struck + italic.
+        assertThat(rendered.children().get(0).decoration(TextDecoration.STRIKETHROUGH))
+                .isNotEqualTo(TextDecoration.State.TRUE);
+        for (int index = 1; index < rendered.children().size(); index++) {
+            forEachNode(rendered.children().get(index), node -> {
                 assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
-                        .isEqualTo(TextDecoration.State.TRUE));
+                        .isEqualTo(TextDecoration.State.TRUE);
+                assertThat(node.decoration(TextDecoration.ITALIC))
+                        .isEqualTo(TextDecoration.State.TRUE);
+            });
+        }
         // The count is still rendered, just muted.
         assertThat(PlainTextComponentSerializer.plainText().serialize(rendered)).contains("x5");
     }

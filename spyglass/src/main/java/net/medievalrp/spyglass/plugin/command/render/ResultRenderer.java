@@ -178,27 +178,46 @@ public final class ResultRenderer {
                                     Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
         Component rendered = builder.asComponent();
-        // A reverted record renders muted + struck through so "already rolled
-        // back" reads at a glance, CoreProtect-style (#319). Applied to the
-        // finished tree so every colored span is overridden in one place.
+        // A reverted record renders muted so "already rolled back" reads at a
+        // glance, CoreProtect-style (#319): default gray + struck through +
+        // italic on the content, while the leading "= " marker keeps its
+        // normal styling.
         return rolledBack ? mutedRolledBack(rendered) : rendered;
     }
 
     /**
-     * Recolor a finished row to gray and strike it through, overriding the
-     * per-span colors so the whole line reads as reverted. The click and
-     * hover ride in each node's style and survive the recolor; the hover
-     * tooltip is not a child, so it keeps its own colors.
+     * Mute a finished row: leave the leading "= " marker (the first child)
+     * alone, and gray + strike-through + italicize everything after it. The
+     * click and hover ride in the root/child styles and survive the recolor;
+     * the hover tooltip is not a child, so it keeps its own colors.
      */
-    private static Component mutedRolledBack(Component component) {
+    private static Component mutedRolledBack(Component row) {
+        List<Component> children = row.children();
+        if (children.isEmpty()) {
+            return row;
+        }
+        List<Component> muted = new ArrayList<>(children.size());
+        muted.add(children.get(0)); // "= " marker stays normal - not struck
+        for (int index = 1; index < children.size(); index++) {
+            muted.add(muteDeep(children.get(index)));
+        }
+        return row.children(muted);
+    }
+
+    /**
+     * Default gray + struck through + italic, applied to every node so it
+     * overrides the per-span green/aqua/white. No bold.
+     */
+    private static Component muteDeep(Component component) {
         Component restyled = component.color(NamedTextColor.GRAY)
-                .decorate(TextDecoration.STRIKETHROUGH);
+                .decorate(TextDecoration.STRIKETHROUGH)
+                .decorate(TextDecoration.ITALIC);
         if (component.children().isEmpty()) {
             return restyled;
         }
         List<Component> children = new ArrayList<>(component.children().size());
         for (Component child : component.children()) {
-            children.add(mutedRolledBack(child));
+            children.add(muteDeep(child));
         }
         return restyled.children(children);
     }
