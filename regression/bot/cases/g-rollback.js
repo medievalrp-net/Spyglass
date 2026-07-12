@@ -80,7 +80,7 @@ export default [
 },
 
 {
-    id: 'G3', title: 'identical rollback re-run: skips, no double-apply',
+    id: 'G3', title: 'identical rollback re-run converges, no drift',
     async run(bot) {
         const r = freshResult();
         const plot = nextPlot();
@@ -90,9 +90,14 @@ export default [
             await slabGrief(bot, plot);
             const rb1 = await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:16`);
             const rb2 = await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:16`);
-            check(r, 'sg', rb1.applied >= 64 && rb2.applied === 0 && await allAre(samples, 'stone'),
-                `re-run applied 0 (first ${rb1.applied}; re-run: ${rb2.line.trim()})`,
-                `re-run applied ${rb2.applied}, expected 0 — fast-path force-overwrite, issue #27`);
+            // Force-overwrite (#69) deliberately has no live-state guard:
+            // the re-run re-applies every matched cell to the same recorded
+            // state and the world must not drift. (The old expectation of
+            // "re-run applied 0" asserted the pre-#69 #27 skip semantics.)
+            check(r, 'sg', rb1.applied >= 64 && rb2.applied === rb1.applied
+                    && await allAre(samples, 'stone'),
+                `re-run re-applied ${rb2.applied} and converged (first ${rb1.applied})`,
+                `re-run applied ${rb2.applied}, expected ${rb1.applied} with a stable world: ${rb2.line.trim()}`);
             const cp1 = await coOp(bot, 'rollback', `u:${bot.username} t:60s r:16`);
             r.notes.push(`CP rollback after SG already restored: ${cp1.line.trim()} (world already correct)`);
             check(r, 'cp', await allAre(samples, 'stone'), 'world stays correct', 'CP disturbed a restored world');
@@ -227,7 +232,9 @@ export default [
             await sleep(600);
             await digAt(bot, x, y, z);
             await drain();
-            await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:8`);
+            // Containers are opt-in since #287: restoring a broken chest
+            // (a container-material write) needs the flag.
+            await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:8 -containers`);
             const sgItems = await blockData(x, y, z, 'Items');
             check(r, 'sg', /diamond/.test(sgItems) && /13/.test(sgItems),
                 'chest restored WITH its 13 diamonds', `restored chest items: ${sgItems.slice(0, 120) || '(none)'}`);
