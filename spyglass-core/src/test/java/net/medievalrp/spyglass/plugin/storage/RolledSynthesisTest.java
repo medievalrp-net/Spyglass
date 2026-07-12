@@ -131,12 +131,16 @@ class RolledSynthesisTest {
     // ---- #302: coverage honors the op's inclusion flags ----
 
     private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x) {
+        return chestPlace(x, GRIEF_TIME);
+    }
+
+    private static net.medievalrp.spyglass.api.event.BlockPlaceRecord chestPlace(int x, Instant at) {
         BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
                 List.of(), List.of(), List.of(), List.of(), null);
         BlockSnapshot chest = new BlockSnapshot(Material.CHEST, "minecraft:chest",
                 List.of(), List.of(), List.of(), List.of(), null);
         return new net.medievalrp.spyglass.api.event.BlockPlaceRecord(UUID.randomUUID(), "place",
-                GRIEF_TIME, GRIEF_TIME.plusSeconds(86400),
+                at, at.plusSeconds(86400),
                 Origin.player(), Source.player(GRIEFER, "Griefer"),
                 new BlockLocation(WORLD, "world", x, 64, 0),
                 "test", "CHEST", air, chest);
@@ -351,6 +355,48 @@ class RolledSynthesisTest {
                 && "DIRT".equals(r.target()) && r.location().x() == 1);
         assertThat(rolled).anyMatch(r -> "rolled-place".equals(r.event())
                 && "STONE".equals(r.target()) && r.location().x() == 2);
+    }
+
+    @Test
+    void mixedCellWithoutContainersFlagNetsOnlyPlainOriginals() {
+        MemoryStore store = new MemoryStore();
+        // Dirt churn plus a chest place at ONE cell, op stored WITHOUT
+        // --containers: the chest-covering original is gated out (#302)
+        // BEFORE the fold, so the net spans only the dirt events.
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2)),
+                chestPlace(1, GRIEF_TIME.plusSeconds(3))));
+        store.save(List.of(op(griefQueryWithFlags(), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("DIRT");
+    }
+
+    @Test
+    void mixedCellWithContainersFlagNetsAcrossTheChestToo() {
+        MemoryStore store = new MemoryStore();
+        // Same churn but the op ran WITH --containers: the chest place is
+        // covered, so the net spans all four events - from the newest
+        // covered state (the chest) to the oldest restored one (air).
+        store.save(List.of(
+                dirtPlace(1, GRIEF_TIME),
+                dirtBreak(1, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(1, GRIEF_TIME.plusSeconds(2)),
+                chestPlace(1, GRIEF_TIME.plusSeconds(3))));
+        store.save(List.of(op(griefQueryWithFlags(Flag.INCLUDE_CONTAINERS), "ROLLBACK", OP_TIME)));
+
+        List<EventRecord> rolled = new RolledSynthesis(store, java.util.Set.of("CHEST"))
+                .synthesize(request(new QueryPredicate.Eq("location.worldId", WORLD)));
+
+        assertThat(rolled).hasSize(1);
+        assertThat(rolled.get(0).event()).isEqualTo("rolled-break");
+        assertThat(rolled.get(0).target()).isEqualTo("CHEST");
     }
 
     @Test

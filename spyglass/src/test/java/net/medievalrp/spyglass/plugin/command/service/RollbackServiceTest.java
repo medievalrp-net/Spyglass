@@ -626,6 +626,59 @@ class RollbackServiceTest {
     }
 
     @Test
+    void mixedSimpleAndComplexAtOneCellFoldOnlyTheSimpleSide() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequestWithContainers());
+        // Two breaks (simple) and a deposit (complex) at the SAME cell:
+        // the simple side folds to one columnar row while the container
+        // effect rides the object path untouched - per-cell coalescing
+        // never reaches across the simple/complex split (#321).
+        Instant base = Instant.now();
+        BlockBreakRecord newer = record();
+        BlockBreakRecord older = record();
+        ContainerDepositRecord slot = depositAt(base);
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(newer, slot, older), null));
+        java.util.concurrent.atomic.AtomicReference<BlockColumns> columns =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyColumnsChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    BlockColumns cols = inv.getArgument(1);
+                    columns.set(cols);
+                    RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                    counts.applied = cols.count();
+                    return CompletableFuture.completedFuture(counts);
+                });
+        java.util.concurrent.atomic.AtomicReference<List<RollbackEffect>> complex =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyAllChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    List<RollbackEffect> effects = inv.getArgument(0);
+                    complex.set(effects);
+                    List<RollbackResult> results = effects.stream()
+                            .<RollbackResult>map(e -> new RollbackResult.Applied(e, e))
+                            .toList();
+                    return CompletableFuture.completedFuture(results);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        assertThat(columns.get()).isNotNull();
+        assertThat(columns.get().count()).isEqualTo(1);
+        assertThat(complex.get()).isNotNull();
+        assertThat(complex.get()).hasSize(1);
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("2 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
     void warnsWhenNoRollbackables() throws Exception {
         TestFixture fixture = new TestFixture();
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
