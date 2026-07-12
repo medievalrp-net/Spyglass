@@ -1046,17 +1046,25 @@ public final class RollbackService {
 
         // Simple block-replace: folded straight into primitive columns,
         // block-data interned to a palette id — no effect/snapshot object.
+        // Repeats of one cell within a window coalesce to the net write
+        // (#321): the stream arrives in apply order, so the last effect's
+        // write is what per-event replay would have left in the world.
+        // The cursor bookkeeping (seen/lastOccurred/lastId) still counts
+        // every row - a coalesced row was consumed off the wire and must
+        // advance checkpoints - while effectCount tracks distinct rows so
+        // window fullness stays a bound on live memory, not rows read.
         void block(UUID worldId, int x, int y, int z, String blockData,
                    String expectedData, java.time.Instant occurred, UUID id) {
             long start = System.nanoTime();
             seen++;
-            effectCount++;
             lastOccurred = occurred;
             lastId = id;
             BlockColumns cols = columnsByWorld.computeIfAbsent(
                     worldId, k -> new BlockColumns(columnInitialCapacity));
-            cols.add(x, y, z, cols.intern(blockData), cols.intern(expectedData));
-            recordChunkAndBox(worldId, x, y, z);
+            if (cols.addOrReplace(x, y, z, cols.intern(blockData), cols.intern(expectedData))) {
+                effectCount++;
+                recordChunkAndBox(worldId, x, y, z);
+            }
             foldNanos.addAndGet(System.nanoTime() - start);
         }
 

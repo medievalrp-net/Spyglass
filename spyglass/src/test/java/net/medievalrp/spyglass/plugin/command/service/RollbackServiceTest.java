@@ -45,11 +45,17 @@ class RollbackServiceTest {
     private static final UUID WORLD = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
 
     private static BlockBreakRecord record() {
+        return recordAt(0, Material.STONE, "minecraft:stone");
+    }
+
+    // Break of `beforeMat` at (x, 64, 0): its rollback effect writes the
+    // broken block back and expects the air the break left behind.
+    private static BlockBreakRecord recordAt(int x, Material beforeMat, String beforeData) {
         Instant now = Instant.now();
         BlockSnapshot air = new BlockSnapshot(
                 Material.AIR, "minecraft:air", List.of(), List.of(), List.of(), List.of(), null);
-        BlockSnapshot stone = new BlockSnapshot(
-                Material.STONE, "minecraft:stone", List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot before = new BlockSnapshot(
+                beforeMat, beforeData, List.of(), List.of(), List.of(), List.of(), null);
         return new BlockBreakRecord(
                 UUID.randomUUID(),
                 "break",
@@ -57,10 +63,10 @@ class RollbackServiceTest {
                 now.plusSeconds(60),
                 Origin.player(),
                 Source.player(UUID.randomUUID(), "Alice"),
-                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", 0, 64, 0),
+                new net.medievalrp.spyglass.api.util.BlockLocation(WORLD, "world", x, 64, 0),
                 "test",
-                "STONE",
-                stone,
+                beforeMat.name(),
+                before,
                 air);
     }
 
@@ -352,11 +358,9 @@ class RollbackServiceTest {
         TestFixture fixture = new TestFixture();
         when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
                 .thenReturn(sampleRequest());
-        // Distinct records, identical block-data — the columnar fold (#67)
-        // collapses both cells into one BlockColumns whose palette holds one
-        // entry per distinct block-data (stone + air), so the per-cell cost
-        // is two int ids, not a graph of snapshot objects that MTT=1 would
-        // promote to old gen.
+        // Two events at the SAME cell: the palette dedupes the repeated
+        // block-data (#67) and the cell fold collapses the rows to one
+        // net write (#321), so the summary counts the cell once.
         BlockBreakRecord a = record();
         BlockBreakRecord b = record();
         when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
@@ -373,16 +377,76 @@ class RollbackServiceTest {
                     counts.applied = cols.count();
                     return CompletableFuture.completedFuture(counts);
                 });
-        ServiceTestSupport.captureMessages(fixture.sender);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
 
         fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
 
         BlockColumns cols = captured.get();
         assertThat(cols).isNotNull();
-        assertThat(cols.count()).isEqualTo(2);
-        // Two cells, each writing stone and expecting air = 4 intern calls,
-        // but only the two distinct strings land in the palette.
+        assertThat(cols.count()).isEqualTo(1);
+        // Stone + air are still the only palette entries.
         assertThat(cols.paletteSize()).isEqualTo(2);
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void multiEventCellAppliesOneNetWrite() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        // Three logged changes at ONE cell, streamed newest-first (#321):
+        // per-event replay would write planks last, so the coalesced row
+        // must carry the LAST streamed write - the oldest event's block.
+        BlockBreakRecord newest = recordAt(0, Material.STONE, "minecraft:stone");
+        BlockBreakRecord middle = recordAt(0, Material.DIRT, "minecraft:dirt");
+        BlockBreakRecord oldest = recordAt(0, Material.OAK_PLANKS, "minecraft:oak_planks");
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(
+                        List.of(newest, middle, oldest), null));
+        java.util.concurrent.atomic.AtomicReference<BlockColumns> captured =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        when(fixture.engine.applyColumnsChunked(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.anyInt(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    BlockColumns cols = inv.getArgument(1);
+                    captured.set(cols);
+                    RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
+                    counts.applied = cols.count();
+                    return CompletableFuture.completedFuture(counts);
+                });
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        BlockColumns cols = captured.get();
+        assertThat(cols).isNotNull();
+        assertThat(cols.count()).isEqualTo(1);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:oak_planks");
+        // First-streamed (newest) event's expected-current is kept.
+        assertThat(cols.expData(0)).isEqualTo("minecraft:air");
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("1 reversals") && !line.contains("skipped"));
+    }
+
+    @Test
+    void distinctCellsDoNotCoalesce() throws Exception {
+        TestFixture fixture = new TestFixture();
+        when(fixture.parser.parse(any(CommandSender.class), any(String.class), anyInt(), any()))
+                .thenReturn(sampleRequest());
+        BlockBreakRecord a = recordAt(0, Material.STONE, "minecraft:stone");
+        BlockBreakRecord b = recordAt(1, Material.STONE, "minecraft:stone");
+        BlockBreakRecord c = recordAt(2, Material.STONE, "minecraft:stone");
+        when(fixture.store.queryPage(any(QueryRequest.class), any(), anyInt()))
+                .thenReturn(new net.medievalrp.spyglass.plugin.storage.QueryPage(List.of(a, b, c), null));
+        stubColumnarApplied(fixture);
+        List<Component> messages = ServiceTestSupport.captureMessages(fixture.sender);
+
+        fixture.subject.execute(fixture.sender, "a:break", RollbackMode.ROLLBACK);
+
+        assertThat(ServiceTestSupport.plainTexts(messages))
+                .anyMatch(line -> line.contains("3 reversals") && !line.contains("skipped"));
     }
 
     @Test
