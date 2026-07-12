@@ -166,6 +166,28 @@ class SpyglassSuggestionsTest {
         assertThat(captor.getValue()).isEqualTo("pla");
     }
 
+    // ── #287 rollback opt-in flags complete like the other flags ────────
+
+    @Test
+    void dashOffersTheContainerAndEntityFlags() {
+        assertThat(complete("search -"))
+                .contains("-containers", "-entities");
+    }
+
+    @Test
+    void partialContainerFlagCompletes() {
+        assertThat(complete("search -cont")).contains("-containers");
+    }
+
+    @Test
+    void flagCompletionKeepsEarlierParams() {
+        // The greedy-span rule (#55) applies to flags too: the whole
+        // argument must be spanned or the filter drops the suggestion.
+        List<String> out = complete("search player:Steve -ent");
+        assertThat(out).contains("player:Steve -entities");
+        assertThat(out).allMatch(s -> s.startsWith("player:Steve "));
+    }
+
     /** Headless cloud-core manager — no Bukkit server, just the suggestion engine. */
     static final class TestManager extends CommandManager<CommandSender> {
         TestManager() {
