@@ -1,4 +1,4 @@
-// Category G — rollback semantics (use-cases.md G1–G14).
+// Category G - rollback semantics (use-cases.md G1-G15).
 import {
     rcon, sleep, blockIs, blockAmong, blockData, nextPlot, claimPlot,
     releasePlot, placeAt, digAt, sgSearch, coLookup, sgOp, coOp, grep, drain,
@@ -298,5 +298,62 @@ export default [
 },
 
 { id: 'G14', title: 'rollback during live ingest (read-your-writes)', manual: 'flush-gate behavior; covered by rollback-flush-timeout design + perf campaign, noisy in a shared suite' },
+
+{
+    id: 'G15', title: 'multi-event cell rolls back as one net change',
+    async run(bot) {
+        const r = freshResult();
+        const plot = nextPlot();
+        await claimPlot(bot, plot);
+        const [x, y, z] = [plot.cx + 1, plot.y, plot.cz];
+        try {
+            // Churn one cell: place, break, place again (P/B/P). Three
+            // logged events at the SAME cell - the #321 per-cell fold must
+            // apply the rollback as ONE net write (air, the pre-churn
+            // state), not three separate flips.
+            await rcon(`setblock ${x} ${y} ${z} air`);
+            await sleep(400);
+            await placeAt(bot, 'dirt', x, y, z);
+            await digAt(bot, x, y, z);
+            await placeAt(bot, 'dirt', x, y, z);
+            await drain();
+
+            const rb = await sgOp(bot, 'rollback', `p:${bot.username} t:60s r:16`);
+            check(r, 'sg', rb.applied === 1,
+                `one net reversal for the churn cell (${rb.line.trim()})`,
+                `expected 1 net reversal, got ${rb.applied}: ${rb.line.trim()}`);
+            check(r, 'sg', await blockIs(x, y, z, 'air'),
+                'world truth: churn cell landed back on air',
+                `churn cell not air after rollback: ${await blockAmong(x, y, z, ['dirt', 'air'])}`);
+
+            const sg = await sgSearch(bot, `trg:${x},${y},${z} t:60s -ng`);
+            // Distinguish synthesized ROLLBACK receipts from the struck-
+            // through ORIGINAL place/break rows at the same cell - those
+            // also render "placed"/"broke" but are sourced from the bot,
+            // not ROLLBACK. Match both tokens rather than trust exact
+            // adjacency (see G10 for the same ROLLBACK-prefix idiom).
+            const rollbackBroke = /(?=.*ROLLBACK)(?=.*broke)/i;
+            const rollbackPlaced = /(?=.*ROLLBACK)(?=.*placed)/i;
+            const brokeReceipts = grep(sg, rollbackBroke);
+            const placedReceipts = grep(sg, rollbackPlaced);
+            check(r, 'sg', brokeReceipts.length === 1 && placedReceipts.length === 0,
+                `exactly one ROLLBACK broke receipt, zero ROLLBACK placed (${brokeReceipts.length}/${placedReceipts.length})`,
+                `broke=${brokeReceipts.length} placed=${placedReceipts.length}: ${sg.slice(-6).join(' | ')}`);
+
+            await sgOp(bot, 'undo', '');
+            check(r, 'sg', await blockIs(x, y, z, 'dirt'),
+                'undo restored the pre-rollback (dirt) state',
+                `undo did not restore dirt: ${await blockAmong(x, y, z, ['dirt', 'air'])}`);
+            // Per-cell coalescing (#321) is a Spyglass-only apply-window
+            // optimization; CoreProtect has no equivalent notion of net
+            // cells to compare against.
+            r.cp.verdict = NA;
+            r.notes.push('CP has no per-cell fold to compare against (#321 is SG-only coalescing)');
+        } finally {
+            await releasePlot(plot);
+        }
+        return r;
+    },
+},
 
 ];

@@ -10,6 +10,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
+import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -77,6 +78,18 @@ class ClickHouseSynthesisParityIT {
         receiptsStore.save(originals);
         synthBase.save(originals);
 
+        // #321 multi-event cells live only as originals on the synth side -
+        // the receipts side seeds the NET rows the engine would have
+        // persisted after coalescing. x=103 is a place/break/place churn
+        // that nets to one rolled-break DIRT; x=104 is a cancelling
+        // place/break pair that nets to nothing.
+        synthBase.save(List.of(
+                dirtPlace(103, GRIEF_TIME),
+                dirtBreak(103, GRIEF_TIME.plusSeconds(1)),
+                dirtPlace(103, GRIEF_TIME.plusSeconds(2)),
+                dirtPlace(104, GRIEF_TIME),
+                dirtBreak(104, GRIEF_TIME.plusSeconds(1))));
+
         // Receipts store: persisted rows exactly as the engine's
         // buildRollbackSourceRecord used to emit them.
         List<EventRecord> receipts = new ArrayList<>();
@@ -86,11 +99,21 @@ class ClickHouseSynthesisParityIT {
                     Origin.rollback("Operator"), Source.environment("ROLLBACK"),
                     new BlockLocation(WORLD, "world", x, 64, 0), "test", "STONE"));
         }
+        // The churn cell at 103 coalesced to ONE net receipt naming the DIRT
+        // that ended up destroyed; the cancelling pair at 104 nets to
+        // nothing, so no receipt row exists for it.
+        receipts.add(new BlockUseRecord(EventIds.newId(), "rolled-break",
+                OP_TIME, EXPIRES,
+                Origin.rollback("Operator"), Source.environment("ROLLBACK"),
+                new BlockLocation(WORLD, "world", 103, 64, 0), "test", "DIRT"));
         receiptsStore.save(receipts);
 
-        // Synth store: one rollback-op record instead.
+        // Synth store: one rollback-op record instead. Its box spans the
+        // whole griefed run (100..104) and its stored query covers every
+        // event by the griefer, so the churn cells' places are inside
+        // coverage too.
         String blob = UndoReferenceBson.encodeBase64(griefQuery(), "ROLLBACK", OP_TIME,
-                List.of(new UndoReferenceBson.WorldBox(WORLD, 100, 64, 0, 102, 64, 0)), 3, 0);
+                List.of(new UndoReferenceBson.WorldBox(WORLD, 100, 64, 0, 104, 64, 0)), 3, 0);
         synthBase.save(List.of(new RollbackOpRecord(EventIds.newId(), "rollback-op",
                 OP_TIME, EXPIRES,
                 Origin.rollback("Operator"), Source.player(UUID.randomUUID(), "Operator"),
@@ -120,9 +143,12 @@ class ClickHouseSynthesisParityIT {
     }
 
     private static QueryRequest griefQuery() {
+        // Covers every event by the griefer (not just breaks): the #321
+        // churn cells fold place AND break originals, so the op's stored
+        // query must reach the places too. Cells 100-102 still hold only
+        // breaks, so their net stays one rolled-place each.
         return new QueryRequest(List.of(
-                new QueryPredicate.Eq("source.playerId", GRIEFER),
-                new QueryPredicate.Eq("event", "break")),
+                new QueryPredicate.Eq("source.playerId", GRIEFER)),
                 Sort.NEWEST_FIRST, 10_000, EnumSet.of(Flag.NO_GROUP), false);
     }
 
@@ -146,6 +172,30 @@ class ClickHouseSynthesisParityIT {
                 Origin.player(), Source.player(UUID.randomUUID(), "Bystander"),
                 new BlockLocation(WORLD, "world", x, 64, 0),
                 "test", "DIRT", stone, stone);
+    }
+
+    private static BlockPlaceRecord dirtPlace(int x, Instant at) {
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot dirt = new BlockSnapshot(Material.DIRT, "minecraft:dirt",
+                List.of(), List.of(), List.of(), List.of(), null);
+        return new BlockPlaceRecord(EventIds.newId(), "place",
+                at, EXPIRES,
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0),
+                "test", "DIRT", air, dirt);
+    }
+
+    private static BlockBreakRecord dirtBreak(int x, Instant at) {
+        BlockSnapshot dirt = new BlockSnapshot(Material.DIRT, "minecraft:dirt",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        return new BlockBreakRecord(EventIds.newId(), "break",
+                at, EXPIRES,
+                Origin.player(), Source.player(GRIEFER, "Griefer"),
+                new BlockLocation(WORLD, "world", x, 64, 0),
+                "test", "DIRT", dirt, air);
     }
 
     private static QueryRequest search(QueryPredicate... predicates) {
@@ -218,6 +268,36 @@ class ClickHouseSynthesisParityIT {
         QueryRequest request = search(
                 new QueryPredicate.Eq("location.worldId", WORLD),
                 new QueryPredicate.Eq("location.x", 500),
+                new QueryPredicate.Range("occurred",
+                        GRIEF_TIME.minusSeconds(3600), OP_TIME.plusSeconds(3600)));
+        assertThat(project(receiptsStore.query(request).records())).isEmpty();
+        assertThat(project(synthStore.query(request).records())).isEmpty();
+    }
+
+    // #321: the churn cell's three originals fold to the single net receipt
+    // the engine persisted - identical projection, and exactly one rolled row.
+    @Test
+    void multiEventCellShowsOneNetReceiptBothWays() {
+        QueryRequest request = search(
+                new QueryPredicate.Eq("location.worldId", WORLD),
+                new QueryPredicate.Eq("location.x", 103),
+                new QueryPredicate.Eq("location.y", 64),
+                new QueryPredicate.Eq("location.z", 0),
+                new QueryPredicate.Range("occurred",
+                        GRIEF_TIME.minusSeconds(3600), OP_TIME.plusSeconds(3600)));
+        assertParity(request);
+        List<String> synthesized = project(synthStore.query(request).records());
+        assertThat(synthesized).hasSize(1);
+        assertThat(synthesized.get(0)).startsWith("rolled-break|DIRT|103|");
+    }
+
+    // #321: the cancelling place/break pair nets to nothing - the engine
+    // persisted no receipt, and the synth side synthesizes none.
+    @Test
+    void cancelledCellShowsNothingEitherWay() {
+        QueryRequest request = search(
+                new QueryPredicate.Eq("location.worldId", WORLD),
+                new QueryPredicate.Eq("location.x", 104),
                 new QueryPredicate.Range("occurred",
                         GRIEF_TIME.minusSeconds(3600), OP_TIME.plusSeconds(3600)));
         assertThat(project(receiptsStore.query(request).records())).isEmpty();

@@ -108,7 +108,7 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | F9 | Wither spawn breaks containment blocks | Entity grief rollback | C | rcon |
 | F10 | Lightning starts a fire | Attribution chain (natural); rollback scope correct | C | rcon |
 
-## G. Rollback semantics — G1–G14
+## G. Rollback semantics - G1-G15
 
 | # | Scenario | Verify | Dim | Auto |
 |---|---|---|---|---|
@@ -126,6 +126,7 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | G12 | Over-broad rollback fixed by `restore` of the same query | World returns to pre-rollback state exactly | C | bot |
 | G13 | Rollback everything except chests (negation filter) | Exclusion honored both sides | C,K | bot |
 | G14 | Rollback while 600 ev/s of live traffic ingests | Read-your-writes: just-recorded grief included (flush gate); no lost or phantom restores | C,P | bot |
+| G15 | Place/break/place churn at ONE cell, then rollback | One net reversal (count=1), world back to pre-churn air, exactly one `ROLLBACK broke` receipt, undo restores dirt (#321) | C | bot |
 
 ## H. Query & search capability — H1–H12
 

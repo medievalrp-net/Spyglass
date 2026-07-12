@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
  * search request we (1) find candidate operations in the request's
  * time window, (2) re-run each operation's stored query narrowed to
  * the request's location constraints, (3) manufacture virtual
- * receipts — {@code Source.environment("ROLLBACK")},
+ * receipts - {@code Source.environment("ROLLBACK")},
  * {@code Origin.rollback(operator)}, the operation's timestamp, the
  * restored material as target — and (4) re-apply the caller's full
  * predicate tree in memory so filter behavior matches persisted rows.
