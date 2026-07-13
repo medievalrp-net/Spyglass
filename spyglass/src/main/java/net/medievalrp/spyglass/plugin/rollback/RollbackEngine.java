@@ -1099,6 +1099,9 @@ public final class RollbackEngine {
         int from = work.from;
         BitSet nonSimpleMask = work.nonSimpleMask;
         BlockData[] writes = work.writes;
+        // Chest cells written this chunk, re-paired after the writes commit
+        // so a rolled-back double chest comes back coherent (#324).
+        List<int[]> chestCells = null;
         try {
             // The worker's palette writes are all in; drop the block
             // entities they orphaned before any tile state resolves
@@ -1128,6 +1131,12 @@ public final class RollbackEngine {
                             Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                             applyTileEntityState(block, replacement);
                         }
+                        if (writes[j] instanceof org.bukkit.block.data.type.Chest) {
+                            if (chestCells == null) {
+                                chestCells = new ArrayList<>(2);
+                            }
+                            chestCells.add(new int[]{loc.x(), loc.y(), loc.z()});
+                        }
                         resultArray[targetIndex] = appliedWithInverse(effect);
                     } catch (RuntimeException ex) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
@@ -1136,6 +1145,11 @@ public final class RollbackEngine {
                 }
             }
             ChunkDirectWriter.finishChunk(work.ctx);
+            if (chestCells != null) {
+                for (int[] cell : chestCells) {
+                    ChestRepair.repair(world, cell[0], cell[1], cell[2]);
+                }
+            }
             // Direct writes never schedule fluid ticks; re-arm the fluid
             // engine over this chunk's cells and their shell (#270).
             if (writes != null) {
@@ -1442,6 +1456,16 @@ public final class RollbackEngine {
                         }
                         ChunkDirectWriter.finishChunk(cc.ctx);
                     }
+                    // Writes for this chunk are committed; re-pair any chest
+                    // halves so a rolled-back double chest comes back coherent
+                    // (#324). tileCells carries every block-entity cell the
+                    // write touched, empty chests included; repair no-ops the
+                    // rest.
+                    if (cc.tileCells != null) {
+                        for (int[] cell : cc.tileCells) {
+                            ChestRepair.repair(world, cell[0], cell[1], cell[2]);
+                        }
+                    }
                     // Direct writes never schedule fluid ticks; re-arm the
                     // fluid engine over this chunk's cells and shell (#270).
                     FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
@@ -1618,6 +1642,14 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(null, world, x, y, z, bd);
+            // Same block-entity bookkeeping as the worker path so the
+            // post-write chest re-pair (#324) covers this fallback too.
+            if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                if (cc.tileCells == null) {
+                    cc.tileCells = new java.util.ArrayList<>(4);
+                }
+                cc.tileCells.add(new int[]{x, y, z});
+            }
             applied++;
         }
         cc.applied = applied;
