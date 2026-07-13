@@ -13,6 +13,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockUseRecord;
@@ -620,6 +621,65 @@ class ResultRendererTest {
         }
         // The count is still rendered, just muted.
         assertThat(PlainTextComponentSerializer.plainText().serialize(rendered)).contains("x5");
+    }
+
+    /**
+     * #322 regression guard. The reported symptom was that a rolled-back row
+     * reached a live 1.21.11 client gray + italic but NOT struck through -
+     * "strikethrough dropped on the wire while italic survives". That turned
+     * out to be a false alarm in the styling proof (its {@code struck}
+     * predicate wrongly required the deliberately-unstruck "= " marker to be
+     * struck), not a serialization loss: {@code muteDeep} sets STRIKETHROUGH
+     * and ITALIC together on every content node, and the network serializer
+     * keeps both.
+     *
+     * <p>This pins that at the serialization boundary. Adventure's gson
+     * serializer shares the {@code StyleSerializer} the NBT network path uses,
+     * so a decoration it keeps is a decoration the client receives. The two
+     * decorations must appear the same number of times (set together, never
+     * one without the other), and after a round-trip the content stays struck
+     * while the marker stays normal.
+     */
+    @Test
+    void rolledBackRowStrikethroughSurvivesSerialization() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        when(api.displayRenderer("sculk")).thenReturn(Optional.empty());
+        ResultRenderer renderer = new ResultRenderer(api, configWithVerb("sculk", "triggered"));
+
+        Component rendered = renderer.renderSingle(
+                useRecord(), EnumSet.noneOf(Flag.class), true, true);
+        String json = GsonComponentSerializer.gson().serialize(rendered);
+
+        // The exact #322 hypothesis, refuted: strikethrough is not dropped
+        // while italic is kept. muteDeep sets them together, so they serialize
+        // the same number of times.
+        assertThat(json).contains("\"strikethrough\":true");
+        assertThat(countOf(json, "\"strikethrough\":true"))
+                .as("strikethrough must survive serialization exactly as often as italic")
+                .isEqualTo(countOf(json, "\"italic\":true"));
+
+        // Round-trip and confirm the whole contract survives: the "= " marker
+        // stays unstruck, every content node stays struck.
+        Component roundTripped = GsonComponentSerializer.gson().deserialize(json);
+        Component marker = roundTripped.children().get(0);
+        assertThat(PlainTextComponentSerializer.plainText().serialize(marker)).isEqualTo("= ");
+        assertThat(marker.decoration(TextDecoration.STRIKETHROUGH))
+                .isNotEqualTo(TextDecoration.State.TRUE);
+        for (int index = 1; index < roundTripped.children().size(); index++) {
+            forEachNode(roundTripped.children().get(index), node ->
+                    assertThat(node.decoration(TextDecoration.STRIKETHROUGH))
+                            .isEqualTo(TextDecoration.State.TRUE));
+        }
+    }
+
+    private static int countOf(String haystack, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = haystack.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 
     private static void forEachNode(Component component, java.util.function.Consumer<Component> check) {
