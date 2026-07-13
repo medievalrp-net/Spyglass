@@ -423,7 +423,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new ShulkerTransactionListener(recorder, support,
                         task -> getServer().getScheduler().runTask(this, task)),
                 new BundleTransactionListener(recorder, support, this),
-                new CrafterListener(recorder, support),
+                new CrafterListener(recorder, support, deferredSerializer),
                 new SculkListener(recorder, support),
                 new BrushListener(recorder, support, delayedTracker),
                 new VaultListener(recorder, support, delayedTracker));
