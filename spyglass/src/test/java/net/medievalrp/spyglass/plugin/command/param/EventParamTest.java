@@ -20,6 +20,11 @@ import org.junit.jupiter.api.Test;
 class EventParamTest {
 
     private static final Set<String> ENABLED = Set.of("break", "place", "say", "death", "deposit");
+    // As shipped: the rolled-* audit events are enabled by default, so a:break
+    // expands to include the rollback's own rolled-break receipts (#330).
+    private static final Set<String> ENABLED_WITH_ROLLED = Set.of(
+            "break", "place", "deposit", "withdraw", "say",
+            "rolled-break", "rolled-place", "rolled-deposit", "rolled-withdraw");
 
     @Test
     void singleKnownEventProducesEq() throws Exception {
@@ -155,6 +160,76 @@ class EventParamTest {
 
         QueryPredicate predicate = param.parse("a", "voice", ctx());
         assertThat(((QueryPredicate.Eq) predicate).value()).isEqualTo("voice");
+    }
+
+    // ---- #330: a:<event> also matches the rollback's rolled-<event> receipts ----
+
+    @Test
+    void breakExpandsToIncludeRolledBreakWhenEnabled() throws Exception {
+        // The headline case: a:break must surface the rollback that removed a
+        // block (a synthesized rolled-break), not just genuine player breaks.
+        QueryPredicate predicate = new EventParam(ENABLED_WITH_ROLLED).parse("a", "break", ctx());
+
+        assertThat(predicate).isInstanceOf(QueryPredicate.In.class);
+        assertThat(((QueryPredicate.In) predicate).values().toArray())
+                .containsExactly("break", "rolled-break");
+    }
+
+    @Test
+    void placeDepositWithdrawEachExpandToTheirRolledCounterpart() throws Exception {
+        EventParam param = new EventParam(ENABLED_WITH_ROLLED);
+        assertThat(((QueryPredicate.In) param.parse("a", "place", ctx())).values().toArray())
+                .containsExactly("place", "rolled-place");
+        assertThat(((QueryPredicate.In) param.parse("a", "deposit", ctx())).values().toArray())
+                .containsExactly("deposit", "rolled-deposit");
+        assertThat(((QueryPredicate.In) param.parse("a", "withdraw", ctx())).values().toArray())
+                .containsExactly("withdraw", "rolled-withdraw");
+    }
+
+    @Test
+    void expansionSkippedWhenRolledEventDisabled() throws Exception {
+        // ENABLED has no rolled-* events (operator disabled the audit): a:break
+        // stays a bare Eq, preserving the old behavior.
+        QueryPredicate predicate = new EventParam(ENABLED).parse("a", "break", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Eq.class);
+        assertThat(((QueryPredicate.Eq) predicate).value()).isEqualTo("break");
+    }
+
+    @Test
+    void eventWithoutARolledCounterpartIsNotExpanded() throws Exception {
+        // "say" has no rollback shape, so it stays a bare Eq even with the
+        // rolled audit enabled.
+        QueryPredicate predicate = new EventParam(ENABLED_WITH_ROLLED).parse("a", "say", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Eq.class);
+        assertThat(((QueryPredicate.Eq) predicate).value()).isEqualTo("say");
+    }
+
+    @Test
+    void explicitRolledEventIsNotDoubleExpanded() throws Exception {
+        // rolled-break is not itself a base name, so a:rolled-break stays exact.
+        QueryPredicate predicate = new EventParam(ENABLED_WITH_ROLLED).parse("a", "rolled-break", ctx());
+        assertThat(predicate).isInstanceOf(QueryPredicate.Eq.class);
+        assertThat(((QueryPredicate.Eq) predicate).value()).isEqualTo("rolled-break");
+    }
+
+    @Test
+    void baseAndRolledTypedTogetherDoNotDuplicate() throws Exception {
+        // a:break,rolled-break must not yield [break, rolled-break, rolled-break].
+        QueryPredicate predicate = new EventParam(ENABLED_WITH_ROLLED)
+                .parse("a", "break,rolled-break", ctx());
+        assertThat(((QueryPredicate.In) predicate).values().toArray())
+                .containsExactly("break", "rolled-break");
+    }
+
+    @Test
+    void excludingAnEventAlsoExcludesItsRolledCounterpart() throws Exception {
+        // a:!break must hide the rollback-caused breaks too, symmetric with
+        // the include side.
+        QueryPredicate predicate = new EventParam(ENABLED_WITH_ROLLED).parse("a", "!break", ctx());
+
+        QueryPredicate inner = ((QueryPredicate.Not) predicate).predicate();
+        assertThat(((QueryPredicate.In) inner).values().toArray())
+                .containsExactly("break", "rolled-break");
     }
 
     private static ParamContext ctx() {
