@@ -21,6 +21,9 @@ public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(
             "-ng", "-g", "-nc", "-ex", "-we",
+            // #287 rollback opt-ins: parsed by QueryStringParser but were
+            // missing here, so they worked when typed yet never completed.
+            "-containers", "-entities",
             "-ord=asc", "-ord=desc",
             "-nod=r", "-nod=t");
 
