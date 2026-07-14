@@ -91,10 +91,15 @@ public final class QueryStringParser {
                 if (token.isEmpty()) {
                     continue;
                 }
-                if (token.startsWith("-")) {
+                if (startsWithFlagDash(token)) {
                     // Accept GNU-style double dashes too: --containers and
-                    // -containers are the same flag (#287).
-                    String name = token.substring(token.startsWith("--") ? 2 : 1)
+                    // -containers are the same flag (#287). Phone keyboards
+                    // and chat bridges substitute smart punctuation for a
+                    // typed "--" (iOS sends one em dash), so the Unicode dash
+                    // family marks a flag as well; without this the bare-token
+                    // fallback below rewrites a mangled flag into p:<token>
+                    // and the query silently matches nothing (#333).
+                    String name = stripLeadingFlagDashes(token)
                             .toLowerCase(java.util.Locale.ROOT);
                     // Value separator: '=' or ':', whichever comes first.
                     // The docs and the rest of the query language use ':';
@@ -188,7 +193,7 @@ public final class QueryStringParser {
                                     + " blocks - add r:N or -g for global)",
                             net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
                 }
-                // defaultRadius == 0 means "global default" — no predicate
+                // defaultRadius == 0 means "global default" - no predicate
                 // added, no reminder shown. The whole-DB scan is what the
                 // operator opted into.
             }
@@ -265,7 +270,7 @@ public final class QueryStringParser {
         };
     }
 
-    /** Reserved flag aliases — {@link #applyFlag} handles these
+    /** Reserved flag aliases - {@link #applyFlag} handles these
      *  directly and a custom {@link FlagHandler} cannot shadow them. */
     private static boolean isBuiltinFlag(String alias) {
         return switch (alias) {
@@ -281,11 +286,37 @@ public final class QueryStringParser {
         };
     }
 
+    /**
+     * True when {@code c} is a hyphen for flag purposes: the ASCII hyphen or
+     * the smart-punctuation substitutes (U+2010 hyphen through U+2015
+     * horizontal bar, and the U+2212 minus sign).
+     */
+    private static boolean isFlagDash(char c) {
+        return c == '-' || (c >= '\u2010' && c <= '\u2015') || c == '\u2212';
+    }
+
+    private static boolean startsWithFlagDash(String token) {
+        return !token.isEmpty() && isFlagDash(token.charAt(0));
+    }
+
+    /**
+     * Strip the leading dash run, capped at two marks so ASCII semantics are
+     * unchanged ({@code ---x} still yields the unknown flag {@code -x}). A
+     * single em dash IS the typed {@code --}, so one mark strips like two.
+     */
+    private static String stripLeadingFlagDashes(String token) {
+        int i = 0;
+        while (i < token.length() && i < 2 && isFlagDash(token.charAt(i))) {
+            i++;
+        }
+        return token.substring(i);
+    }
+
     private void applyFlag(String name, String flagValue, CommandSender sender,
                            QueryParamHandler.ParamContext context, ParseState state)
             throws ParamParseException {
         // Built-ins win over custom flags. A third-party plugin can't
-        // shadow `-g` by registering a `g` FlagHandler — the parser
+        // shadow `-g` by registering a `g` FlagHandler - the parser
         // checks the switch below first and the lookup never runs.
         if (!isBuiltinFlag(name)) {
             Optional<FlagHandler> handler = api.flag(name);
