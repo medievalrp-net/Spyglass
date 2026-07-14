@@ -572,6 +572,29 @@ class RolledSynthesisTest {
     }
 
     @Test
+    void expandedBreakFilterSurfacesRolledBreak() {
+        MemoryStore store = new MemoryStore();
+        // A place rolled back becomes a rolled-break (block -> air), the
+        // exact shape of the #330 report (magenta placed, then removed).
+        store.save(List.of(dirtPlace(1, GRIEF_TIME)));
+        store.save(List.of(op(grieferQuery(), "ROLLBACK", OP_TIME)));
+        RolledSynthesis synthesis = new RolledSynthesis(store);
+
+        // #330: EventParam now parses a:break to In(event, [break,
+        // rolled-break]); that filter must surface the rollback's rolled-break.
+        List<EventRecord> expanded = synthesis.synthesize(request(
+                new QueryPredicate.In("event", List.of("break", "rolled-break"))));
+        assertThat(expanded).hasSize(1);
+        assertThat(expanded.get(0).event()).isEqualTo("rolled-break");
+        assertThat(expanded.get(0).target()).isEqualTo("DIRT");
+
+        // A bare a:break (no expansion) still suppresses it - the synthesis
+        // contract itself is unchanged; the fix is the filter EventParam builds.
+        assertThat(synthesis.synthesize(request(
+                new QueryPredicate.Eq("event", "break")))).isEmpty();
+    }
+
+    @Test
     void synthesizedIdsAreDeterministicAcrossSearches() {
         MemoryStore store = new MemoryStore();
         store.save(List.of(griefBreak(1)));
