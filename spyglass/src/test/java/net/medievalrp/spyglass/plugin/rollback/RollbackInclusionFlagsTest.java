@@ -106,6 +106,39 @@ class RollbackInclusionFlagsTest {
     }
 
     @Test
+    void missingContainerSkipTellsTheOperatorWhatToDo() {
+        // #335: the target cell no longer holds a container (it was broken).
+        // Include-everything engine so the #287 gate is not what skips here.
+        RollbackEngine engine = new RollbackEngine();
+
+        World world = mock(World.class);
+        when(world.getUID()).thenReturn(WORLD_ID);
+        when(world.getName()).thenReturn("world");
+        Block block = mock(Block.class);
+        when(block.getState()).thenReturn(mock(org.bukkit.block.BlockState.class));
+        when(world.getBlockAt(1, 64, 2)).thenReturn(block);
+
+        PluginManager pm = mock(PluginManager.class);
+        when(pm.getPlugin("FastAsyncWorldEdit")).thenReturn(null);
+        when(pm.getPlugin("WorldEdit")).thenReturn(null);
+
+        RollbackResult result;
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
+            bukkit.when(Bukkit::isPrimaryThread).thenReturn(true);
+            bukkit.when(Bukkit::getPluginManager).thenReturn(pm);
+            bukkit.when(() -> Bukkit.getWorld(WORLD_ID)).thenReturn(world);
+            bukkit.when(() -> Bukkit.getWorld("world")).thenReturn(world);
+            result = engine.applyAll(List.of(depositRevert()), mock(CommandSender.class)).get(0);
+        }
+
+        assertThat(result).isInstanceOf(RollbackResult.Skipped.class);
+        assertThat(((RollbackReason.NotSupported) ((RollbackResult.Skipped) result).reason()).detail())
+                .isEqualTo(RollbackEngine.MISSING_CONTAINER_SKIP)
+                .contains("place a container")
+                .contains("roll back the area");
+    }
+
+    @Test
     void entityWorkSkipsWithoutTheFlagAndNamesIt() {
         RollbackEngine engine = new RollbackEngine();
         engine.includeInRollback(false, false);
