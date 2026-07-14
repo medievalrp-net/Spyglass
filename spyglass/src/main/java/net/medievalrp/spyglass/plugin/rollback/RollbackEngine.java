@@ -278,6 +278,15 @@ public final class RollbackEngine {
     public static final String CONTAINERS_SKIP =
             "Containers are skipped by default (pass --containers to include them)";
 
+    /**
+     * Skip message when a container transaction's target block no longer
+     * holds a container (#335). We do NOT restore the block here - it comes
+     * back when the operator rolls back the area - so the transaction just
+     * skips and tells them how to give the reversal something to write into.
+     */
+    public static final String MISSING_CONTAINER_SKIP =
+            "Container is missing. Please place a container or roll back the area first.";
+
     /** Skip message for entity work withheld by default (#287). */
     public static final String ENTITIES_SKIP =
             "Entities are skipped by default (pass --entities to include them)";
@@ -2018,7 +2027,7 @@ public final class RollbackEngine {
             return new SurfaceOrSkip(null, "Transactions on " + containerType
                     + " entities cannot be reversed yet.");
         }
-        return new SurfaceOrSkip(null, "Target is no longer a container.");
+        return new SurfaceOrSkip(null, MISSING_CONTAINER_SKIP);
     }
 
     private static EntityType entityContainerType(String containerType) {
