@@ -10,6 +10,7 @@ Upgrading from 1.0.8 or 1.0.9: on first boot Spyglass rewrites config.conf to th
 - Rolling back a broken double chest re-pairs the halves into one 54-slot inventory; they previously came back as a mismatched left + single pair.
 - Crafter output serialization moved off the main thread, same pattern as the other container listeners. With crafter farms active it was most of Spyglass's main-thread cost.
 - Flags survive phone-keyboard smart punctuation: an em or en dash typed for -- reads as the flag marker instead of silently turning the flag into a player filter that matches nothing.
+- Rolling back container contents when the container block is gone now tells you what to do (place a container or roll back the area first) instead of skipping with no explanation.
 - Rollbacks bounded by before: warn when newer history above the ceiling is left unrolled.
 - /s is registered as a root alias by default (it was opt-in when introduced in 1.0.9); set commands.s-alias = false if another plugin owns /s.
 - The inspector wand looks back tool.lookback (default 26w) instead of a hidden 7 days, and the results header now names the window.
