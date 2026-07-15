@@ -727,7 +727,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 config.commands().sAlias());
         commands.register();
 
-        if (isWorldEditInstalled()) {
+        if (config.worldedit().enabled() && isWorldEditInstalled()) {
             try {
                 worldEditSubscriber = new WorldEditSubscriber(recorder, support, queryExecutor, this, getLogger());
                 worldEditSubscriber.register();
@@ -735,14 +735,19 @@ public final class SpyglassPlugin extends JavaPlugin {
                 getLogger().warning("Spyglass: WorldEdit integration failed to initialize: " + thrown);
                 worldEditSubscriber = null;
             }
+        } else if (!config.worldedit().enabled() && isWorldEditInstalled()) {
+            getLogger().info("Spyglass: WorldEdit logging disabled (worldedit.enabled = false);"
+                    + " WorldEdit and FAWE edits are not recorded.");
         }
         // Always register the lifecycle listener so WE hot-load (e.g.
         // /plugman load) can wire up recording mid-session without a
         // server restart. If WE is already running, the existing
         // subscriber is handed in and the listener only acts on a
-        // future disable.
+        // future disable. The gate is read live so the #332 toggle (and a
+        // later /sg reload of it) governs hot-load registration too.
         worldEditLifecycle = new WorldEditLifecycleListener(
-                recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber);
+                recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber,
+                () -> config.worldedit().enabled());
         getServer().getPluginManager().registerEvents(worldEditLifecycle, this);
 
         // bStats anonymous usage metrics. The org.bstats package is relocated
