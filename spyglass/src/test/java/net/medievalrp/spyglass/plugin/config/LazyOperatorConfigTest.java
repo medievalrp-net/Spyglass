@@ -92,6 +92,26 @@ class LazyOperatorConfigTest {
     }
 
     @Test
+    void worldEditHookDefaultsOnWhenTheKeyIsAbsent(@TempDir Path dataFolder) throws Exception {
+        // #332: an upgraded config with no worldedit block keeps recording
+        // WorldEdit/FAWE - the absent key must read true.
+        write(dataFolder, "database {\n  backend = \"sqlite\"\n}\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.worldedit().enabled()).isTrue();
+    }
+
+    @Test
+    void worldEditHookReadsExplicitFalse(@TempDir Path dataFolder) throws Exception {
+        write(dataFolder, "worldedit {\n  enabled = false\n}\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.worldedit().enabled()).isFalse();
+    }
+
+    @Test
     void handEditedFutureVersionSkipsMigrationAndStillBoots(@TempDir Path dataFolder)
             throws Exception {
         write(dataFolder, "config-version = 99\n"

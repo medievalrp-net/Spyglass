@@ -23,7 +23,8 @@ public record SpyglassConfig(
         Server server,
         Metrics metrics,
         Analytics analytics,
-        Commands commands) {
+        Commands commands,
+        WorldEdit worldedit) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -233,7 +234,15 @@ public record SpyglassConfig(
                 // /s as a third root alias next to /spyglass and /sg. On by
                 // default (#279, reversing #250's opt-in); an operator whose
                 // server has another plugin claiming /s sets s-alias = false.
-                new Commands(root.node("commands", "s-alias").getBoolean(true)));
+                new Commands(root.node("commands", "s-alias").getBoolean(true)),
+                // WorldEdit/FAWE logging hook. On by default (#332); an
+                // absent key reads true so upgrades keep recording. When
+                // false, the subscriber and FAWE hook are never registered,
+                // so large //set / //replace ops build no records and run at
+                // native speed. NOT the same as events.place/break, which
+                // only gate hand place/break - flipping those does nothing
+                // to a WorldEdit op.
+                new WorldEdit(root.node("worldedit", "enabled").getBoolean(true)));
     }
 
     /**
@@ -552,6 +561,16 @@ public record SpyglassConfig(
      * to {@code "default"} for a single-server deployment.
      */
     public record Commands(boolean sAlias) {
+    }
+
+    /**
+     * The WorldEdit/FAWE logging hook (#332). {@code enabled} defaults to
+     * {@code true}; set {@code worldedit.enabled = false} to stop Spyglass
+     * recording WorldEdit and FAWE edits. Distinct from the
+     * {@code events.place}/{@code events.break} toggles, which only gate the
+     * Bukkit hand-place/break listeners and have no effect on a WorldEdit op.
+     */
+    public record WorldEdit(boolean enabled) {
     }
 
     public record Server(String name) {
