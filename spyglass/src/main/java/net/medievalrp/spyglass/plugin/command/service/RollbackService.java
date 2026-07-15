@@ -162,16 +162,18 @@ public final class RollbackService {
                               net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                               int initialApplied, int initialSkipped,
                               @org.jetbrains.annotations.Nullable Runnable onDone,
-                              boolean replay) {
+                              boolean replay,
+                              java.util.Map<java.util.UUID, java.util.UUID> entityAliases) {
         JobContext(QueryRequest request, RollbackMode mode) {
-            this(request, mode, null, 0, 0, null, false);
+            this(request, mode, null, 0, 0, null, false, java.util.Map.of());
         }
 
         JobContext(QueryRequest request, RollbackMode mode,
                    @org.jetbrains.annotations.Nullable
                    net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                    int initialApplied, int initialSkipped) {
-            this(request, mode, startCursor, initialApplied, initialSkipped, null, false);
+            this(request, mode, startCursor, initialApplied, initialSkipped, null, false,
+                    java.util.Map.of());
         }
     }
 
@@ -185,13 +187,25 @@ public final class RollbackService {
     // /sg resume — the reference stays poppable and /undo just re-runs.
     public void executeReplay(Player operator, QueryRequest request, RollbackMode mode,
                               String queueLabel, Runnable onDone) {
+        executeReplay(operator, request, mode, queueLabel, java.util.Map.of(), onDone);
+    }
+
+    /**
+     * Replay variant that carries the original op's (dead -> resurrected)
+     * entity pairs so the undo can remove what the rollback spawned (#294).
+     */
+    public void executeReplay(Player operator, QueryRequest request, RollbackMode mode,
+                              String queueLabel,
+                              java.util.Map<java.util.UUID, java.util.UUID> entityAliases,
+                              Runnable onDone) {
         QueryRequest replay = forceNoGroup(request, mode);
         RollbackJob.Mode jobMode = mode == RollbackMode.RESTORE
                 ? RollbackJob.Mode.RESTORE
                 : RollbackJob.Mode.ROLLBACK;
         RollbackJob job = new RollbackJob(UUID.randomUUID(), operator.getUniqueId(),
                 operator.getName(), queueLabel, jobMode, Instant.now(), operator);
-        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true));
+        pendingContexts.put(job.id, new JobContext(replay, mode, null, 0, 0, onDone, true,
+                entityAliases == null ? java.util.Map.of() : entityAliases));
         // No stored request: a crashed replay's recovery path is
         // /spyglass undo (the reference stays poppable), not rbqueue
         // resume — the marker exists for visibility only.
@@ -235,9 +249,21 @@ public final class RollbackService {
         pendingContexts.put(job.id, new JobContext(request, mode));
 
         // Persist before queueing so pending jobs also survive a
-        // restart and show up as resumable.
+        // restart and show up as resumable. An unencodable request (a
+        // predicate value the envelope doesn't know, e.g. from a
+        // third-party param) must not kill the command (#301): degrade
+        // to a non-resumable marker and run the job anyway.
+        String resumeRequest;
+        try {
+            resumeRequest = encodeResumeRequest(request, job.mode);
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass could not persist the resume plan for job "
+                    + job.shortId() + " (" + ex.getMessage() + "); the job runs but"
+                    + " will not be resumable after a restart.");
+            resumeRequest = null;
+        }
         resumeStore.markStart(job.id, job.operatorName, job.operatorId, job.query, job.mode,
-                encodeResumeRequest(request, job.mode));
+                resumeRequest);
 
         int position = jobQueue.submit(job);
         if (position > 0) {
@@ -308,7 +334,7 @@ public final class RollbackService {
                 }
                 streamPagesAndApply(job, ctx.request(), ctx.mode(),
                         ctx.startCursor(), ctx.initialApplied(), ctx.initialSkipped(),
-                        ctx.replay());
+                        ctx.replay(), ctx.entityAliases());
                 // Cancellation wins over done if the operator hit
                 // /sg rbqueue cancel mid-flight.
                 jobQueue.finish(job, job.cancelFlag.get()
@@ -336,13 +362,24 @@ public final class RollbackService {
                                      @org.jetbrains.annotations.Nullable
                                      net.medievalrp.spyglass.plugin.storage.QueryPage.Cursor startCursor,
                                      int initialApplied, int initialSkipped,
-                                     boolean replayOp) {
+                                     boolean replayOp,
+                                     java.util.Map<java.util.UUID, java.util.UUID> replayEntityAliases) {
         CommandSender sender = job.sender;
         AtomicBoolean cancelFlag = job.cancelFlag;
+        // Arm the engine with the (dead -> resurrected) pairs an undo
+        // replay carries (#294); empty for operator-issued ops.
+        engine.entityAliases(replayEntityAliases);
+        // (original -> fresh) pairs THIS op produces, harvested from the
+        // Applied results so the op's own undo can remove them (#294).
+        java.util.Map<java.util.UUID, java.util.UUID> spawnedAliases =
+                new java.util.HashMap<>();
         // Attribute any containers this rollback salvages to the operator and
         // group them under one rollback id; also resets per-run dedup (#76).
-        engine.salvageBegin(sender == null ? "console" : sender.getName(),
-                java.util.UUID.randomUUID());
+        // The id rides the undo reference so a clean undo can withdraw this
+        // op's salvage snapshots - the restored containers hold the items
+        // again, and leaving the snapshots claimable duplicated them (#292).
+        java.util.UUID salvageGroupId = java.util.UUID.randomUUID();
+        engine.salvageBegin(sender == null ? "console" : sender.getName(), salvageGroupId);
         // Encoded once per job: checkpoint() re-writes the whole marker
         // after every applied window and must carry the same resolved
         // plan markStart wrote (#49). Null for replays — see runJob.
@@ -530,6 +567,17 @@ public final class RollbackService {
                 // effects via the object path. Both run their writes off-main
                 // and yield by tick, so TPS stays at ~20.
                 long tApply = System.nanoTime();
+                // Materials the operator excluded with block:!x - the live-
+                // state guard skips any cell whose live block is one (#264).
+                java.util.Set<String> protectedMaterials =
+                        net.medievalrp.spyglass.plugin.rollback.ExcludedMaterials.of(request.predicates());
+                // #287: containers and entities are opt-in. Flags ride the
+                // stored request, so an /sg undo replays with identical
+                // inclusion semantics.
+                boolean includeContainers = request.flags().contains(
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS);
+                boolean includeEntities = request.flags().contains(
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
                 RollbackEngine.ApplyCounts counts = new RollbackEngine.ApplyCounts();
                 List<RollbackResult> complexResults = List.of();
                 try {
@@ -541,24 +589,30 @@ public final class RollbackService {
                         UUID worldId = worldCols.getKey();
                         java.util.concurrent.CompletableFuture<RollbackEngine.ApplyCounts> fut =
                                 new java.util.concurrent.CompletableFuture<>();
-                        support.onMainThread(() ->
+                        support.onMainThread(() -> {
+                                engine.protectMaterials(protectedMaterials);
+                                engine.includeInRollback(includeContainers, includeEntities);
                                 engine.applyColumnsChunked(worldId, cols, sender, support, batchSize, cancelFlag)
                                         .whenComplete((c, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
                                             else fut.complete(c);
-                                        }));
+                                        });
+                        });
                         counts.add(fut.join());
                     }
                     if (!window.complex().isEmpty()) {
                         java.util.concurrent.CompletableFuture<List<RollbackResult>> fut =
                                 new java.util.concurrent.CompletableFuture<>();
                         List<RollbackEffect> complex = window.complex();
-                        support.onMainThread(() ->
+                        support.onMainThread(() -> {
+                                engine.protectMaterials(protectedMaterials);
+                                engine.includeInRollback(includeContainers, includeEntities);
                                 engine.applyAllChunked(complex, sender, support, batchSize, cancelFlag)
                                         .whenComplete((r, err) -> {
                                             if (err != null) fut.completeExceptionally(err);
                                             else fut.complete(r);
-                                        }));
+                                        });
+                        });
                         complexResults = fut.join();
                     }
                 } catch (java.util.concurrent.CompletionException ex) {
@@ -578,10 +632,25 @@ public final class RollbackService {
                 mergeSkip(skipCounts, "Unparseable blockdata", counts.unparseable);
                 mergeSkip(skipCounts, "invalid location", counts.invalidLocation);
                 mergeSkip(skipCounts, "Cancelled by operator", counts.cancelled);
+                mergeSkip(skipCounts, RollbackEngine.PROTECTED_SKIP, counts.protectedCells);
+                mergeSkip(skipCounts, RollbackEngine.CONTAINERS_SKIP, counts.containerCells);
                 // The rare complex effects' per-cell results.
                 for (RollbackResult r : complexResults) {
-                    if (r instanceof RollbackResult.Applied) {
+                    if (r instanceof RollbackResult.Applied applied) {
                         totalApplied++;
+                        if (applied.effect() instanceof RollbackEffect.EntitySpawn spawn
+                                && spawn.originalEntityId() != null
+                                && applied.inverseEffect()
+                                        instanceof RollbackEffect.EntityRemove remove
+                                && remove.entityId() != null) {
+                            try {
+                                spawnedAliases.put(
+                                        java.util.UUID.fromString(spawn.originalEntityId()),
+                                        java.util.UUID.fromString(remove.entityId()));
+                            } catch (IllegalArgumentException ignored) {
+                                // Unparseable id: the undo just misses this one.
+                            }
+                        }
                     } else if (r instanceof RollbackResult.Skipped skipped) {
                         totalSkipped++;
                         skipCounts.merge(skipped.reason().message(), 1, Integer::sum);
@@ -688,7 +757,8 @@ public final class RollbackService {
                                 e.getValue()[3], e.getValue()[4], e.getValue()[5]))
                         .toList();
         String reference = net.medievalrp.spyglass.plugin.storage.UndoReferenceBson.encodeBase64(
-                request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped);
+                request, mode.name(), job.submitTime, boxes, totalApplied, totalSkipped,
+                salvageGroupId, spawnedAliases);
         boolean undoUnavailable = false;
         // Replay ops (undo) do NOT push a reference: the popped reference
         // is consumed on clean completion, so repeated /undo unwinds the
@@ -704,11 +774,10 @@ public final class RollbackService {
                 undoUnavailable = true;
             }
         }
-        // Only in synthesized mode: receipts mode persists the per-block
-        // trail itself, and emitting op records there too would make a
-        // later mode flip double-render those operations (receipt rows
-        // plus synthesis from the same op).
-        if (totalApplied > 0 && config.storage().rolledAuditSynthesized()) {
+        // The rollback-op record is the audit trail: searches synthesize
+        // the per-block rolled-* entries from it (#22), so a no-op run
+        // (nothing applied) emits nothing.
+        if (totalApplied > 0) {
             try {
                 java.time.Instant opOccurred = java.time.Instant.now();
                 BlockLocation opLocation = boxes.isEmpty()
@@ -735,6 +804,89 @@ public final class RollbackService {
         boolean undoUnavailableFinal = undoUnavailable;
         support.onMainThread(() -> deliverStreamingSummary(
                 sender, mode, summary, skipCounts, undoUnavailableFinal));
+        // A rollback bounded by an explicit before: ceiling can land a
+        // mid-history state: newer records above the ceiling at the same
+        // cells were never considered, and force-overwrite (#69) does not
+        // look at them. Warn with a count so the operator learns the
+        // slice order matters (#303). Undo replays carry a ceiling by
+        // design and are exempt.
+        if (mode == RollbackMode.ROLLBACK && !replayOp && totalApplied > 0) {
+            warnIfNewerHistoryAboveCeiling(sender, request);
+        }
+    }
+
+    // Newer-history probe cap: enough to say "a lot", cheap to count.
+    private static final int NEWER_HISTORY_WARN_CAP = 1000;
+
+    /**
+     * When the request carries an explicit {@code before:} ceiling,
+     * count rollbackable records matching the same query above that
+     * ceiling and tell the operator the result may be mid-history
+     * (#303). Runs on the streaming thread; failures only cost the hint.
+     */
+    private void warnIfNewerHistoryAboveCeiling(CommandSender sender, QueryRequest request) {
+        Instant ceiling = explicitUpperBound(request.predicates());
+        if (ceiling == null) {
+            return;
+        }
+        try {
+            List<net.medievalrp.spyglass.api.query.QueryPredicate> newer = new ArrayList<>();
+            for (net.medievalrp.spyglass.api.query.QueryPredicate predicate : request.predicates()) {
+                if (!(predicate instanceof net.medievalrp.spyglass.api.query.QueryPredicate.Range range)
+                        || !"occurred".equals(range.field())) {
+                    newer.add(predicate);
+                }
+            }
+            newer.add(new net.medievalrp.spyglass.api.query.QueryPredicate.Range(
+                    "occurred", ceiling, Instant.now()));
+            newer.add(new net.medievalrp.spyglass.api.query.QueryPredicate.In(
+                    "event", List.copyOf(rollbackableEventNames())));
+            QueryRequest probe = new QueryRequest(newer, Sort.NEWEST_FIRST,
+                    NEWER_HISTORY_WARN_CAP + 1, EnumSet.of(Flag.NO_GROUP), false);
+            int count = store.querySummary(probe).records().size();
+            if (count == 0) {
+                return;
+            }
+            String amount = count > NEWER_HISTORY_WARN_CAP
+                    ? NEWER_HISTORY_WARN_CAP + "+" : String.valueOf(count);
+            support.onMainThread(() -> sender.sendMessage(Feedback.bonus(
+                    "Heads up: " + amount + " newer record(s) matching this query sit above"
+                            + " the before: ceiling, so the area may now show a mid-history"
+                            + " state. Roll back the newer window too, or re-run without"
+                            + " before: to converge.")));
+        } catch (RuntimeException ex) {
+            logger.warning("Spyglass newer-history probe failed (summary unaffected): "
+                    + ex.getMessage());
+        }
+    }
+
+    private static @org.jetbrains.annotations.Nullable Instant explicitUpperBound(
+            List<net.medievalrp.spyglass.api.query.QueryPredicate> predicates) {
+        Instant ceiling = null;
+        for (net.medievalrp.spyglass.api.query.QueryPredicate predicate : predicates) {
+            if (predicate instanceof net.medievalrp.spyglass.api.query.QueryPredicate.Range range
+                    && "occurred".equals(range.field())
+                    && range.upperInclusive() instanceof Instant upper) {
+                ceiling = ceiling == null || upper.isBefore(ceiling) ? upper : ceiling;
+            }
+        }
+        return ceiling;
+    }
+
+    // Mirrors the stores' rollbackable filter: event names whose record
+    // class is Rollbackable. Keeps the probe from counting chat and
+    // other non-rollbackable noise in the area.
+    private static java.util.Set<String> rollbackableEventNames() {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (String name : net.medievalrp.spyglass.api.event.EventCatalog.eventNames()) {
+            Class<? extends net.medievalrp.spyglass.api.event.EventRecord> clazz =
+                    net.medievalrp.spyglass.api.event.EventCatalog.recordClassOf(name);
+            if (clazz != null && net.medievalrp.spyglass.api.rollback.Rollbackable.class
+                    .isAssignableFrom(clazz)) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     // Pre-warm chunks via getChunkAtAsync so the apply phase doesn't
@@ -894,17 +1046,25 @@ public final class RollbackService {
 
         // Simple block-replace: folded straight into primitive columns,
         // block-data interned to a palette id — no effect/snapshot object.
+        // Repeats of one cell within a window coalesce to the net write
+        // (#321): the stream arrives in apply order, so the last effect's
+        // write is what per-event replay would have left in the world.
+        // The cursor bookkeeping (seen/lastOccurred/lastId) still counts
+        // every row - a coalesced row was consumed off the wire and must
+        // advance checkpoints - while effectCount tracks distinct rows so
+        // window fullness stays a bound on live memory, not rows read.
         void block(UUID worldId, int x, int y, int z, String blockData,
                    String expectedData, java.time.Instant occurred, UUID id) {
             long start = System.nanoTime();
             seen++;
-            effectCount++;
             lastOccurred = occurred;
             lastId = id;
             BlockColumns cols = columnsByWorld.computeIfAbsent(
                     worldId, k -> new BlockColumns(columnInitialCapacity));
-            cols.add(x, y, z, cols.intern(blockData), cols.intern(expectedData));
-            recordChunkAndBox(worldId, x, y, z);
+            if (cols.addOrReplace(x, y, z, cols.intern(blockData), cols.intern(expectedData))) {
+                effectCount++;
+                recordChunkAndBox(worldId, x, y, z);
+            }
             foldNanos.addAndGet(System.nanoTime() - start);
         }
 

@@ -670,5 +670,5 @@ version (`1.+` in Gradle) and stay forward-compatible.
   the same terms as the plugin.
 - **Issues / PRs**: https://github.com/medievalrp-net/Spyglass
 
-For operator-side configuration (durability modes, retention,
-limits), see the annotated `config.conf` shipped with the plugin.
+For operator-side configuration (retention, limits), see the
+annotated `config.conf` shipped with the plugin.

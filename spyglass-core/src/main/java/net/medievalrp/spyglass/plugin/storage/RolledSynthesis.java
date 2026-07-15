@@ -3,7 +3,9 @@ package net.medievalrp.spyglass.plugin.storage;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -31,12 +33,14 @@ import org.jetbrains.annotations.Nullable;
  * stored query match a record here at or before its ceiling". So for a
  * search request we (1) find candidate operations in the request's
  * time window, (2) re-run each operation's stored query narrowed to
- * the request's location constraints, (3) manufacture a virtual
- * receipt per covered original, mirroring exactly what the engine used
- * to persist — {@code Source.environment("ROLLBACK")},
+ * the request's location constraints, (3) manufacture virtual
+ * receipts - {@code Source.environment("ROLLBACK")},
  * {@code Origin.rollback(operator)}, the operation's timestamp, the
  * restored material as target — and (4) re-apply the caller's full
  * predicate tree in memory so filter behavior matches persisted rows.
+ * Block receipts are one NET transition per covered cell, matching the
+ * engine's coalesced write (#321); container-slot receipts stay one
+ * per covered transaction.
  *
  * <p>Synthesized coverage is "the operation's query covered this
  * block"; persisted receipts recorded actual writes. The two differ
@@ -45,15 +49,26 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Internal
 public final class RolledSynthesis {
 
-    private static final Set<String> ROLLED_EVENTS = Set.of("rolled-place", "rolled-break");
+    private static final Set<String> ROLLED_EVENTS = Set.of(
+            "rolled-place", "rolled-break", "rolled-deposit", "rolled-withdraw");
     // Ops are rare (an operator action each); a search window with more
     // than this many is pathological — log-free clamp, newest first.
     private static final int MAX_OPS_PER_SEARCH = 256;
 
     private final RecordStore store;
+    // Material names whose block state is a container, injected by the
+    // plugin from the same registry scan the engine's #287 gate uses.
+    // Empty when the caller has no registry (tests, exotic wiring):
+    // container-flavored receipts then depend on the effect shape alone.
+    private final Set<String> containerMaterials;
 
     public RolledSynthesis(RecordStore store) {
+        this(store, Set.of());
+    }
+
+    public RolledSynthesis(RecordStore store, Set<String> containerMaterials) {
         this.store = store;
+        this.containerMaterials = Set.copyOf(containerMaterials);
     }
 
     /**
@@ -96,6 +111,67 @@ public final class RolledSynthesis {
             expandOp(request, op, ref, out);
         }
         return out;
+    }
+
+    /**
+     * The subset of {@code candidates} that a rollback operation has
+     * reverted, keyed by record id. Unlike {@link #synthesize}, this
+     * ignores the rolled-* receipt gates (event filter, source
+     * feasibility): it marks the ORIGINAL records a display shows, so a
+     * {@code p:<griefer>} lookup still flags that griefer's reverted rows
+     * even though no environment-sourced receipt could match such a query.
+     *
+     * <p>Coverage is evaluated in memory against the candidates already in
+     * hand, so the cost is one op-list query with no per-op expansion - the
+     * per-op store grind {@link #sourcePredicatesFeasible} avoids (#33)
+     * never happens here. "Reverted" means what a receipt means: the op's
+     * stored query matches the record at or before the op's ceiling,
+     * honoring the op's {@code --containers} inclusion (#302).
+     */
+    public Set<UUID> rolledBackAmong(QueryRequest request, Collection<EventRecord> candidates) {
+        if (candidates.isEmpty()) {
+            return Set.of();
+        }
+        List<EventRecord> ops = findOps(request);
+        if (ops.isEmpty()) {
+            return Set.of();
+        }
+        Set<UUID> reverted = new HashSet<>();
+        for (EventRecord candidate : ops) {
+            if (!(candidate instanceof RollbackOpRecord op) || op.reference() == null) {
+                continue;
+            }
+            UndoReferenceBson.Reference ref;
+            try {
+                ref = UndoReferenceBson.decodeBase64(op.reference());
+            } catch (RuntimeException ex) {
+                continue; // unreadable blob — skip the op, never the mark
+            }
+            if (ref.request() == null) {
+                continue; // v-less reference carries no query to match against
+            }
+            boolean rollback = "ROLLBACK".equalsIgnoreCase(ref.mode());
+            boolean includedContainers = ref.request().flags().contains(Flag.INCLUDE_CONTAINERS);
+            Instant ceiling = ref.ceiling();
+            for (EventRecord record : candidates) {
+                if (reverted.contains(record.id())) {
+                    continue; // already covered by an earlier op
+                }
+                if (!(record instanceof Rollbackable rollbackable)) {
+                    continue; // only block/container writes have a rolled receipt
+                }
+                if (ceiling != null && record.occurred().isAfter(ceiling)) {
+                    continue; // happened after the op ran - the op never touched it
+                }
+                if (!includedContainers && coversContainer(rollbackable, rollback)) {
+                    continue; // op ran without --containers, so it left this cell alone (#302)
+                }
+                if (PredicateEvaluator.matchesAll(ref.request().predicates(), record)) {
+                    reverted.add(record.id());
+                }
+            }
+        }
+        return reverted;
     }
 
     /**
@@ -204,41 +280,177 @@ public final class RolledSynthesis {
                 Math.max(request.limit(), 1), EnumSet.of(Flag.NO_GROUP), false);
 
         boolean rollback = "ROLLBACK".equalsIgnoreCase(ref.mode());
+        // Coverage must honor the op's inclusion flags (#302): without
+        // --containers the engine gate-skips every container cell and
+        // transaction, so an op stored without the flag never touched
+        // them and must not get receipts claiming it did. The live-state
+        // guard (#264) and slot-drift skips stay invisible here - those
+        // still over-report until skip outcomes are persisted.
+        boolean includedContainers = ref.request().flags().contains(Flag.INCLUDE_CONTAINERS);
         String operator = op.source() == null ? null : op.source().playerName();
         Source source = Source.environment("ROLLBACK");
         Origin origin = Origin.rollback(operator == null ? "console" : operator);
+        // Block receipts are one per CELL, not per covered event (#321):
+        // a cell with several covered changes nets to a single
+        // current -> restored transition, mirroring the engine's
+        // coalesced write. The verify query streams newest-first, so the
+        // first effect seen at a cell belongs to the newest covered
+        // event and the last to the oldest.
+        java.util.LinkedHashMap<CellKey, NetCell> cells = new java.util.LinkedHashMap<>();
         for (EventRecord original : store.query(verify).records()) {
             if (!(original instanceof Rollbackable rollbackable)) {
                 continue;
             }
-            EventRecord virtual = toRolled(op, rollback, source, origin, original, rollbackable);
-            if (virtual != null && PredicateEvaluator.matchesAll(request.predicates(), virtual)) {
+            if (!includedContainers && coversContainer(rollbackable, rollback)) {
+                continue;
+            }
+            var effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
+            if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite csw) {
+                // Container transactions keep one receipt per original:
+                // each slot reversal is its own audit line (#265), and
+                // slot coalescing is out of #321's scope.
+                EventRecord virtual = toRolledTransaction(op, source, origin, original, csw);
+                if (PredicateEvaluator.matchesAll(request.predicates(), virtual)) {
+                    out.add(virtual);
+                }
+                continue;
+            }
+            if (!(effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace)) {
+                continue; // entity effects still have no receipt shape
+            }
+            var loc = replace.location();
+            CellKey key = new CellKey(loc.worldId(), loc.x(), loc.y(), loc.z());
+            NetCell cell = cells.get(key);
+            if (cell == null) {
+                cells.put(key, new NetCell(replace));
+            } else {
+                cell.last = replace;
+            }
+        }
+        for (NetCell cell : cells.values()) {
+            // Net transition at this cell: a rollback moves the world from
+            // the newest covered event's current state to the oldest one's
+            // restored state; a restore (oldest-first apply) mirrors that.
+            var expected = rollback ? cell.first.expectedCurrent() : cell.last.expectedCurrent();
+            var replacement = rollback ? cell.last.replacement() : cell.first.replacement();
+            if (sameBlockState(expected, replacement)) {
+                // The covered changes cancelled out (a place and its
+                // break): no net transition, and a "broke AIR" receipt
+                // identifies nothing (#269).
+                continue;
+            }
+            var loc = cell.first.location();
+            // Deterministic id: the same op covering the same cell must
+            // synthesize the same identity across repeated searches.
+            UUID id = UUID.nameUUIDFromBytes((op.id() + ":" + loc.worldId() + ":"
+                    + loc.x() + ":" + loc.y() + ":" + loc.z())
+                    .getBytes(StandardCharsets.UTF_8));
+            EventRecord virtual = toRolledBlock(op, source, origin, id, loc, expected, replacement);
+            if (PredicateEvaluator.matchesAll(request.predicates(), virtual)) {
                 out.add(virtual);
             }
         }
     }
 
-    private static @Nullable EventRecord toRolled(RollbackOpRecord op, boolean rollback,
-                                                  Source source, Origin origin,
-                                                  EventRecord original, Rollbackable rollbackable) {
-        var effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
-        if (!(effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace)) {
-            // Receipts only ever covered block writes; container/entity
-            // effects never emitted them.
-            return null;
+    private record CellKey(UUID worldId, int x, int y, int z) {
+    }
+
+    // First and last BlockReplace streamed for one cell, in verify-query
+    // order (newest first). One-event cells leave first == last.
+    private static final class NetCell {
+        final net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace first;
+        net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace last;
+
+        NetCell(net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace first) {
+            this.first = first;
+            this.last = first;
         }
-        var after = replace.replacement();
-        boolean toAir = after == null
-                || "AIR".equals(after.material() == null ? "AIR" : after.material().name());
-        String event = toAir ? "rolled-break" : "rolled-place";
-        String target = after == null || after.material() == null
-                ? "AIR" : after.material().name();
+    }
+
+    /**
+     * True when the two snapshots describe the same block state - the
+     * cell's covered events net to nothing. Air compares by the same
+     * rule the receipt classification uses; otherwise material plus
+     * block-data must both match, so an orientation change still gets
+     * its receipt.
+     */
+    private static boolean sameBlockState(net.medievalrp.spyglass.api.event.BlockSnapshot a,
+                                          net.medievalrp.spyglass.api.event.BlockSnapshot b) {
+        boolean aAir = isAir(a);
+        boolean bAir = isAir(b);
+        if (aAir || bAir) {
+            return aAir && bAir;
+        }
+        return a.material() == b.material()
+                && java.util.Objects.equals(a.blockData(), b.blockData());
+    }
+
+    private static boolean isAir(net.medievalrp.spyglass.api.event.BlockSnapshot snapshot) {
+        return snapshot == null || snapshot.material() == null
+                || "AIR".equals(snapshot.material().name());
+    }
+
+    /**
+     * True when reversing this record would have hit the #287 container
+     * gate: a container transaction, or a block write that places or
+     * removes a container-material block.
+     */
+    private boolean coversContainer(Rollbackable rollbackable, boolean rollback) {
+        var effect = rollback ? rollbackable.rollbackEffect() : rollbackable.restoreEffect();
+        if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite) {
+            return true;
+        }
+        if (effect instanceof net.medievalrp.spyglass.api.rollback.RollbackEffect.BlockReplace replace) {
+            return isContainerMaterial(replace.replacement())
+                    || isContainerMaterial(replace.expectedCurrent());
+        }
+        return false;
+    }
+
+    private boolean isContainerMaterial(net.medievalrp.spyglass.api.event.BlockSnapshot snapshot) {
+        return snapshot != null && snapshot.material() != null
+                && containerMaterials.contains(snapshot.material().name());
+    }
+
+    private static EventRecord toRolledTransaction(
+            RollbackOpRecord op, Source source, Origin origin, EventRecord original,
+            net.medievalrp.spyglass.api.rollback.RollbackEffect.ContainerSlotWrite csw) {
+        // A rollback that reverted a container transaction used to leave
+        // NO audit entry in either mode (#265). Synthesize the inverse
+        // transaction: clearing a slot is rolled-withdraw of what sat
+        // there, repopulating one is rolled-deposit of what came back.
         // Deterministic id: the same op covering the same record must
         // synthesize the same identity across repeated searches.
         UUID id = UUID.nameUUIDFromBytes(
                 (op.id() + ":" + original.id()).getBytes(StandardCharsets.UTF_8));
+        var placed = csw.replacement();
+        var removed = csw.expectedCurrent();
+        String event = placed == null ? "rolled-withdraw" : "rolled-deposit";
+        String target = placed != null ? placed.material()
+                : removed != null ? removed.material() : "UNKNOWN";
         return new BlockUseRecord(id, event, op.occurred(), op.expiresAt(),
-                origin, source, replace.location(), op.server(), target);
+                origin, source, csw.location(), op.server(), target);
+    }
+
+    private static EventRecord toRolledBlock(RollbackOpRecord op, Source source, Origin origin,
+                                             UUID id,
+                                             net.medievalrp.spyglass.api.util.BlockLocation location,
+                                             net.medievalrp.spyglass.api.event.BlockSnapshot destroyed,
+                                             net.medievalrp.spyglass.api.event.BlockSnapshot after) {
+        boolean toAir = isAir(after);
+        String event = toAir ? "rolled-break" : "rolled-place";
+        // rolled-break names what was DESTROYED, not the air that replaced
+        // it - "ROLLBACK broke AIR" identified nothing (#269). rolled-place
+        // keeps naming what was placed.
+        String target;
+        if (toAir) {
+            target = destroyed == null || destroyed.material() == null
+                    ? "AIR" : destroyed.material().name();
+        } else {
+            target = after.material() == null ? "AIR" : after.material().name();
+        }
+        return new BlockUseRecord(id, event, op.occurred(), op.expiresAt(),
+                origin, source, location, op.server(), target);
     }
 
     // --- request introspection (flat lists + And nesting; Or/Not are

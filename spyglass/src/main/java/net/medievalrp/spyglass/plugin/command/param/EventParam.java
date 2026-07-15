@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.command.param;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.param.QueryParamHandler;
@@ -8,6 +9,19 @@ import net.medievalrp.spyglass.api.query.QueryPredicate;
 import org.bukkit.command.CommandSender;
 
 public final class EventParam implements QueryParamHandler {
+
+    // A rollback never persists per-block receipts; searches synthesize
+    // rolled-<event> entries from the rollback-op record (#22, RolledSynthesis).
+    // Those carry the rolled-* event names, so a bare a:break would filter out
+    // the rollback that BROKE (removed) a block - the operator sees the original
+    // but not its reversal (#330). Expanding a:break to also match rolled-break
+    // (and place/deposit/withdraw likewise) surfaces both. The In(event, [...])
+    // this produces flows through the synthesis gate and post-filter unchanged.
+    private static final Map<String, String> ROLLED_COUNTERPART = Map.of(
+            "break", "rolled-break",
+            "place", "rolled-place",
+            "deposit", "rolled-deposit",
+            "withdraw", "rolled-withdraw");
 
     private final Set<String> enabledEvents;
 
@@ -40,7 +54,7 @@ public final class EventParam implements QueryParamHandler {
             if (!enabledEvents.contains(name)) {
                 throw new ParamParseException("Unknown or disabled event: " + name);
             }
-            (negated ? excludes : includes).add(name);
+            addWithRolledCounterpart(negated ? excludes : includes, name);
         }
         if (includes.isEmpty() && excludes.isEmpty()) {
             throw new ParamParseException("Event parameter requires at least one name.");
@@ -53,6 +67,23 @@ public final class EventParam implements QueryParamHandler {
             clauses.add(new QueryPredicate.Not(membership(excludes)));
         }
         return clauses.size() == 1 ? clauses.getFirst() : new QueryPredicate.And(clauses);
+    }
+
+    /**
+     * Add {@code name} to the bucket, plus its rollback counterpart when that
+     * rolled event is enabled (#330). Dedupes so {@code a:break,rolled-break}
+     * or a base/rolled pair typed together stays a clean membership. Gating on
+     * {@link #enabledEvents} means an operator who disabled the rolled audit
+     * keeps the old bare-name behavior.
+     */
+    private void addWithRolledCounterpart(List<String> bucket, String name) {
+        if (!bucket.contains(name)) {
+            bucket.add(name);
+        }
+        String rolled = ROLLED_COUNTERPART.get(name);
+        if (rolled != null && enabledEvents.contains(rolled) && !bucket.contains(rolled)) {
+            bucket.add(rolled);
+        }
     }
 
     private static QueryPredicate membership(List<String> names) {

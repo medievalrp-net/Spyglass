@@ -214,7 +214,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 case MONGO -> {
                     SpyglassConfig.Database db = config.database();
                     MongoRecordStore mongoStore = new MongoRecordStore(
-                            db.uri(), db.name(), db.collection(), new IndexManager(), retentionPolicy);
+                            db.mongo().uri(), db.mongo().database(), db.mongo().collection(),
+                            new IndexManager(), retentionPolicy);
                     recordStore = mongoStore;
                     undoStack = new MongoUndoStack(
                             mongoStore.database(), mongoStore.codecRegistry());
@@ -270,18 +271,16 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageStore = new MariaDbSalvageStore(mariaStore, 30L);
                 }
             }
-            if (config.storage().rolledAuditSynthesized()) {
-                // #22: searches synthesize per-block rolled-* entries
-                // from rollback-op records instead of reading persisted
-                // receipts. Wrapping here puts every read path — plugin
-                // search, the public API, IP resolution — behind the
-                // same merge; writes and the rollback's streaming page
-                // reads delegate untouched.
-                recordStore = new SynthesizingRecordStore(recordStore, true);
-            }
-            getLogger().info("Spyglass: backend = " + config.database().backend()
-                    + (config.storage().rolledAuditSynthesized()
-                            ? " (rolled audit: synthesized)" : " (rolled audit: receipts)"));
+            // #22: searches synthesize per-block rolled-* entries
+            // from rollback-op records instead of reading persisted
+            // receipts. Wrapping here puts every read path - plugin
+            // search, the public API, IP resolution - behind the
+            // same merge; writes and the rollback's streaming page
+            // reads delegate untouched.
+            recordStore = new SynthesizingRecordStore(recordStore, true,
+                    net.medievalrp.spyglass.plugin.rollback.RollbackEngine
+                            .containerMaterialNames());
+            getLogger().info("Spyglass: backend = " + config.database().backend());
         } catch (Exception ex) {
             getLogger().severe("Failed to initialize record store ("
                     + config.database().backend() + "): " + ex.getMessage());
@@ -296,15 +295,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         // virtual threads, and tracks in-flight tasks so the recorder's
         // flush can drain it before a rollback reads.
         deferredSerializer = new DeferredSerializer(getLogger());
-
-        boolean walEnabled = config.storage().durability()
-                == SpyglassConfig.Durability.WAL_BATCHED;
-        net.medievalrp.spyglass.plugin.pipeline.WalDurability wal =
-                new net.medievalrp.spyglass.plugin.pipeline.WalDurability(
-                        getDataFolder().toPath(), walEnabled, getLogger());
-        if (walEnabled) {
-            getLogger().info("Spyglass durability mode: WAL-batched (fsync per drain batch).");
-        }
 
         // On-disk overflow for the uncappable bulk-edit firehose: when the
         // queue is at its ceiling, a vanilla-WorldEdit paste spills here
@@ -321,7 +311,7 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         recorder = new AsyncRecorder(
                 config.storage().queueCapacity(), config.storage().queueMax(),
-                recordStore, wal, spill, Bukkit::isPrimaryThread, getLogger());
+                recordStore, spill, Bukkit::isPrimaryThread, getLogger());
         // #180: cap how fast the drain reclaims a large on-disk spill backlog in
         // the background, so it never saturates the store on a live server.
         recorder.setSpillDrainRate(config.storage().spillDrainRate());
@@ -342,16 +332,15 @@ public final class SpyglassPlugin extends JavaPlugin {
         // would snapshot the queue before the in-flight records land.
         recorder.setFlushBarrier(deferredSerializer::awaitQuiescence);
 
-        // Replay any WAL files left from a prior crash before the
-        // listeners come online, so recovered records land in the DB
-        // before new ones start flowing.
-        java.util.List<net.medievalrp.spyglass.api.event.EventRecord> recovered = wal.recover();
-        for (net.medievalrp.spyglass.api.event.EventRecord record : recovered) {
-            recorder.record(record);
-        }
+        // One-release upgrade shim (#307): the removed wal-batched durability
+        // mode may have left fsynced-but-unacked batch files behind after an
+        // unclean exit. Replay them before the listeners come online, so
+        // recovered records land in the DB before new ones start flowing.
+        net.medievalrp.spyglass.plugin.pipeline.WalPendingReplay.replay(
+                getDataFolder().toPath(), recorder::record, getLogger());
 
-        // #168: opt-in ingest analytics. Created AFTER WAL replay (so recovered
-        // records aren't counted as live ingest) and BEFORE listeners come
+        // #168: opt-in ingest analytics. Created AFTER the WAL upgrade replay
+        // (so recovered records aren't counted as live ingest) and BEFORE listeners come
         // online (so every live event is tallied). Null - and zero hot-path
         // overhead - when analytics.enabled = false.
         IngestStats ingestStats = null;
@@ -398,7 +387,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 // hopper listener since one listener carries both toggles.
                 new BucketListener(recorder, support, deferredSerializer, enabledEvents),
                 new FallingBlockLandListener(recorder, support),
-                new ContainerTransactionListener(recorder, support, deferredSerializer),
+                new ContainerTransactionListener(recorder, support, deferredSerializer,
+                        task -> getServer().getScheduler().runTask(this, task)),
                 new ContainerDragListener(recorder, support),
                 new ContainerInteractListener(recorder, support),
                 new BlockUseListener(recorder, support),
@@ -430,9 +420,10 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new EntityDoorBreakListener(recorder, support),
                 new BookshelfListener(recorder, support),
                 new DecoratedPotListener(recorder, support),
-                new ShulkerTransactionListener(recorder, support),
+                new ShulkerTransactionListener(recorder, support,
+                        task -> getServer().getScheduler().runTask(this, task)),
                 new BundleTransactionListener(recorder, support, this),
-                new CrafterListener(recorder, support),
+                new CrafterListener(recorder, support, deferredSerializer),
                 new SculkListener(recorder, support),
                 new BrushListener(recorder, support, delayedTracker),
                 new VaultListener(recorder, support, delayedTracker));
@@ -510,13 +501,11 @@ public final class SpyglassPlugin extends JavaPlugin {
 
         Bukkit.getServicesManager().register(SpyglassApi.class, apiImpl, this, ServicePriority.Normal);
 
-        // Synthesized rolled audit (#22): the engine's per-block
-        // receipt emission is the recorder hook — a null recorder is
-        // its documented no-emit mode (unit tests rely on it). The
-        // operation record that searches synthesize from is emitted by
-        // RollbackService at completion instead.
-        RollbackEngine engine = new RollbackEngine(
-                config.storage().rolledAuditSynthesized() ? null : recorder, support);
+        // Synthesized rolled audit (#22): the engine never emits
+        // per-block receipts. The operation record that searches
+        // synthesize the rolled-* entries from is emitted by
+        // RollbackService at completion.
+        RollbackEngine engine = new RollbackEngine();
         engine.setCustomEffectLookup(apiImpl::rollbackEffectHandler);
         RollbackPhysicsBlocker physicsBlocker = new RollbackPhysicsBlocker();
         getServer().getPluginManager().registerEvents(physicsBlocker, this);
@@ -601,7 +590,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             }
         }
         UndoService undoService = new UndoService(engine, undoStack, serviceSupport, config,
-                rollbackService);
+                rollbackService, salvageStore);
         net.medievalrp.spyglass.plugin.command.service.RbqueueService rbqueueService =
                 new net.medievalrp.spyglass.plugin.command.service.RbqueueService(
                         rollbackQueue, resumeStore, rollbackService, serviceSupport);
@@ -654,8 +643,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                         serviceSupport,
                         target -> switch (target) {
                             case MONGO -> new MongoRecordStore(
-                                    config.database().uri(), config.database().name(),
-                                    config.database().collection(), new IndexManager(),
+                                    config.database().mongo().uri(), config.database().mongo().database(),
+                                    config.database().mongo().collection(), new IndexManager(),
                                     retentionPolicy);
                             case CLICKHOUSE -> {
                                 SpyglassConfig.ClickHouse ch = config.database().clickhouse();
@@ -738,7 +727,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 config.commands().sAlias());
         commands.register();
 
-        if (isWorldEditInstalled()) {
+        if (config.worldedit().enabled() && isWorldEditInstalled()) {
             try {
                 worldEditSubscriber = new WorldEditSubscriber(recorder, support, queryExecutor, this, getLogger());
                 worldEditSubscriber.register();
@@ -746,14 +735,19 @@ public final class SpyglassPlugin extends JavaPlugin {
                 getLogger().warning("Spyglass: WorldEdit integration failed to initialize: " + thrown);
                 worldEditSubscriber = null;
             }
+        } else if (!config.worldedit().enabled() && isWorldEditInstalled()) {
+            getLogger().info("Spyglass: WorldEdit logging disabled (worldedit.enabled = false);"
+                    + " WorldEdit and FAWE edits are not recorded.");
         }
         // Always register the lifecycle listener so WE hot-load (e.g.
         // /plugman load) can wire up recording mid-session without a
         // server restart. If WE is already running, the existing
         // subscriber is handed in and the listener only acts on a
-        // future disable.
+        // future disable. The gate is read live so the #332 toggle (and a
+        // later /sg reload of it) governs hot-load registration too.
         worldEditLifecycle = new WorldEditLifecycleListener(
-                recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber);
+                recorder, support, queryExecutor, this, getLogger(), worldEditSubscriber,
+                () -> config.worldedit().enabled());
         getServer().getPluginManager().registerEvents(worldEditLifecycle, this);
 
         // bStats anonymous usage metrics. The org.bstats package is relocated

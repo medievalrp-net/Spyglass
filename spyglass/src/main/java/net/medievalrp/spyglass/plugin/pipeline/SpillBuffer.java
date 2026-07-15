@@ -46,7 +46,7 @@ import org.jetbrains.annotations.Nullable;
  * fsynced to a {@code .tmp} sibling then {@linkplain StandardCopyOption#ATOMIC_MOVE
  * atomically renamed}, so the drain never reads a half-written file. Segments
  * left behind by a crash are counted on construction and replayed by the drain
- * on the next run; the same BSON layout as the WAL ({@link EventBatchCodec})
+ * on the next run; the shared BSON layout ({@link EventBatchCodec})
  * means a replayed record round-trips identically to the storage path.
  *
  * <p>Producers ({@link #spill}) may run on many threads; {@link #poll}/{@link

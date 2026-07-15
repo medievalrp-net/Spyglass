@@ -28,11 +28,11 @@ import org.bukkit.inventory.ItemStack;
  * <p>On {@link #onChunkResolved} it clones the live contents of every non-empty
  * container in the chunk (the chunk's block-entity map lists them directly — no
  * per-block scan; terrain chunks have none and cost nothing). On
- * {@link #onChunkWritten} it re-reads each captured cell: if the container is
- * gone or its contents changed, the rollback destroyed it and the clone is
- * persisted; if it survived unchanged, the clone is dropped. So only genuinely
- * destroyed inventories reach the store, and nothing still present in the world
- * is ever salvaged.
+ * {@link #onChunkWritten} it re-reads each captured cell: only when the block is
+ * no longer the captured container type did the rollback destroy it, and the
+ * clone is persisted. A container that SURVIVES is never salvaged - even with
+ * changed contents, since that is the rollback reverting deposits or restoring
+ * snapshot contents, not destruction (#283).
  *
  * <p>All hook methods run on the main thread; only the final {@link SalvageStore#save}
  * is dispatched off-main. One rollback runs at a time (the job queue serializes
@@ -127,22 +127,18 @@ public final class SalvageCapturer implements SalvageHook {
         List<Captured> destroyed = new ArrayList<>();
         for (Captured cap : captured) {
             Block block = world.getBlockAt(cap.x(), cap.y(), cap.z());
-            boolean gone;
-            // Check the block TYPE first — read from the chunk section the
-            // rollback overwrote. A direct NMS section write leaves the old block
-            // entity lingering in the chunk map, so getState() can still return a
-            // stale Container even though the block is now (e.g.) stone; the
-            // material is authoritative.
-            if (!block.getType().name().equals(cap.type())) {
-                gone = true;
-            } else if (block.getState() instanceof Container container) {
-                // Same container type still here — destroyed only if its contents
-                // changed. Compares live stacks against the captured clones via
-                // ItemStack equality, no serialize.
-                gone = !sameContents(inventoryOf(container).getContents(), cap.contents());
-            } else {
-                gone = true;
-            }
+            // Destroyed = the captured container no longer stands at this
+            // cell (#283). The block TYPE is read from the chunk section the
+            // rollback overwrote - a direct NMS section write leaves the old
+            // block entity lingering in the chunk map, so getState() could
+            // still return a stale Container; the material is authoritative.
+            //
+            // A surviving container whose CONTENTS changed is deliberately
+            // NOT salvaged: while it stands, a content change is the rollback
+            // doing its job (reverting deposits, restoring snapshot
+            // contents), and the world still holds the container. Dumping
+            // those clones duplicated items into /sg inventory every run.
+            boolean gone = !block.getType().name().equals(cap.type());
             if (gone && salvagedCells.add(
                     worldId + ":" + cap.x() + ":" + cap.y() + ":" + cap.z())) {
                 destroyed.add(cap);
@@ -203,25 +199,6 @@ public final class SalvageCapturer implements SalvageHook {
             }
         }
         return items;
-    }
-
-    // Equal iff every slot's live stack matches the captured clone, treating a
-    // null and an AIR stack as the same empty slot. ItemStack.equals is a
-    // read-only deep compare - no serialization (#207).
-    private static boolean sameContents(ItemStack[] live, ItemStack[] captured) {
-        int size = Math.max(live.length, captured.length);
-        for (int slot = 0; slot < size; slot++) {
-            ItemStack liveStack = slot < live.length ? normalizeEmpty(live[slot]) : null;
-            ItemStack capturedStack = slot < captured.length ? captured[slot] : null;
-            if (!java.util.Objects.equals(liveStack, capturedStack)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static ItemStack normalizeEmpty(ItemStack stack) {
-        return (stack == null || stack.getType() == Material.AIR) ? null : stack;
     }
 
     private static String key(World world, int chunkX, int chunkZ) {

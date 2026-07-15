@@ -34,15 +34,18 @@ public final class UndoService {
     private final ServiceSupport support;
     private final SpyglassConfig config;
     private final RollbackService rollbackService;
+    private final net.medievalrp.spyglass.plugin.salvage.SalvageStore salvageStore;
 
     public UndoService(RollbackEngine engine, UndoStack undoStack,
                        ServiceSupport support, SpyglassConfig config,
-                       RollbackService rollbackService) {
+                       RollbackService rollbackService,
+                       net.medievalrp.spyglass.plugin.salvage.SalvageStore salvageStore) {
         this.engine = engine;
         this.undoStack = undoStack;
         this.support = support;
         this.config = config;
         this.rollbackService = rollbackService;
+        this.salvageStore = salvageStore;
     }
 
     public void execute(CommandSender sender) {
@@ -83,18 +86,23 @@ public final class UndoService {
         try {
             decoded = UndoReferenceBson.decodeBase64(ref.referenceBase64());
         } catch (RuntimeException ex) {
-            ref.close();
-            support.onMainThread(() -> player.sendMessage(
-                    Feedback.error("Undo reference unreadable: " + ex.getMessage())));
+            // Consume the reference: openLatest always returns the newest
+            // row, so a poison blob left in place blocks every older valid
+            // entry until the TTL ages it out (#266). Unlike a failed
+            // replay (transient, worth retrying), an unreadable blob can
+            // never succeed.
+            discardUnusable(player, ref,
+                    "Undo reference unreadable (" + ex.getMessage()
+                            + "); discarded it - run /sg undo again for the previous operation");
             return;
         }
         RollbackMode original;
         try {
             original = RollbackMode.valueOf(decoded.mode());
         } catch (IllegalArgumentException ex) {
-            ref.close();
-            support.onMainThread(() -> player.sendMessage(
-                    Feedback.error("Undo reference has unknown mode " + decoded.mode())));
+            discardUnusable(player, ref,
+                    "Undo reference has unknown mode " + decoded.mode()
+                            + "; discarded it - run /sg undo again for the previous operation");
             return;
         }
         RollbackMode inverse = original == RollbackMode.ROLLBACK
@@ -111,7 +119,7 @@ public final class UndoService {
         String label = "undo " + ref.operationType().toLowerCase(Locale.ROOT)
                 + " " + ref.operationId().toString().substring(0, 8);
         support.onMainThread(() -> rollbackService.executeReplay(
-                player, replay, inverse, label,
+                player, replay, inverse, label, decoded.entityAliases(),
                 () -> support.onAsyncThread(() -> {
                     try {
                         ref.tombstone();
@@ -121,7 +129,36 @@ public final class UndoService {
                     } finally {
                         ref.close();
                     }
+                    // A cleanly undone ROLLBACK put the salvaged containers
+                    // (and their contents) back in the world; the snapshots
+                    // it captured must stop being claimable or the items
+                    // exist twice (#292). Already off-main here.
+                    if (original == RollbackMode.ROLLBACK
+                            && decoded.salvageGroup() != null && salvageStore != null) {
+                        try {
+                            salvageStore.deleteByRollback(decoded.salvageGroup());
+                        } catch (RuntimeException ex) {
+                            support.onMainThread(() -> player.sendMessage(Feedback.bonus(
+                                    "Salvage entries for the undone rollback could not be"
+                                            + " withdrawn; /sg inventory may still list them.")));
+                        }
+                    }
                 })));
+    }
+
+    // A reference that can never replay (corrupt blob, unknown mode) is
+    // removed from the ledger so the next /undo reaches the operation
+    // beneath it. Tombstone failure is tolerable: the row then survives
+    // only until its TTL, which is the pre-#266 behavior.
+    private void discardUnusable(Player player, UndoStack.ReplayReference ref, String message) {
+        try {
+            ref.tombstone();
+        } catch (RuntimeException ignored) {
+            // Best effort; see above.
+        } finally {
+            ref.close();
+        }
+        support.onMainThread(() -> player.sendMessage(Feedback.error(message)));
     }
 
     // Pre-reference operation: stream the stored inverse effects chunk

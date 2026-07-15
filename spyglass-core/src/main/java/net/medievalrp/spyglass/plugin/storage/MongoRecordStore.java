@@ -376,8 +376,10 @@ public final class MongoRecordStore implements RecordStore {
         Bson projection = Projections.fields(
                 Projections.include(RecordFields.ID, RecordFields.EVENT, RecordFields.OCCURRED,
                         RecordFields.LOCATION, replacementSide,
-                        RecordFields.SLOT, RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
-                        RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT),
+                        RecordFields.SLOT, RecordFields.CONTAINER_TYPE,
+                        RecordFields.BEFORE_ITEM, RecordFields.AFTER_ITEM,
+                        RecordFields.ENTITY_TYPE, RecordFields.ENTITY_ID, RecordFields.ENTITY_NBT,
+                        RecordFields.KILLER_TYPE),
                 Projections.excludeId());
 
         Instant lastOccurred = null;
@@ -457,13 +459,26 @@ public final class MongoRecordStore implements RecordStore {
                     ? doc.getInt32(RecordFields.SLOT).getValue() : 0;
             StoredItem before = decodeItem(doc, RecordFields.BEFORE_ITEM);
             StoredItem after = decodeItem(doc, RecordFields.AFTER_ITEM);
+            String containerType = doc.containsKey(RecordFields.CONTAINER_TYPE)
+                    && doc.get(RecordFields.CONTAINER_TYPE).isString()
+                    ? doc.getString(RecordFields.CONTAINER_TYPE).getValue() : null;
             sink.complex(rollback
-                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before)
-                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after), occurred, id);
+                    ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before, containerType)
+                    : new RollbackEffect.ContainerSlotWrite(location, slot, before, after, containerType), occurred, id);
             return;
         }
 
         if (clazz == EntityDeathRecord.class) {
+            // Lockstep with EntityDeathRecord.resurrectable() (#284): only a
+            // player kill produces an effect in either direction; environment
+            // deaths stay searchable but never resurrect (or re-remove).
+            String killer = doc.containsKey(RecordFields.KILLER_TYPE)
+                    && doc.get(RecordFields.KILLER_TYPE).isString()
+                    ? doc.getString(RecordFields.KILLER_TYPE).getValue() : null;
+            if (!EntityDeathRecord.isPlayerKill(killer)) {
+                sink.skip(occurred, id);
+                return;
+            }
             BlockLocation location = readLocation(doc);
             String entityType = doc.containsKey(RecordFields.ENTITY_TYPE)
                     && doc.get(RecordFields.ENTITY_TYPE).isString()
@@ -472,7 +487,11 @@ public final class MongoRecordStore implements RecordStore {
                 String nbt = doc.containsKey(RecordFields.ENTITY_NBT)
                         && doc.get(RecordFields.ENTITY_NBT).isString()
                         ? doc.getString(RecordFields.ENTITY_NBT).getValue() : null;
-                sink.complex(new RollbackEffect.EntitySpawn(location, entityType, nbt), occurred, id);
+                UUID originalId = doc.containsKey(RecordFields.ENTITY_ID)
+                        && doc.get(RecordFields.ENTITY_ID).isBinary()
+                        ? readUuid(doc, RecordFields.ENTITY_ID) : null;
+                sink.complex(new RollbackEffect.EntitySpawn(location, entityType, nbt,
+                        originalId == null ? null : originalId.toString()), occurred, id);
             } else {
                 UUID entityId = doc.containsKey(RecordFields.ENTITY_ID)
                         && doc.get(RecordFields.ENTITY_ID).isBinary()

@@ -91,13 +91,29 @@ public final class QueryStringParser {
                 if (token.isEmpty()) {
                     continue;
                 }
-                if (token.startsWith("-")) {
-                    String name = token.substring(1).toLowerCase(java.util.Locale.ROOT);
+                if (startsWithFlagDash(token)) {
+                    // Accept GNU-style double dashes too: --containers and
+                    // -containers are the same flag (#287). Phone keyboards
+                    // and chat bridges substitute smart punctuation for a
+                    // typed "--" (iOS sends one em dash), so the Unicode dash
+                    // family marks a flag as well; without this the bare-token
+                    // fallback below rewrites a mangled flag into p:<token>
+                    // and the query silently matches nothing (#333).
+                    String name = stripLeadingFlagDashes(token)
+                            .toLowerCase(java.util.Locale.ROOT);
+                    // Value separator: '=' or ':', whichever comes first.
+                    // The docs and the rest of the query language use ':';
+                    // suggestions historically emitted '='. Accept both so
+                    // -ord:asc and -ord=asc are the same flag (#305).
                     String flagValue = null;
-                    int eq = name.indexOf('=');
-                    if (eq >= 0) {
-                        flagValue = name.substring(eq + 1);
-                        name = name.substring(0, eq);
+                    int sep = name.indexOf('=');
+                    int colonSep = name.indexOf(':');
+                    if (sep < 0 || (colonSep >= 0 && colonSep < sep)) {
+                        sep = colonSep;
+                    }
+                    if (sep >= 0) {
+                        flagValue = name.substring(sep + 1);
+                        name = name.substring(0, sep);
                     }
                     applyFlag(name, flagValue, sender, context, state);
                     continue;
@@ -141,6 +157,13 @@ public final class QueryStringParser {
                 if (h.suppressesDefaultRadius(alias)) {
                     state.defaultRadiusSuppressed = true;
                 }
+                // A param that pins the query to explicit coordinates
+                // (trg:x,y,z) is its own region bound; stacking the
+                // sender-anchored default radius on top would silently
+                // exclude far-away targets (#305).
+                if (constrainsLocation(predicate)) {
+                    state.defaultRadiusSuppressed = true;
+                }
                 if (h instanceof TimeParam) {
                     state.sawTime = true;
                 }
@@ -170,7 +193,7 @@ public final class QueryStringParser {
                                     + " blocks - add r:N or -g for global)",
                             net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
                 }
-                // defaultRadius == 0 means "global default" — no predicate
+                // defaultRadius == 0 means "global default" - no predicate
                 // added, no reminder shown. The whole-DB scan is what the
                 // operator opted into.
             }
@@ -247,7 +270,7 @@ public final class QueryStringParser {
         };
     }
 
-    /** Reserved flag aliases — {@link #applyFlag} handles these
+    /** Reserved flag aliases - {@link #applyFlag} handles these
      *  directly and a custom {@link FlagHandler} cannot shadow them. */
     private static boolean isBuiltinFlag(String alias) {
         return switch (alias) {
@@ -257,16 +280,43 @@ public final class QueryStringParser {
                  "ex", "extended",
                  "we", "worldedit",
                  "ord", "order",
-                 "nod", "nodefault" -> true;
+                 "nod", "nodefault",
+                 "containers", "entities" -> true;
             default -> false;
         };
+    }
+
+    /**
+     * True when {@code c} is a hyphen for flag purposes: the ASCII hyphen or
+     * the smart-punctuation substitutes (U+2010 hyphen through U+2015
+     * horizontal bar, and the U+2212 minus sign).
+     */
+    private static boolean isFlagDash(char c) {
+        return c == '-' || (c >= '\u2010' && c <= '\u2015') || c == '\u2212';
+    }
+
+    private static boolean startsWithFlagDash(String token) {
+        return !token.isEmpty() && isFlagDash(token.charAt(0));
+    }
+
+    /**
+     * Strip the leading dash run, capped at two marks so ASCII semantics are
+     * unchanged ({@code ---x} still yields the unknown flag {@code -x}). A
+     * single em dash IS the typed {@code --}, so one mark strips like two.
+     */
+    private static String stripLeadingFlagDashes(String token) {
+        int i = 0;
+        while (i < token.length() && i < 2 && isFlagDash(token.charAt(i))) {
+            i++;
+        }
+        return token.substring(i);
     }
 
     private void applyFlag(String name, String flagValue, CommandSender sender,
                            QueryParamHandler.ParamContext context, ParseState state)
             throws ParamParseException {
         // Built-ins win over custom flags. A third-party plugin can't
-        // shadow `-g` by registering a `g` FlagHandler — the parser
+        // shadow `-g` by registering a `g` FlagHandler - the parser
         // checks the switch below first and the lookup never runs.
         if (!isBuiltinFlag(name)) {
             Optional<FlagHandler> handler = api.flag(name);
@@ -288,6 +338,9 @@ public final class QueryStringParser {
                 state.defaultRadiusSuppressed = true;
             }
             case "nc", "nochat" -> state.flags.add(Flag.NO_CHAT);
+            // #287: rollbacks skip containers and entities unless asked.
+            case "containers" -> state.flags.add(Flag.INCLUDE_CONTAINERS);
+            case "entities" -> state.flags.add(Flag.INCLUDE_ENTITIES);
             case "ex", "extended" -> state.flags.add(Flag.EXTENDED);
             case "we", "worldedit" -> {
                 if (!(sender instanceof Player player)) {
@@ -388,5 +441,25 @@ public final class QueryStringParser {
 
     private static String canonicalAlias(QueryParamHandler handler) {
         return handler.aliases().getFirst();
+    }
+
+    /**
+     * True when the predicate tree carries a positive {@code location.*}
+     * bound of its own (e.g. the {@code trg:x,y,z} coordinate form). A
+     * negated location constraint does not bound the query, so {@code Not}
+     * never counts; an {@code Or} only counts when every branch is bounded.
+     */
+    private static boolean constrainsLocation(QueryPredicate predicate) {
+        return switch (predicate) {
+            case QueryPredicate.Eq eq -> eq.field().startsWith("location.");
+            case QueryPredicate.Range range -> range.field().startsWith("location.");
+            case QueryPredicate.In in -> in.field().startsWith("location.");
+            case QueryPredicate.Exists exists -> false;
+            case QueryPredicate.Not not -> false;
+            case QueryPredicate.And and ->
+                    and.predicates().stream().anyMatch(QueryStringParser::constrainsLocation);
+            case QueryPredicate.Or or -> !or.predicates().isEmpty()
+                    && or.predicates().stream().allMatch(QueryStringParser::constrainsLocation);
+        };
     }
 }

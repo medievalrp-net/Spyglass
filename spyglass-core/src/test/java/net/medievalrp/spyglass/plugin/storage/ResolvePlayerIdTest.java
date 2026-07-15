@@ -40,7 +40,7 @@ class ResolvePlayerIdTest {
     }
 
     // The live-caught trap: the plugin wraps every store in
-    // SynthesizingRecordStore (rolled-audit=synthesized is the default), and
+    // SynthesizingRecordStore (always, since #312), and
     // a decorator that doesn't forward a default interface method silently
     // serves the default (null) - disabling name resolution in production
     // while unit tests on the bare store stay green.

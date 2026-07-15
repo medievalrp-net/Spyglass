@@ -41,13 +41,48 @@ public record EntityDeathRecord(
                 target, entityType, entityId, killerType, damageCause, entityNbt);
     }
 
+    /**
+     * Only a player kill is worth resurrecting (#284): environment deaths
+     * (FIRE_TICK, LAVA, SUFFOCATION, ...) resurrected en masse on any
+     * generic area rollback - one fresh-world night left 453 burned
+     * zombies waiting to come back. The Mongo and ClickHouse emitEffect
+     * mirrors apply this same rule from their killer column; keep them in
+     * lockstep by calling {@link #isPlayerKill}.
+     */
+    public boolean resurrectable() {
+        return isPlayerKill(killerType);
+    }
+
+    /**
+     * The killer-gate predicate shared with the lean store paths. Live
+     * listeners write the bare form ({@code "player"}); CoreProtect-imported
+     * rows carry the namespaced form ({@code "minecraft:player"}) - both are
+     * player kills, so both must pass or imported history silently stops
+     * being resurrectable.
+     */
+    public static boolean isPlayerKill(String killerType) {
+        if (killerType == null) {
+            return false;
+        }
+        int namespace = killerType.lastIndexOf(':');
+        String bare = namespace >= 0 ? killerType.substring(namespace + 1) : killerType;
+        return "player".equalsIgnoreCase(bare);
+    }
+
     @Override
     public RollbackEffect rollbackEffect() {
-        return new RollbackEffect.EntitySpawn(location, entityType, entityNbt);
+        if (!resurrectable()) {
+            return null;
+        }
+        return new RollbackEffect.EntitySpawn(location, entityType, entityNbt,
+                entityId == null ? null : entityId.toString());
     }
 
     @Override
     public RollbackEffect restoreEffect() {
+        if (!resurrectable()) {
+            return null;
+        }
         return new RollbackEffect.EntityRemove(location, entityType,
                 entityId == null ? null : entityId.toString());
     }

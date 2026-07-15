@@ -1,10 +1,10 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.BitSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -22,24 +22,17 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.medievalrp.spyglass.plugin.command.service.ServiceSupport;
 import net.kyori.adventure.text.Component;
-import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
-import net.medievalrp.spyglass.api.event.BlockUseRecord;
-import net.medievalrp.spyglass.api.event.EventRecord;
-import net.medievalrp.spyglass.api.event.Origin;
-import net.medievalrp.spyglass.api.event.RecordContext;
-import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.rollback.RollbackEffect;
 import net.medievalrp.spyglass.api.rollback.RollbackEffectHandler;
 import net.medievalrp.spyglass.api.rollback.RollbackReason;
 import net.medievalrp.spyglass.api.rollback.RollbackResult;
 import net.medievalrp.spyglass.api.util.BlockLocation;
-import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
-import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.ChunkDirectWriter;
 import net.medievalrp.spyglass.plugin.util.ChunkResender;
+import net.medievalrp.spyglass.plugin.util.FluidTickScheduler;
 import net.medievalrp.spyglass.plugin.util.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -71,8 +64,6 @@ public final class RollbackEngine {
     private static final Logger LOGGER =
             Logger.getLogger(RollbackEngine.class.getName());
 
-    private final Recorder recorder;
-    private final RecordingSupport support;
     private Function<String, Optional<RollbackEffectHandler>> handlerLookup =
             type -> Optional.empty();
     private RollbackPhysicsBlocker physicsBlocker;
@@ -184,6 +175,48 @@ public final class RollbackEngine {
         }
     }
 
+    // After a chunk's palette writes land, drop every block entity whose
+    // type no longer matches the palette - the ghosts a direct section
+    // write leaves behind (#289): they resurrect containers when the
+    // container phase resolves through them, keep looted inventories
+    // alive for open GUIs (#299), persist to disk, and throw "Failed to
+    // create block entity" on every later chunk load. Views on destroyed
+    // containers are closed first so nobody keeps a window into a dead
+    // inventory. Main thread only.
+    private void pruneStaleBlockEntities(World world, int cx, int cz) {
+        for (ChunkDirectWriter.StaleBlockEntity stale
+                : ChunkDirectWriter.pruneStaleBlockEntities(world, cx, cz)) {
+            if (stale.container()) {
+                closeViewsAt(world, stale.x(), stale.y(), stale.z());
+            }
+        }
+    }
+
+    private static void closeViewsAt(World world, int x, int y, int z) {
+        for (Player player : world.getPlayers()) {
+            try {
+                if (holderAt(player.getOpenInventory().getTopInventory().getHolder(), x, y, z)) {
+                    player.closeInventory();
+                }
+            } catch (RuntimeException ignored) {
+                // Best-effort: a missed close only leaves a stale window
+                // that dies on the next inventory tick.
+            }
+        }
+    }
+
+    private static boolean holderAt(Object holder, int x, int y, int z) {
+        if (holder instanceof org.bukkit.block.DoubleChest doubleChest) {
+            return holderAt(doubleChest.getLeftSide(), x, y, z)
+                    || holderAt(doubleChest.getRightSide(), x, y, z);
+        }
+        if (holder instanceof org.bukkit.inventory.BlockInventoryHolder blockHolder) {
+            Block block = blockHolder.getBlock();
+            return block.getX() == x && block.getY() == y && block.getZ() == z;
+        }
+        return false;
+    }
+
     // The Applied result + its inverse for a restored block, built identically
     // by every object-path apply (sync, parallel worker, main post-pass, slow
     // path). The inverse swaps replacement<->expectedCurrent so /undo reverses
@@ -195,15 +228,6 @@ public final class RollbackEngine {
     }
 
     public RollbackEngine() {
-        this(null, null);
-    }
-
-    // With a non-null recorder/support, every applied effect also
-    // emits a lightweight ROLLBACK record so the wand reads
-    // "ROLLBACK placed STONE" on the rolled block.
-    public RollbackEngine(Recorder recorder, RecordingSupport support) {
-        this.recorder = recorder;
-        this.support = support;
     }
 
     public void setCustomEffectLookup(Function<String, Optional<RollbackEffectHandler>> lookup) {
@@ -247,10 +271,144 @@ public final class RollbackEngine {
         this.chunkTicketHolder = plugin;
     }
 
+    /** Skip message for cells the live-state guard left untouched (#264). */
+    public static final String PROTECTED_SKIP = "Live block is excluded by the query";
+
+    /** Skip message for container work withheld by default (#287). */
+    public static final String CONTAINERS_SKIP =
+            "Containers are skipped by default (pass --containers to include them)";
+
+    /**
+     * Skip message when a container transaction's target block no longer
+     * holds a container (#335). We do NOT restore the block here - it comes
+     * back when the operator rolls back the area - so the transaction just
+     * skips and tells them how to give the reversal something to write into.
+     */
+    public static final String MISSING_CONTAINER_SKIP =
+            "Container is missing. Please place a container or roll back the area first.";
+
+    /** Skip message for entity work withheld by default (#287). */
+    public static final String ENTITIES_SKIP =
+            "Entities are skipped by default (pass --entities to include them)";
+
+    // Materials the operator explicitly excluded (block:!x), per job. A cell
+    // whose LIVE block is one of these is never overwritten: excluding the
+    // chest's record used to leave older same-coordinate history free to
+    // force-write the live chest back to the window's start state (#264).
+    // This is deliberately NOT the general expected-state guard that #69
+    // removed - that one skipped cells where unlogged drift (water/lava/
+    // fire) moved in after the grief, which broke grief recovery. Guarding
+    // only the operator's own exclusions cannot break that: unlogged drift
+    // is never in the set, and an operator who names a material has said
+    // "leave that material alone" in so many words. Do not widen this into
+    // a general live-state comparison; the reasoning above is why the last
+    // one was deleted.
+    //
+    // Per-job engine state, same contract as the apply-phase counters
+    // above: jobs are queue-serialized, set at the public entry points.
+    private volatile Set<String> protectedMaterials = Set.of();
+
+    // #287: containers and entities are opt-in per job. Default TRUE so
+    // direct engine callers (tests, the legacy undo replay, the api) keep
+    // their behavior; RollbackService sets both from the query flags.
+    private volatile boolean includeContainers = true;
+    private volatile boolean includeEntities = true;
+
+    // Materials whose block state is a Bukkit Container - the same set
+    // SalvageCapturer keys on. Resolved once from the live registry; on any
+    // failure (unit tests without a server) the set stays empty and the
+    // container-block gate is inert, which the flag-independent gates on
+    // the container-slot and entity paths do not depend on.
+    private static volatile Set<Material> containerMaterials;
+
+    private static Set<Material> containerMaterials() {
+        Set<Material> resolved = containerMaterials;
+        if (resolved != null) {
+            return resolved;
+        }
+        Set<Material> out = new java.util.HashSet<>();
+        try {
+            for (Material material : Material.values()) {
+                try {
+                    if (material.isBlock() && !material.isLegacy()
+                            && material.createBlockData().createBlockState()
+                                    instanceof org.bukkit.block.Container) {
+                        out.add(material);
+                    }
+                } catch (Throwable ignored) {
+                    // Material without a resolvable state; not a container.
+                }
+            }
+        } catch (Throwable ignored) {
+            out.clear();
+        }
+        containerMaterials = Set.copyOf(out);
+        return containerMaterials;
+    }
+
+    /**
+     * Material names of the {@link #containerMaterials()} set, for
+     * consumers outside the engine that must mirror the #287 gate's
+     * notion of "container" - today the rolled-* audit synthesis
+     * (#302). Empty when no registry is available.
+     */
+    public static Set<String> containerMaterialNames() {
+        Set<String> names = new java.util.HashSet<>();
+        for (Material material : containerMaterials()) {
+            names.add(material.name());
+        }
+        return Set.copyOf(names);
+    }
+
     // Synchronous entry point for tests. Production uses applyAllChunked
     // directly so the apply loop can yield between ticks.
     public List<RollbackResult> applyAll(List<RollbackEffect> effects, CommandSender sender) {
         return applyAllChunked(effects, sender, ServiceSupport.synchronous(), Integer.MAX_VALUE).join();
+    }
+
+    /** Sets the operator's excluded materials for the next job (#264). */
+    public void protectMaterials(Set<String> materials) {
+        this.protectedMaterials = materials == null ? Set.of() : Set.copyOf(materials);
+    }
+
+    /** Sets what the next job may touch beyond plain blocks (#287). */
+    public void includeInRollback(boolean containers, boolean entities) {
+        this.includeContainers = containers;
+        this.includeEntities = entities;
+    }
+
+    // (original dead entity id -> resurrected id) map an undo replay
+    // carries so EntityRemove can find the fresh copy a rollback
+    // spawned (#294). Set per job; the queue serializes jobs.
+    private volatile java.util.Map<UUID, UUID> entityAliases = java.util.Map.of();
+
+    public void entityAliases(java.util.Map<UUID, UUID> aliases) {
+        this.entityAliases = aliases == null ? java.util.Map.of() : java.util.Map.copyOf(aliases);
+    }
+
+    private boolean isProtectedLive(World world, int x, int y, int z) {
+        return !protectedMaterials.isEmpty()
+                && protectedMaterials.contains(world.getBlockAt(x, y, z).getType().name());
+    }
+
+    /**
+     * Skip reason for a block cell, or null to write it. Two gates (#264,
+     * #287): the operator's excluded materials, and - unless --containers -
+     * any cell that would place a container or overwrite a live one. Main
+     * thread only (live block reads).
+     */
+    private String blockCellSkip(World world, int x, int y, int z, Material replacement) {
+        if (isProtectedLive(world, x, y, z)) {
+            return PROTECTED_SKIP;
+        }
+        if (!includeContainers) {
+            Set<Material> containers = containerMaterials();
+            if ((replacement != null && containers.contains(replacement))
+                    || containers.contains(world.getBlockAt(x, y, z).getType())) {
+                return CONTAINERS_SKIP;
+            }
+        }
+        return null;
     }
 
     // -- apply-phase failsafe (#127) ------------------------------
@@ -293,6 +451,11 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyAllChunked must run on the main thread.");
         }
         CompletableFuture<List<RollbackResult>> done = new CompletableFuture<>();
+        done.whenComplete((r, t) -> {
+            protectedMaterials = Set.of();
+            includeContainers = true;
+            includeEntities = true;
+        });
         if (effects.isEmpty()) {
             done.complete(List.of());
             return done;
@@ -580,9 +743,22 @@ public final class RollbackEngine {
                     BlockSnapshot replacement = effect.replacement();
                     BlockLocation loc = effect.location();
                     try {
+                        String cellSkip = blockCellSkip(world, loc.x(), loc.y(), loc.z(),
+                                replacement.material());
+                        if (cellSkip != null) {
+                            resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                                    new RollbackReason.NotSupported(cellSkip));
+                            continue;
+                        }
                         BlockData bd =
                                 blockDataFor(replacement.blockData());
                         forceWriteCell(chunkCtx, world, loc.x(), loc.y(), loc.z(), bd);
+                        // Palette writes skip the block-entity lifecycle;
+                        // register the tile entity the new state needs so
+                        // container/sign payloads land in a real one (#289).
+                        if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                            ChunkDirectWriter.ensureBlockEntity(world, loc.x(), loc.y(), loc.z());
+                        }
                         if (!replacement.simple()) {
                             Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
                             applyTileEntityState(block, replacement);
@@ -593,7 +769,15 @@ public final class RollbackEngine {
                                 new RollbackReason.Error("Unhandled error: " + thrown.getMessage()));
                     }
                 }
+                pruneStaleBlockEntities(world, cx, cz);
                 ChunkDirectWriter.finishChunk(chunkCtx);
+                // Direct writes never schedule fluid ticks; re-arm the fluid
+                // engine over this chunk's cells and their shell (#270).
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = i; j < chunkEnd; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
                 // Direct NMS writes skip the per-block packet queue,
                 // so push the new chunk to viewers ourselves.
                 try {
@@ -730,7 +914,21 @@ public final class RollbackEngine {
                 if (salvageHook != null) {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
-                batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded));
+                // Live-state reads are main-thread only; the worker half
+                // consults the precomputed reasons instead of the world
+                // (#264 exclusions, #287 container gate).
+                String[] cellSkips = null;
+                if (!protectedMaterials.isEmpty() || !includeContainers) {
+                    cellSkips = new String[chunkEnd - cursor];
+                    for (int j = cursor; j < chunkEnd; j++) {
+                        RollbackEffect.BlockReplace eff = blockReplaceEffects.get(j);
+                        BlockLocation loc = eff.location();
+                        cellSkips[j - cursor] = blockCellSkip(world, loc.x(), loc.y(), loc.z(),
+                                eff.replacement() == null ? null : eff.replacement().material());
+                    }
+                }
+                batch.add(new ChunkWork(world, cx, cz, cursor, chunkEnd, ctx, ticketAdded,
+                        cellSkips));
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -856,6 +1054,11 @@ public final class RollbackEngine {
         for (int j = 0; j < chunkSize; j++) {
             int targetIndex = blockReplaceIndices.get(from + j);
             RollbackEffect.BlockReplace effect = blockReplaceEffects.get(from + j);
+            if (work.cellSkips != null && work.cellSkips[j] != null) {
+                resultArray[targetIndex] = new RollbackResult.Skipped(effect,
+                        new RollbackReason.NotSupported(work.cellSkips[j]));
+                continue;
+            }
             BlockData bd;
             try {
                 bd = blockDataFor(effect.replacement().blockData());
@@ -879,12 +1082,14 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(work.ctx, work.world, loc.x(), loc.y(), loc.z(), bd);
-            if (replacement.simple()) {
-                // No tile entity to apply; the palette write is the whole
-                // apply. Build Applied here on the worker.
+            if (replacement.simple() && !ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                // No tile entity to apply or register; the palette write
+                // is the whole apply. Build Applied here on the worker.
                 resultArray[targetIndex] = appliedWithInverse(effect);
             } else {
-                // Needs BlockState.update on the main thread.
+                // Needs the main thread: BlockState.update for the tile
+                // payload, and/or block-entity registration for a tile
+                // block the palette write placed (#289).
                 nonSimpleMask.set(j);
             }
         }
@@ -903,7 +1108,14 @@ public final class RollbackEngine {
         int from = work.from;
         BitSet nonSimpleMask = work.nonSimpleMask;
         BlockData[] writes = work.writes;
+        // Chest cells written this chunk, re-paired after the writes commit
+        // so a rolled-back double chest comes back coherent (#324).
+        List<int[]> chestCells = null;
         try {
+            // The worker's palette writes are all in; drop the block
+            // entities they orphaned before any tile state resolves
+            // through a stale one (#289, #299).
+            pruneStaleBlockEntities(world, work.cx, work.cz);
             if (nonSimpleMask != null) {
                 for (int j = nonSimpleMask.nextSetBit(0); j >= 0;
                         j = nonSimpleMask.nextSetBit(j + 1)) {
@@ -917,8 +1129,23 @@ public final class RollbackEngine {
                             // the recorded block here on main.
                             forceWriteCell(null, world, loc.x(), loc.y(), loc.z(), writes[j]);
                         }
-                        Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
-                        applyTileEntityState(block, replacement);
+                        // Register the block entity the new tile state
+                        // needs before applying its payload (#289); a
+                        // detached state write otherwise vanishes (#298).
+                        if (work.ctx != null && ChunkDirectWriter.stateHasBlockEntity(writes[j])) {
+                            ChunkDirectWriter.ensureBlockEntity(
+                                    world, loc.x(), loc.y(), loc.z());
+                        }
+                        if (!replacement.simple()) {
+                            Block block = world.getBlockAt(loc.x(), loc.y(), loc.z());
+                            applyTileEntityState(block, replacement);
+                        }
+                        if (writes[j] instanceof org.bukkit.block.data.type.Chest) {
+                            if (chestCells == null) {
+                                chestCells = new ArrayList<>(2);
+                            }
+                            chestCells.add(new int[]{loc.x(), loc.y(), loc.z()});
+                        }
                         resultArray[targetIndex] = appliedWithInverse(effect);
                     } catch (RuntimeException ex) {
                         resultArray[targetIndex] = new RollbackResult.Skipped(effect,
@@ -927,6 +1154,20 @@ public final class RollbackEngine {
                 }
             }
             ChunkDirectWriter.finishChunk(work.ctx);
+            if (chestCells != null) {
+                for (int[] cell : chestCells) {
+                    ChestRepair.repair(world, cell[0], cell[1], cell[2]);
+                }
+            }
+            // Direct writes never schedule fluid ticks; re-arm the fluid
+            // engine over this chunk's cells and their shell (#270).
+            if (writes != null) {
+                FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                for (int j = 0; j < writes.length; j++) {
+                    BlockLocation loc = blockReplaceEffects.get(from + j).location();
+                    fluids.touch(loc.x(), loc.y(), loc.z());
+                }
+            }
             // Direct NMS writes skip the per-block packet queue, so push
             // the new chunk to viewers ourselves.
             try {
@@ -963,11 +1204,13 @@ public final class RollbackEngine {
         final int chunkEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
+        final String[] cellSkips;
         volatile BlockData[] writes;
         volatile BitSet nonSimpleMask;
 
         ChunkWork(World world, int cx, int cz, int from, int chunkEnd,
-                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
+                  ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
+                  String[] cellSkips) {
             this.world = world;
             this.cx = cx;
             this.cz = cz;
@@ -975,6 +1218,7 @@ public final class RollbackEngine {
             this.chunkEnd = chunkEnd;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
+            this.cellSkips = cellSkips;
         }
     }
 
@@ -999,10 +1243,15 @@ public final class RollbackEngine {
         public long unparseable;
         public long invalidLocation;
         public long cancelled;
+        /** Cells the live-state guard left untouched (#264). Benign. */
+        public long protectedCells;
+        /** Live-container cells withheld without --containers (#287). Benign. */
+        public long containerCells;
 
         /** Total skipped across every benign and error reason. */
         public long skipped() {
-            return blockChanged + unparseable + invalidLocation + cancelled;
+            return blockChanged + unparseable + invalidLocation + cancelled
+                    + protectedCells + containerCells;
         }
 
         /** Skips that are real failures (parity with RollbackReason.Error). */
@@ -1016,6 +1265,8 @@ public final class RollbackEngine {
             unparseable += other.unparseable;
             invalidLocation += other.invalidLocation;
             cancelled += other.cancelled;
+            protectedCells += other.protectedCells;
+            containerCells += other.containerCells;
         }
     }
 
@@ -1027,6 +1278,11 @@ public final class RollbackEngine {
             throw new IllegalStateException("RollbackEngine.applyColumnsChunked must run on the main thread.");
         }
         CompletableFuture<ApplyCounts> done = new CompletableFuture<>();
+        done.whenComplete((r, t) -> {
+            protectedMaterials = Set.of();
+            includeContainers = true;
+            includeEntities = true;
+        });
         ApplyCounts counts = new ApplyCounts();
         int total = cols.count();
         if (total == 0) {
@@ -1118,7 +1374,39 @@ public final class RollbackEngine {
                 if (salvageHook != null) {
                     salvageHook.onChunkResolved(world, cx, cz);
                 }
-                batch.add(new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded));
+                // Live-state reads are main-thread only; the worker half
+                // consults the mask instead of the world (#264 exclusions,
+                // #287 container gate). The replacement side is parsed out
+                // of the lean stream's blockdata string - an EMPTY container
+                // is a simple snapshot and rides this path, so trusting
+                // "columnar means no container" let plain rollbacks place
+                // container blocks (#290). Counting happens at classify
+                // time so the worker only skips.
+                BitSet skipMask = null;
+                long protectedHere = 0;
+                long containersHere = 0;
+                if (!protectedMaterials.isEmpty() || !includeContainers) {
+                    java.util.HashMap<String, Material> materialCache = new java.util.HashMap<>();
+                    skipMask = new BitSet(rangeEnd - cursor);
+                    for (int k = cursor; k < rangeEnd; k++) {
+                        int cellIdx = order[k];
+                        String reason = blockCellSkip(world,
+                                cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx),
+                                replacementMaterial(cols.replData(cellIdx), materialCache));
+                        if (reason != null) {
+                            skipMask.set(k - cursor);
+                            if (PROTECTED_SKIP.equals(reason)) {
+                                protectedHere++;
+                            } else {
+                                containersHere++;
+                            }
+                        }
+                    }
+                }
+                ColChunk colChunk = new ColChunk(cx, cz, cursor, rangeEnd, ctx, ticketAdded, skipMask);
+                colChunk.protectedCells = protectedHere;
+                colChunk.containerCells = containersHere;
+                batch.add(colChunk);
                 if (!chunkLoaded) {
                     loadsThisHop++;
                 }
@@ -1165,7 +1453,34 @@ public final class RollbackEngine {
                         // main thread via the single-block fallback.
                         writeColumnChunkMain(world, cols, order, cc);
                     } else {
+                        // Palette writes skip the block-entity lifecycle:
+                        // drop the entities they orphaned (#289, #299) and
+                        // register the ones the written tile states need.
+                        pruneStaleBlockEntities(world, cc.cx, cc.cz);
+                        if (cc.tileCells != null) {
+                            for (int[] cell : cc.tileCells) {
+                                ChunkDirectWriter.ensureBlockEntity(
+                                        world, cell[0], cell[1], cell[2]);
+                            }
+                        }
                         ChunkDirectWriter.finishChunk(cc.ctx);
+                    }
+                    // Writes for this chunk are committed; re-pair any chest
+                    // halves so a rolled-back double chest comes back coherent
+                    // (#324). tileCells carries every block-entity cell the
+                    // write touched, empty chests included; repair no-ops the
+                    // rest.
+                    if (cc.tileCells != null) {
+                        for (int[] cell : cc.tileCells) {
+                            ChestRepair.repair(world, cell[0], cell[1], cell[2]);
+                        }
+                    }
+                    // Direct writes never schedule fluid ticks; re-arm the
+                    // fluid engine over this chunk's cells and shell (#270).
+                    FluidTickScheduler.Pass fluids = FluidTickScheduler.begin(world);
+                    for (int k = cc.from; k < cc.rangeEnd; k++) {
+                        int cellIdx = order[k];
+                        fluids.touch(cols.x(cellIdx), cols.y(cellIdx), cols.z(cellIdx));
                     }
                     try {
                         ChunkResender.resend(world, cc.cx, cc.cz);
@@ -1179,6 +1494,8 @@ public final class RollbackEngine {
                     counts.applied += cc.applied;
                     counts.blockChanged += cc.blockChanged;
                     counts.unparseable += cc.unparseable;
+                    counts.protectedCells += cc.protectedCells;
+                    counts.containerCells += cc.containerCells;
                 } catch (Throwable t) {
                     // finishChunk / onChunkWritten threw; record the failure and
                     // keep cleaning up the rest of the batch (#127).
@@ -1248,6 +1565,26 @@ public final class RollbackEngine {
     // Worker-thread half: parse + write one chunk's cells from the columns.
     // No chunk-system access (prepareChunk already ran on main) — only the
     // locked LevelChunkSection write. Counts land on the work unit.
+    // Material of a lean-stream blockdata string, e.g.
+    // "minecraft:chest[facing=west]" -> CHEST, so the columnar gate can
+    // see what it is about to place (#290). Null-cached per distinct
+    // string; the palette is tiny so this is a handful of parses per
+    // batch.
+    private static @org.jetbrains.annotations.Nullable Material replacementMaterial(
+            String blockData, java.util.Map<String, Material> cache) {
+        if (blockData == null) {
+            return null;
+        }
+        Material cached = cache.get(blockData);
+        if (cached == null && !cache.containsKey(blockData)) {
+            int bracket = blockData.indexOf('[');
+            cached = Material.matchMaterial(
+                    (bracket >= 0 ? blockData.substring(0, bracket) : blockData).trim());
+            cache.put(blockData, cached);
+        }
+        return cached;
+    }
+
     private void writeColumnChunk(BlockColumns cols, int[] order, ColChunk cc) {
         if (cc.ctx == null) {
             return; // handled on the main thread in writeColumnChunkMain
@@ -1256,6 +1593,9 @@ public final class RollbackEngine {
         long changed = 0;
         long unparse = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
+            if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
+                continue; // counted at classify time on the main thread
+            }
             int idx = order[k];
             int x = cols.x(idx);
             int y = cols.y(idx);
@@ -1271,6 +1611,15 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(cc.ctx, null, x, y, z, bd);
+            // Rare on this path (post-#290 containers ride the object
+            // path), but blank signs, skulls and the like are simple AND
+            // tile - remember them for main-thread registration (#289).
+            if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                if (cc.tileCells == null) {
+                    cc.tileCells = new java.util.ArrayList<>(4);
+                }
+                cc.tileCells.add(new int[]{x, y, z});
+            }
             applied++;
         }
         cc.applied = applied;
@@ -1284,6 +1633,9 @@ public final class RollbackEngine {
         long applied = 0;
         long unparse = 0;
         for (int k = cc.from; k < cc.rangeEnd; k++) {
+            if (cc.skipMask != null && cc.skipMask.get(k - cc.from)) {
+                continue; // counted at classify time on the main thread
+            }
             int idx = order[k];
             int x = cols.x(idx);
             int y = cols.y(idx);
@@ -1299,6 +1651,14 @@ public final class RollbackEngine {
                 continue;
             }
             forceWriteCell(null, world, x, y, z, bd);
+            // Same block-entity bookkeeping as the worker path so the
+            // post-write chest re-pair (#324) covers this fallback too.
+            if (ChunkDirectWriter.stateHasBlockEntity(bd)) {
+                if (cc.tileCells == null) {
+                    cc.tileCells = new java.util.ArrayList<>(4);
+                }
+                cc.tileCells.add(new int[]{x, y, z});
+            }
             applied++;
         }
         cc.applied = applied;
@@ -1315,16 +1675,26 @@ public final class RollbackEngine {
         final int rangeEnd;
         final ChunkDirectWriter.ChunkContext ctx;
         final boolean ticketAdded;
+        final BitSet skipMask;
         volatile long applied;
         volatile long blockChanged;
         volatile long unparseable;
+        volatile long protectedCells;
+        volatile long containerCells;
+        // Cells whose written state carries a block entity - the worker
+        // collects them so the main-thread post pass can register the
+        // entities a palette write skips (#289). Written by exactly one
+        // worker, read after its future completes.
+        java.util.List<int[]> tileCells;
 
         ColChunk(int cx, int cz, int from, int rangeEnd,
-                 ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded) {
+                 ChunkDirectWriter.ChunkContext ctx, boolean ticketAdded,
+                 BitSet skipMask) {
             this.cx = cx;
             this.cz = cz;
             this.from = from;
             this.rangeEnd = rangeEnd;
+            this.skipMask = skipMask;
             this.ctx = ctx;
             this.ticketAdded = ticketAdded;
         }
@@ -1339,45 +1709,6 @@ public final class RollbackEngine {
                                          ServiceSupport scheduler,
                                          int batchSize,
                                          CompletableFuture<List<RollbackResult>> done) {
-        // Audit trail: emit a lightweight rolled-place / rolled-break
-        // record for every block this rollback restored, so the wand
-        // reads "ROLLBACK placed/broke X" and a:rolled-place queries
-        // surface what the rollback touched. recorder/support are null in
-        // unit tests, making this a no-op there. Restores the per-block
-        // emission Spyglass did before the NMS-direct-section rewrite
-        // dropped the call site.
-        //
-        // Building one record per restored block (~hundreds of thousands
-        // on a big rollback) is pure data assembly — no Bukkit calls once
-        // the operator name is captured — so it runs off the main thread.
-        // That was the single largest main-thread cost in the apply
-        // critical path; recordAll bulk-queues without firing the
-        // per-record committed hook, so off-main hand-off is safe and the
-        // rollback completes without waiting on it.
-        if (recorder != null && support != null) {
-            final String operatorName = sender == null ? "console" : sender.getName();
-            final RollbackResult[] applied = resultArray;
-            Runnable buildAndEmit = () -> {
-                List<EventRecord> rolledRecords = new ArrayList<>();
-                // Reference reads are atomic; we only act on already-set
-                // BlockReplace results (stable after the block phase), so
-                // any concurrent leftover-phase writes to other indices
-                // are correctly skipped by the instanceof filter.
-                for (RollbackResult r : applied) {
-                    if (r instanceof RollbackResult.Applied a
-                            && a.effect() instanceof RollbackEffect.BlockReplace br) {
-                        rolledRecords.add(buildRollbackSourceRecord(
-                                operatorName, br.location(), br.replacement()));
-                    }
-                }
-                recorder.recordAll(rolledRecords);
-            };
-            if (worldWriteExecutor != null) {
-                worldWriteExecutor.execute(buildAndEmit);
-            } else {
-                buildAndEmit.run();
-            }
-        }
         Map<BlockLocation, List<Integer>> slotIndicesByLocation = new LinkedHashMap<>();
         Map<BlockLocation, List<RollbackEffect.ContainerSlotWrite>> slotEffectsByLocation = new LinkedHashMap<>();
         for (int index = 0; index < effects.size(); index++) {
@@ -1511,6 +1842,13 @@ public final class RollbackEngine {
                                      List<Integer> indices,
                                      List<RollbackEffect.ContainerSlotWrite> writes,
                                      RollbackResult[] resultArray) {
+        if (!includeContainers) {
+            for (int i = 0; i < indices.size(); i++) {
+                resultArray[indices.get(i)] = new RollbackResult.Skipped(writes.get(i),
+                        new RollbackReason.NotSupported(CONTAINERS_SKIP));
+            }
+            return;
+        }
         Optional<World> world = BlockLocations.resolveWorld(location);
         if (world.isEmpty()) {
             for (int i = 0; i < indices.size(); i++) {
@@ -1519,18 +1857,24 @@ public final class RollbackEngine {
             }
             return;
         }
-        Block block = world.get().getBlockAt(location.x(), location.y(), location.z());
-        BlockState state = block.getState();
-        if (!(state instanceof Container container)) {
+        String containerType = null;
+        for (RollbackEffect.ContainerSlotWrite csw : writes) {
+            if (csw.containerType() != null) {
+                containerType = csw.containerType();
+                break;
+            }
+        }
+        SurfaceOrSkip resolved = resolveContainerSurface(world.get(), location, containerType);
+        if (resolved.surface() == null) {
             for (int i = 0; i < indices.size(); i++) {
                 resultArray[indices.get(i)] = new RollbackResult.Skipped(writes.get(i),
-                        new RollbackReason.NotSupported("Target is no longer a container."));
+                        new RollbackReason.NotSupported(resolved.skipReason()));
             }
             return;
         }
 
-        Inventory inventory = container.getSnapshotInventory();
-        int size = inventory.getSize();
+        SlotSurface surface = resolved.surface();
+        int size = surface.size();
         boolean anyApplied = false;
 
         for (int i = 0; i < indices.size(); i++) {
@@ -1542,50 +1886,177 @@ public final class RollbackEngine {
                                 "Slot " + slot + " out of range for container (size " + size + ")."));
                 continue;
             }
-            ItemStack current = inventory.getItem(slot);
+            ItemStack current = surface.get(slot);
             if (!matches(csw.expectedCurrent(), slot, current)) {
                 resultArray[indices.get(i)] = new RollbackResult.Skipped(csw,
-                        new RollbackReason.Error("Container slot changed."));
+                        new RollbackReason.Guarded("Container slot changed."));
                 continue;
             }
             StoredItem replacement = csw.replacement();
-            inventory.setItem(slot, replacement == null ? null : ItemSerialization.decode(replacement.data()));
+            surface.set(slot, replacement == null ? null : ItemSerialization.decode(replacement.data()));
             StoredItem inverseCurrent = ItemSerialization.storedItem(slot, current);
             RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(
-                    location, slot, replacement, inverseCurrent);
+                    location, slot, replacement, inverseCurrent, csw.containerType());
             resultArray[indices.get(i)] = new RollbackResult.Applied(csw, inverse);
             anyApplied = true;
         }
-
         if (anyApplied) {
-            state.update(true, false);
+            surface.flush();
         }
     }
 
-    // Emit a lightweight wand-attribution record on a rolled block so
-    // searches show "ROLLBACK placed STONE". BlockUseRecord avoids
-    // carrying the before/after snapshot blobs that BlockPlaceRecord
-    // would, which mattered: at 150 blocks the snapshot pairs combined
-    // with FAWE's write buffer were enough to tip the heap into OOM.
-    private EventRecord buildRollbackSourceRecord(String operatorName, BlockLocation location, BlockSnapshot after) {
-        Instant occurred = support.now();
-        Source source = Source.environment("ROLLBACK");
-        Origin origin = Origin.rollback(operatorName);
-        // Skip support.context (which uses SecureRandom) to avoid
-        // entropy reads for every rolled block.
-        RecordContext ctx = new RecordContext(
-                RecordingSupport.fastRandomUUID(),
-                occurred,
-                support.expiresAt(occurred),
-                origin, source, location, support.serverName(), Map.of());
-        boolean toAir = after == null || after.material() == Material.AIR;
-        // Lowercase-hyphenated form matches shulker-open etc. and
-        // dodges the case-sensitivity quirk in EventCatalog.recordClassOf.
-        String event = toAir ? "rolled-break" : "rolled-place";
-        String target = (after == null ? Material.AIR : after.material()).name();
-        return new BlockUseRecord(
-                ctx.id(), event, ctx.occurred(), ctx.expiresAt(),
-                ctx.origin(), ctx.source(), ctx.location(), ctx.server(), target);
+    // ---- container slot surfaces (#293, #300) --------------------------
+
+    /**
+     * One writable container-slot surface. Widens the old
+     * instanceof-Container check, which rejected inventory-holding tile
+     * states that are not Containers (decorated pots, chiseled
+     * bookshelves - #300) and could never see entity-held inventories
+     * (storage/hopper minecarts, item frames - #293).
+     */
+    private interface SlotSurface {
+        int size();
+
+        ItemStack get(int slot);
+
+        void set(int slot, ItemStack stack);
+
+        /** Push writes for snapshot-backed surfaces; no-op for live ones. */
+        default void flush() {
+        }
+    }
+
+    private record SurfaceOrSkip(SlotSurface surface, String skipReason) {
+    }
+
+    private SurfaceOrSkip resolveContainerSurface(World world, BlockLocation location,
+                                                  String containerType) {
+        Block block = world.getBlockAt(location.x(), location.y(), location.z());
+        BlockState state = block.getState();
+        if (state instanceof Container container) {
+            // LIVE inventory - writes go straight to the block entity. The
+            // old snapshot-then-update pattern silently lost every write on
+            // shulker boxes (#298).
+            Inventory inventory = container.getInventory();
+            return new SurfaceOrSkip(new SlotSurface() {
+                @Override
+                public int size() {
+                    return inventory.getSize();
+                }
+
+                @Override
+                public ItemStack get(int slot) {
+                    return inventory.getItem(slot);
+                }
+
+                @Override
+                public void set(int slot, ItemStack stack) {
+                    inventory.setItem(slot, stack);
+                }
+            }, null);
+        }
+        if (state instanceof org.bukkit.inventory.BlockInventoryHolder holder) {
+            // Decorated pot / chiseled bookshelf (#300). getInventory() on a
+            // placed holder is LIVE, same as Container - and following it
+            // with state.update(true) re-wrote the block entity from the
+            // stale snapshot, resurrecting exactly what the write removed
+            // (the shulker lesson from #298 again). Write live, no flush.
+            Inventory inventory = holder.getInventory();
+            return new SurfaceOrSkip(new SlotSurface() {
+                @Override
+                public int size() {
+                    return inventory.getSize();
+                }
+
+                @Override
+                public ItemStack get(int slot) {
+                    return inventory.getItem(slot);
+                }
+
+                @Override
+                public void set(int slot, ItemStack stack) {
+                    inventory.setItem(slot, stack);
+                }
+            }, null);
+        }
+        EntityType entityType = entityContainerType(containerType);
+        if (entityType != null) {
+            Entity entity = nearestEntityOfType(world, location, entityType);
+            if (entity == null) {
+                return new SurfaceOrSkip(null, "Container entity (" + containerType
+                        + ") is no longer near the recorded spot.");
+            }
+            if (entity instanceof org.bukkit.inventory.InventoryHolder holder) {
+                Inventory inventory = holder.getInventory();
+                return new SurfaceOrSkip(new SlotSurface() {
+                    @Override
+                    public int size() {
+                        return inventory.getSize();
+                    }
+
+                    @Override
+                    public ItemStack get(int slot) {
+                        return inventory.getItem(slot);
+                    }
+
+                    @Override
+                    public void set(int slot, ItemStack stack) {
+                        inventory.setItem(slot, stack);
+                    }
+                }, null);
+            }
+            if (entity instanceof org.bukkit.entity.ItemFrame frame) {
+                return new SurfaceOrSkip(new SlotSurface() {
+                    @Override
+                    public int size() {
+                        return 1;
+                    }
+
+                    @Override
+                    public ItemStack get(int slot) {
+                        ItemStack held = frame.getItem();
+                        return held.getType() == Material.AIR ? null : held;
+                    }
+
+                    @Override
+                    public void set(int slot, ItemStack stack) {
+                        frame.setItem(stack, false);
+                    }
+                }, null);
+            }
+            return new SurfaceOrSkip(null, "Transactions on " + containerType
+                    + " entities cannot be reversed yet.");
+        }
+        return new SurfaceOrSkip(null, MISSING_CONTAINER_SKIP);
+    }
+
+    private static EntityType entityContainerType(String containerType) {
+        if (containerType == null) {
+            return null;
+        }
+        try {
+            return EntityType.valueOf(containerType);
+        } catch (IllegalArgumentException ex) {
+            return null;   // a block material name - the block path already ran
+        }
+    }
+
+    // Carts drift; frames and stands do not. 8 blocks keeps casual cart
+    // motion in range without grabbing an unrelated cart two farms over.
+    private static Entity nearestEntityOfType(World world, BlockLocation loc, EntityType type) {
+        org.bukkit.Location center = new org.bukkit.Location(
+                world, loc.x() + 0.5, loc.y() + 0.5, loc.z() + 0.5);
+        Entity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Entity entity : world.getNearbyEntities(center, 8, 8, 8,
+                e -> e.getType() == type)) {
+            double distance = entity.getLocation().distanceSquared(center);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = entity;
+            }
+        }
+        return best;
     }
 
     public RollbackResult apply(RollbackEffect effect) {
@@ -1617,12 +2088,23 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyEntitySpawn(RollbackEffect.EntitySpawn effect) {
+        if (!includeEntities) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(ENTITIES_SKIP));
+        }
         Optional<World> world = BlockLocations.resolveWorld(effect.location());
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
         Location location = new Location(world.get(),
                 effect.location().x() + 0.5, effect.location().y(), effect.location().z() + 0.5);
+        // Hostile mobs are never resurrected (#284), NBT snapshot or not:
+        // nobody rolls back a slain zombie horde on purpose, and the killer
+        // filter upstream still lets player-killed passives (pets, villagers,
+        // livestock) come back.
+        if (isHostile(effect.entityType())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
+                    "Hostile mobs are not resurrected."));
+        }
         // Full-NBT resurrection when a snapshot exists. In practice it
         // rarely does: Paper's serializeEntity rejects dying entities,
         // so death records ship with null NBT — hence the
@@ -1643,6 +2125,25 @@ public final class RollbackEngine {
             }
         }
         return spawnByType(effect, world.get(), location);
+    }
+
+    // Best-effort hostility check via the entity type's API class. Any
+    // lookup failure (unknown type, registry not ready) resolves to NOT
+    // hostile so the killer filter upstream remains the deciding gate.
+    private static boolean isHostile(String entityTypeName) {
+        if (entityTypeName == null || entityTypeName.isBlank()) {
+            return false;
+        }
+        try {
+            EntityType type = org.bukkit.Registry.ENTITY_TYPE.get(
+                    org.bukkit.NamespacedKey.minecraft(
+                            entityTypeName.toLowerCase(Locale.ROOT)));
+            return type != null && type.getEntityClass() != null
+                    && (org.bukkit.entity.Monster.class.isAssignableFrom(type.getEntityClass())
+                        || org.bukkit.entity.Boss.class.isAssignableFrom(type.getEntityClass()));
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     // Resurrection without a snapshot: a fresh entity of the recorded
@@ -1673,6 +2174,9 @@ public final class RollbackEngine {
     }
 
     private RollbackResult applyEntityRemove(RollbackEffect.EntityRemove effect) {
+        if (!includeEntities) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(ENTITIES_SKIP));
+        }
         if (effect.entityId() == null || effect.entityId().isBlank()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("No entity id."));
         }
@@ -1683,6 +2187,14 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Invalid entity id."));
         }
         Entity entity = Bukkit.getEntity(entityId);
+        if (entity == null) {
+            // Resurrection almost always minted a fresh uuid; the undo
+            // reference carries the (original -> fresh) pair (#294).
+            UUID resurrected = entityAliases.get(entityId);
+            if (resurrected != null) {
+                entity = Bukkit.getEntity(resurrected);
+            }
+        }
         if (entity == null) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity not found."));
         }
@@ -1697,44 +2209,62 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
 
+        if (isProtectedLive(world.get(), effect.location().x(), effect.location().y(), effect.location().z())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(PROTECTED_SKIP));
+        }
         // Force-overwrite via applySnapshot (the Bukkit slow path) — same
         // contract as forceWriteCell.
         Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
         applySnapshot(block, effect.replacement());
+        // applySnapshot writes with applyPhysics=false; re-arm the fluid
+        // engine around the cell (#270).
+        FluidTickScheduler.touchSingle(world.get(),
+                effect.location().x(), effect.location().y(), effect.location().z());
         return appliedWithInverse(effect);
     }
 
     private RollbackResult applyContainerSlotWrite(RollbackEffect.ContainerSlotWrite effect) {
+        if (!includeContainers) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(CONTAINERS_SKIP));
+        }
         Optional<World> world = BlockLocations.resolveWorld(effect.location());
         if (world.isEmpty()) {
             return new RollbackResult.Skipped(effect, new RollbackReason.InvalidLocation(effect.location()));
         }
-        Block block = world.get().getBlockAt(effect.location().x(), effect.location().y(), effect.location().z());
-        if (!(block.getState() instanceof Container container)) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Target is no longer a container."));
+        SurfaceOrSkip resolved = resolveContainerSurface(
+                world.get(), effect.location(), effect.containerType());
+        if (resolved.surface() == null) {
+            return new RollbackResult.Skipped(effect,
+                    new RollbackReason.NotSupported(resolved.skipReason()));
         }
+        SlotSurface surface = resolved.surface();
 
-        // Some Bukkit inventory events fire with slot = -1 (drag /
-        // auto-stack) and the recorded container may be wider than
-        // the live one (chest -> hopper downgrade). Range-check
-        // before getItem to avoid IndexOutOfBoundsException.
+        // slot = -1 rows exist and stay benign skips: cursor-held bundle
+        // transactions record -1 by design (there is no container slot),
+        // and shift-click deposits recorded -1 before #268 - those legacy
+        // rows live in every store until retention ages them out. The
+        // recorded container may also be wider than the live one (chest ->
+        // hopper downgrade). Range-check before getItem to avoid
+        // IndexOutOfBoundsException.
         int slot = effect.slot();
-        int size = container.getInventory().getSize();
+        int size = surface.size();
         if (slot < 0 || slot >= size) {
             return new RollbackResult.Skipped(effect,
                     new RollbackReason.NotSupported(
                             "Slot " + slot + " out of range for container (size " + size + ")."));
         }
 
-        ItemStack current = container.getInventory().getItem(slot);
+        ItemStack current = surface.get(slot);
         if (!matches(effect.expectedCurrent(), effect.slot(), current)) {
-            return new RollbackResult.Skipped(effect, new RollbackReason.Error("Container slot changed."));
+            return new RollbackResult.Skipped(effect, new RollbackReason.Guarded("Container slot changed."));
         }
 
         StoredItem replacement = effect.replacement();
-        container.getInventory().setItem(effect.slot(), replacement == null ? null : ItemSerialization.decode(replacement.data()));
+        surface.set(effect.slot(), replacement == null ? null : ItemSerialization.decode(replacement.data()));
+        surface.flush();
         StoredItem inverseCurrent = ItemSerialization.storedItem(effect.slot(), current);
-        RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(effect.location(), effect.slot(), replacement, inverseCurrent);
+        RollbackEffect inverse = new RollbackEffect.ContainerSlotWrite(
+                effect.location(), effect.slot(), replacement, inverseCurrent, effect.containerType());
         return new RollbackResult.Applied(effect, inverse);
     }
 

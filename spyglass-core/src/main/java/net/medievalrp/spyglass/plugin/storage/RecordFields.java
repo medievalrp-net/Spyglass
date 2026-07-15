@@ -44,9 +44,11 @@ final class RecordFields {
 
     // Container / entity-death record fields the lean rollback path reads.
     static final String SLOT = "slot";
+    static final String CONTAINER_TYPE = "containerType";
     static final String ENTITY_TYPE = "entityType";
     static final String ENTITY_ID = "entityId";
     static final String ENTITY_NBT = "entityNbt";
+    static final String KILLER_TYPE = "killerType";
 
     private RecordFields() {
     }

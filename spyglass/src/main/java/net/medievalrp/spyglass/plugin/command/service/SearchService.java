@@ -3,6 +3,8 @@ package net.medievalrp.spyglass.plugin.command.service;
 import net.medievalrp.spyglass.plugin.command.render.Feedback;
 
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.IntFunction;
 import java.util.logging.Logger;
@@ -110,15 +112,26 @@ public final class SearchService {
         // per-sender, so the viewer on every later page flip is the same
         // sender this bit was computed for (#48).
         boolean showIp = sender.hasPermission("spyglass.search.ip");
+        // Originals a rollback has since reverted, so the renderer can strike
+        // them through (#319). Captured with the line source, same as showIp.
+        Set<UUID> rolledBack = result.rolledBackIds();
         IntFunction<Component> lines;
         if (grouping) {
             List<QueryResult.RecordAggregation> aggregations = result.aggregations();
             var flags = request.flags();
-            lines = index -> renderer.renderAggregation(aggregations.get(index), flags, showIp);
+            lines = index -> {
+                QueryResult.RecordAggregation aggregation = aggregations.get(index);
+                return renderer.renderAggregation(aggregation, flags, showIp,
+                        rolledBack.contains(aggregation.sample().id()));
+            };
         } else {
             List<EventRecord> records = result.records();
             var flags = request.flags();
-            lines = index -> renderer.renderSingle(records.get(index), flags, showIp);
+            lines = index -> {
+                EventRecord record = records.get(index);
+                return renderer.renderSingle(record, flags, showIp,
+                        rolledBack.contains(record.id()));
+            };
         }
         pageCache.store(sender, count, lines);
         pageCache.show(sender, 1);

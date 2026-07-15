@@ -164,7 +164,7 @@ class UndoServiceTest {
         CommandSender sender = mock(CommandSender.class);
         List<Component> messages = ServiceTestSupport.captureMessages(sender);
 
-        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks)
+        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks, null)
                 .execute(sender);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
@@ -183,7 +183,7 @@ class UndoServiceTest {
         when(stack.openLatest(id)).thenReturn(Optional.empty());
         List<Component> messages = ServiceTestSupport.captureMessages(player);
 
-        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks)
+        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks, null)
                 .execute(player);
 
         assertThat(ServiceTestSupport.plainTexts(messages))
@@ -208,14 +208,14 @@ class UndoServiceTest {
         when(stack.openLatest(id)).thenReturn(Optional.of(ref));
         ServiceTestSupport.captureMessages(player);
 
-        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks)
+        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks, null)
                 .execute(player);
 
         ArgumentCaptor<QueryRequest> request = ArgumentCaptor.forClass(QueryRequest.class);
         ArgumentCaptor<RollbackMode> mode = ArgumentCaptor.forClass(RollbackMode.class);
         ArgumentCaptor<Runnable> onDone = ArgumentCaptor.forClass(Runnable.class);
         verify(rollbacks).executeReplay(eq(player), request.capture(), mode.capture(),
-                any(String.class), onDone.capture());
+                any(String.class), org.mockito.ArgumentMatchers.anyMap(), onDone.capture());
 
         // Opposite direction of the stored op.
         assertThat(mode.getValue()).isEqualTo(RollbackMode.RESTORE);
@@ -256,7 +256,7 @@ class UndoServiceTest {
                 });
         List<Component> messages = ServiceTestSupport.captureMessages(player);
 
-        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks)
+        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks, null)
                 .execute(player);
 
         verify(engine, times(2)).applyAllChunked(ArgumentMatchers.any(), ArgumentMatchers.any(),
@@ -284,7 +284,7 @@ class UndoServiceTest {
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("boom")));
         List<Component> messages = ServiceTestSupport.captureMessages(player);
 
-        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks)
+        new UndoService(engine, stack, ServiceSupport.synchronous(), fakeConfig(), rollbacks, null)
                 .execute(player);
 
         assertThat(ServiceTestSupport.plainTexts(messages))

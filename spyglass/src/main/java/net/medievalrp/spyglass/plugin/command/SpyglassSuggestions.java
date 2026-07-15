@@ -21,6 +21,9 @@ public final class SpyglassSuggestions {
 
     private static final List<String> FLAGS = List.of(
             "-ng", "-g", "-nc", "-ex", "-we",
+            // #287 rollback opt-ins: parsed by QueryStringParser but were
+            // missing here, so they worked when typed yet never completed.
+            "-containers", "-entities",
             "-ord=asc", "-ord=desc",
             "-nod=r", "-nod=t");
 
@@ -78,7 +81,7 @@ public final class SpyglassSuggestions {
     private List<String> suggestFor(CommandSender sender, String token) {
         if (token.startsWith("-")) {
             String lower = token.toLowerCase(java.util.Locale.ROOT);
-            // After the dash there may be `=value` — split on first
+            // After the dash there may be `=value` - split on first
             // `=` so that completion against a custom flag's value-side
             // works the same as for built-ins.
             int eq = lower.indexOf('=');
@@ -94,7 +97,7 @@ public final class SpyglassSuggestions {
                     }
                     return prefixed;
                 }
-                // Fall through — built-in flags (`-ord=`, `-nod=`)
+                // Fall through - built-in flags (`-ord=`, `-nod=`)
                 // already appear in FLAGS with their values prefilled.
             }
             List<String> all = new ArrayList<>(FLAGS);
@@ -140,7 +143,7 @@ public final class SpyglassSuggestions {
             }
             return prefixed;
         }
-        // No alias yet — suggest every alias with ':' suffix plus the flag starters.
+        // No alias yet - suggest every alias with ':' suffix plus the flag starters.
         List<String> out = new ArrayList<>();
         for (QueryParamHandler handler : api.queryParams()) {
             for (String alias : handler.aliases()) {

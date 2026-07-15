@@ -8,6 +8,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockPlaceRecord;
@@ -56,6 +57,12 @@ public final class ResultRenderer {
     public Component renderAggregation(QueryResult.RecordAggregation aggregation,
                                        java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
                                        boolean showIp) {
+        return renderAggregation(aggregation, flags, showIp, false);
+    }
+
+    public Component renderAggregation(QueryResult.RecordAggregation aggregation,
+                                       java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                       boolean showIp, boolean rolledBack) {
         EventRecord sample = aggregation.sample();
         long count = aggregation.count();
         java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
@@ -65,21 +72,26 @@ public final class ResultRenderer {
         // skipped because any one sample.location() would be misleading.
         // The flags ride through so the drill-down click command can
         // carry the parent search's scope (notably -g) forward.
-        return line(sample, count, true, false, safe, showIp);
+        return line(sample, count, true, false, safe, showIp, rolledBack);
     }
 
     public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
                                   boolean showIp) {
+        return renderSingle(record, flags, showIp, false);
+    }
+
+    public Component renderSingle(EventRecord record, java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
+                                  boolean showIp, boolean rolledBack) {
         java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> safe = flags == null
                 ? java.util.EnumSet.noneOf(net.medievalrp.spyglass.api.query.Flag.class)
                 : flags;
         boolean extended = safe.contains(net.medievalrp.spyglass.api.query.Flag.EXTENDED);
-        return line(record, 1, false, extended, safe, showIp);
+        return line(record, 1, false, extended, safe, showIp, rolledBack);
     }
 
     private Component line(EventRecord record, long count, boolean grouped, boolean extended,
                            java.util.EnumSet<net.medievalrp.spyglass.api.query.Flag> flags,
-                           boolean showIp) {
+                           boolean showIp, boolean rolledBack) {
         // v1 grouped: "= (24/4/26) SOURCE verb [qty ]TARGET xCOUNT TIME"
         // v1 ungrouped: "= SOURCE verb [qty ]TARGET TIME"
         var builder = Component.text()
@@ -165,7 +177,49 @@ public final class ResultRenderer {
                             .hoverEvent(HoverEvent.showText(
                                     Component.text("Click to teleport", NamedTextColor.GRAY))));
         }
-        return builder.asComponent();
+        Component rendered = builder.asComponent();
+        // A reverted record renders muted so "already rolled back" reads at a
+        // glance, CoreProtect-style (#319): default gray + struck through +
+        // italic on the content, while the leading "= " marker keeps its
+        // normal styling.
+        return rolledBack ? mutedRolledBack(rendered) : rendered;
+    }
+
+    /**
+     * Mute a finished row: leave the leading "= " marker (the first child)
+     * alone, and gray + strike-through + italicize everything after it. The
+     * click and hover ride in the root/child styles and survive the recolor;
+     * the hover tooltip is not a child, so it keeps its own colors.
+     */
+    private static Component mutedRolledBack(Component row) {
+        List<Component> children = row.children();
+        if (children.isEmpty()) {
+            return row;
+        }
+        List<Component> muted = new ArrayList<>(children.size());
+        muted.add(children.get(0)); // "= " marker stays normal - not struck
+        for (int index = 1; index < children.size(); index++) {
+            muted.add(muteDeep(children.get(index)));
+        }
+        return row.children(muted);
+    }
+
+    /**
+     * Default gray + struck through + italic, applied to every node so it
+     * overrides the per-span green/aqua/white. No bold.
+     */
+    private static Component muteDeep(Component component) {
+        Component restyled = component.color(NamedTextColor.GRAY)
+                .decorate(TextDecoration.STRIKETHROUGH)
+                .decorate(TextDecoration.ITALIC);
+        if (component.children().isEmpty()) {
+            return restyled;
+        }
+        List<Component> children = new ArrayList<>(component.children().size());
+        for (Component child : component.children()) {
+            children.add(muteDeep(child));
+        }
+        return restyled.children(children);
     }
 
     /**

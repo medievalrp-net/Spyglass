@@ -1,7 +1,22 @@
-Command UX polish and two stability fixes, on top of 1.0.8's CoreProtect import and backend migration.
+A large rollback-correctness batch, explicit rollback scope flags, struck-through display for rolled-back history, automatic config migration, and two removed knobs.
 
-- Help: /sg help now lists every command (import, migrate, inventory, stats, rbqueue...) and paginates, with the same red clickable page arrows as search results.
-- Consistency: /sg import and /sg migrate output now use the standard "Spyglass" chat styling, /sg version spacing is fixed, and /sg migrate tab-completes its backend argument.
-- /s alias: register /s as a third root command next to /spyglass and /sg (opt in with commands.s-alias, off by default).
-- Fix: a null-location record no longer wedges the ClickHouse ingest drain. Such a record is stored with a sentinel location and rejected at the API boundary, so one bad third-party event can't stop the audit log.
-- Fix: a capture whose world just unloaded no longer throws on the block break/place path; it records with a worldless sentinel instead.
+Upgrading from 1.0.8 or 1.0.9: on first boot Spyglass rewrites config.conf to the new format. Every setting you changed carries over (the Mongo connection included; its keys move under a database.mongo block), the removed knobs below are dropped, and your old file is kept next to it as config.conf.v1.bak. Upgrade the Velocity proxy jar together with the backend: new undo references and the migrated database block are not readable by older jars. If you have pending /sg undo entries, run them before upgrading; pre-upgrade entries replay without container/entity coverage.
+
+- Rollback scope is now explicit: a plain /sg rollback reverts blocks only. Add --containers to also revert container contents and --entities to resurrect entity kills. Undo of an operation replays the scope it ran with.
+- Entity resurrection applies only to player kills; environment and mob deaths stay searchable but never come back on a rollback. CoreProtect-imported player kills count as player kills.
+- Around twenty rollback/undo/salvage/audit correctness fixes: container reversal reaches pots, bookshelves, shulkers, and entity-held inventories; undo removes the entities its rollback resurrected and withdraws the undone salvage; salvage only dumps containers the rollback actually destroyed; synthesized rolled-* entries honor the operation's scope flags, name what was destroyed, and appear in grouped view; banner-pattern values no longer break rollback; container slot-drift is reported as guarded, not as an error.
+- Rolled-back records render struck through and grayed out in search and inspection-wand results, so already-reverted history reads at a glance. The rollback's own receipt and command rows stay bright.
+- A cell with several logged changes now rolls back with one write and one receipt instead of replaying every event, so a block broken and re-placed twice no longer reports broke x2 for one restored block.
+- Rolling back a broken double chest re-pairs the halves into one 54-slot inventory; they previously came back as a mismatched left + single pair.
+- Crafter output serialization moved off the main thread, same pattern as the other container listeners. With crafter farms active it was most of Spyglass's main-thread cost.
+- Flags survive phone-keyboard smart punctuation: an em or en dash typed for -- reads as the flag marker instead of silently turning the flag into a player filter that matches nothing.
+- Rolling back container contents when the container block is gone now tells you what to do (place a container or roll back the area first) instead of skipping with no explanation.
+- New worldedit.enabled config toggle (default on) turns off WorldEdit/FAWE logging entirely, so a large //set or //replace builds no records and runs at native speed during big terraform sessions. It is the only switch for this; events.place/break do not gate WorldEdit.
+- Rollbacks bounded by before: warn when newer history above the ceiling is left unrolled.
+- /s is registered as a root alias by default (it was opt-in when introduced in 1.0.9); set commands.s-alias = false if another plugin owns /s.
+- The inspector wand looks back tool.lookback (default 26w) instead of a hidden 7 days, and the results header now names the window.
+- b:/block: on container records filters the container's own material, matching what results display; item filters keep matching the moved item. trg:x,y,z pins an exact cell.
+- Removed: storage.durability and its wal-batched mode. The in-RAM ingest path with spill-to-disk for bulk edits is the only behavior; leftover wal-batched files from an unclean stop are replayed into the database once, on first boot, and that replay shim goes away next release, so do not skip this version if you ran wal-batched.
+- Removed: storage.rolled-audit. The rollback audit trail is always synthesized from the per-operation rollback-op record; receipt rows persisted by older builds stay searchable. Both removed keys are dropped by the migration and ignored if hand-restored.
+- Defaults raised for fresh installs only: limits.max-radius is 500 and limits.search-result is 5000. Upgraded configs keep the values already in their file.
+- For API consumers: SpyglassApi.record() now rejects records with a null location; RollbackReason gains a Guarded subtype and Flag gains INCLUDE_CONTAINERS / INCLUDE_ENTITIES, so exhaustive switches need a recompile.

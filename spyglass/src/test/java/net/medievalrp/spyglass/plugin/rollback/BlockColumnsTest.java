@@ -94,4 +94,89 @@ class BlockColumnsTest {
         one.add(1, 2, 3, one.intern("minecraft:stone"), -1);
         assertThat(one.chunkSortedOrder()).containsExactly(0);
     }
+
+    // --- per-cell coalescing (#321) ---
+
+    @Test
+    void addOrReplaceFoldsRepeatCellsToTheLastWrite() {
+        BlockColumns cols = new BlockColumns(8);
+        int dirt = cols.intern("minecraft:dirt");
+        int air = cols.intern("minecraft:air");
+        // place, break, place at one cell, rollback direction: the
+        // stream's writes are air (newest place), dirt (break), air
+        // (oldest place). Net write = the last arrival = air.
+        assertThat(cols.addOrReplace(4, 64, 4, air, dirt)).isTrue();
+        assertThat(cols.addOrReplace(4, 64, 4, dirt, air)).isFalse();
+        assertThat(cols.addOrReplace(4, 64, 4, air, dirt)).isFalse();
+
+        assertThat(cols.count()).isEqualTo(1);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:air");
+        // First arrival's expected-current survives the folds.
+        assertThat(cols.expData(0)).isEqualTo("minecraft:dirt");
+    }
+
+    @Test
+    void addOrReplaceKeepsDistinctCellsApart() {
+        BlockColumns cols = new BlockColumns(8);
+        int stone = cols.intern("minecraft:stone");
+        int air = cols.intern("minecraft:air");
+        assertThat(cols.addOrReplace(0, 64, 0, stone, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, 65, 0, air, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, 64, 1, air, -1)).isTrue();
+        assertThat(cols.addOrReplace(1, 64, 0, air, -1)).isTrue();
+        assertThat(cols.count()).isEqualTo(4);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:stone");
+    }
+
+    @Test
+    void addOrReplaceDoesNotWidenBoundsOnAFold() {
+        BlockColumns cols = new BlockColumns(8);
+        int id = cols.intern("minecraft:stone");
+        cols.addOrReplace(5, 70, -3, id, -1);
+        cols.addOrReplace(5, 70, -3, id, -1);
+        assertThat(cols.minX()).isEqualTo(5);
+        assertThat(cols.maxX()).isEqualTo(5);
+        assertThat(cols.minY()).isEqualTo(70);
+        assertThat(cols.maxY()).isEqualTo(70);
+        assertThat(cols.minZ()).isEqualTo(-3);
+        assertThat(cols.maxZ()).isEqualTo(-3);
+    }
+
+    @Test
+    void cellIndexSurvivesGrowthAndExtremeCoordinates() {
+        BlockColumns cols = new BlockColumns(2);
+        int id = cols.intern("minecraft:stone");
+        int other = cols.intern("minecraft:dirt");
+        // Push far past the initial table so the index rehashes, with
+        // world-border-scale and negative coordinates in the mix.
+        for (int i = 0; i < 500; i++) {
+            assertThat(cols.addOrReplace(29_999_000 - i, -64 + (i % 300), -29_999_000 + i, id, -1))
+                    .isTrue();
+        }
+        assertThat(cols.count()).isEqualTo(500);
+        // Every one of the 500 still folds instead of appending.
+        for (int i = 0; i < 500; i++) {
+            assertThat(cols.addOrReplace(29_999_000 - i, -64 + (i % 300), -29_999_000 + i, other, -1))
+                    .isFalse();
+        }
+        assertThat(cols.count()).isEqualTo(500);
+        assertThat(cols.replData(0)).isEqualTo("minecraft:dirt");
+        assertThat(cols.replData(499)).isEqualTo("minecraft:dirt");
+    }
+
+    @Test
+    void nearMissNeighborsAreNotFolded() {
+        // Cells that differ in exactly one axis by one must never share
+        // a packed key (the classic packing-collision bug shape).
+        BlockColumns cols = new BlockColumns(8);
+        int id = cols.intern("minecraft:stone");
+        assertThat(cols.addOrReplace(0, 0, 0, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(1, 0, 0, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(-1, 0, 0, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, 1, 0, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, -1, 0, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, 0, 1, id, -1)).isTrue();
+        assertThat(cols.addOrReplace(0, 0, -1, id, -1)).isTrue();
+        assertThat(cols.count()).isEqualTo(7);
+    }
 }

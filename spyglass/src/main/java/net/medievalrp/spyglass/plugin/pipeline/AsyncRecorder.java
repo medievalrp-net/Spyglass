@@ -62,8 +62,7 @@ import org.jetbrains.annotations.ApiStatus;
  * <ol>
  *   <li><b>Hard JVM death</b> — server crash, SIGKILL, power loss. The
  *       in-RAM queue (capped at {@code queueMax}) is lost with the process;
- *       {@code wal-batched} durability closes that window, and spilled
- *       overflow is already on disk and recovered on next start.</li>
+ *       spilled overflow is already on disk and recovered on next start.</li>
  *   <li><b>Shutdown flush deadline exhaustion</b> —
  *       {@link #flushRemaining} retries with backoff for the full
  *       configured {@code flush-timeout}. If the store is still unreachable
@@ -87,7 +86,6 @@ public final class AsyncRecorder implements Recorder {
     // is never blocked by the ceiling. Bukkit::isPrimaryThread in production.
     private final BooleanSupplier primaryThread;
     private final RecordStore store;
-    private final WalDurability wal;
     // On-disk overflow buffer. When the queue is at queueMax, the uncappable
     // vanilla-WorldEdit firehose (recordAll) spills here instead of holding
     // overflow in RAM; the drain replays it. Disabled (no-op) by default.
@@ -150,21 +148,7 @@ public final class AsyncRecorder implements Recorder {
      * @param logger        plugin logger for warnings + retry diagnostics.
      */
     public AsyncRecorder(long warnThreshold, RecordStore store, Logger logger) {
-        this(warnThreshold, 0L, store, new WalDurability(null, false, logger), () -> false, logger);
-    }
-
-    /**
-     * Constructor with explicit {@link WalDurability}. When the WAL is
-     * enabled, the drain thread writes each batch to disk + fsyncs
-     * before pushing to the database, then deletes the file after a
-     * successful save. Crash recovery on next startup replays any
-     * leftover files via {@link WalDurability#recover()}.
-     *
-     * <p>Leaves the queue unbounded ({@code queueMax = 0}) and treats no
-     * thread as primary — the shape unit tests want headless.
-     */
-    public AsyncRecorder(long warnThreshold, RecordStore store, WalDurability wal, Logger logger) {
-        this(warnThreshold, 0L, store, wal, () -> false, logger);
+        this(warnThreshold, 0L, store, () -> false, logger);
     }
 
     /**
@@ -176,8 +160,8 @@ public final class AsyncRecorder implements Recorder {
      * controllable fake.
      */
     public AsyncRecorder(long warnThreshold, long queueMax, RecordStore store,
-                         WalDurability wal, BooleanSupplier primaryThread, Logger logger) {
-        this(warnThreshold, queueMax, store, wal,
+                         BooleanSupplier primaryThread, Logger logger) {
+        this(warnThreshold, queueMax, store,
                 new SpillBuffer(null, false, logger), primaryThread, logger);
     }
 
@@ -189,12 +173,11 @@ public final class AsyncRecorder implements Recorder {
      * logger)}) to keep everything in RAM — the shape headless tests want.
      */
     public AsyncRecorder(long warnThreshold, long queueMax, RecordStore store,
-                         WalDurability wal, SpillBuffer spill,
+                         SpillBuffer spill,
                          BooleanSupplier primaryThread, Logger logger) {
         this.warnThreshold = warnThreshold;
         this.queueMax = queueMax;
         this.store = store;
-        this.wal = wal;
         this.spill = spill;
         this.primaryThread = primaryThread;
         this.logger = logger;
@@ -244,8 +227,8 @@ public final class AsyncRecorder implements Recorder {
     /**
      * Install the opt-in analytics counter (#168). When set, every intake is
      * tallied by event type. Null (the default) leaves the hot path a single
-     * volatile read + null check. Set once at startup, after WAL replay so
-     * recovered records don't count as live ingest.
+     * volatile read + null check. Set once at startup, after spill/upgrade
+     * replay is queued, so recovered records don't count as live ingest.
      */
     public void setIngestStats(IngestStats stats) {
         this.ingestStats = stats;
@@ -658,7 +641,7 @@ public final class AsyncRecorder implements Recorder {
     }
 
     /**
-     * Persist one batch with WAL fsync + retry/backoff. Retries the same batch
+     * Persist one batch with retry/backoff. Retries the same batch
      * until it saves or shutdown is requested. Returns {@code true} once saved
      * (and {@link #drained} is incremented); {@code false} if shutdown
      * interrupts mid-retry, leaving it to the caller to re-queue (queue path)
@@ -666,23 +649,12 @@ public final class AsyncRecorder implements Recorder {
      * {@link #consecutiveFailures} needs no synchronization.
      */
     private boolean persistWithRetry(List<EventRecord> batch) {
-        // WAL durability: when enabled, fsync the batch to disk before the DB
-        // push so a hard crash leaves a recoverable file behind. write() is a
-        // no-op + null when WAL is disabled, keeping the RAM-only path as v1.
-        java.nio.file.Path walFile = null;
-        try {
-            walFile = wal.write(batch);
-        } catch (java.io.IOException walFailure) {
-            logger.warning("Spyglass WAL write failed (" + walFailure.getMessage()
-                    + "); proceeding with DB save anyway. Records still durable iff DB save succeeds.");
-        }
         // A transient store failure (Mongo hiccup, replica-set election,
         // network blip) must not kill the drain thread and silently drop every
         // subsequent record. Retry the same batch until it succeeds or shutdown.
         while (true) {
             try {
                 store.save(batch);
-                wal.ack(walFile);
                 drained.addAndGet(batch.size());
                 consecutiveFailures = 0;
                 return true;
@@ -723,21 +695,10 @@ public final class AsyncRecorder implements Recorder {
         if (batch.isEmpty()) {
             return;
         }
-        // Mirror the drain loop's WAL contract on the shutdown path:
-        // fsync the batch first so a crashed-shutdown leaves the
-        // records recoverable on next startup.
-        java.nio.file.Path walFile = null;
-        try {
-            walFile = wal.write(batch);
-        } catch (java.io.IOException walFailure) {
-            logger.warning("Spyglass WAL write failed at shutdown ("
-                    + walFailure.getMessage() + "); proceeding with DB save anyway.");
-        }
         int attempt = 0;
         while (true) {
             try {
                 store.save(batch);
-                wal.ack(walFile);
                 drained.addAndGet(batch.size());
                 return;
             } catch (RuntimeException ex) {
@@ -759,21 +720,13 @@ public final class AsyncRecorder implements Recorder {
             }
         }
         // Only reached when the database was unreachable for the entire
-        // shutdown window. With WAL enabled, the batch is already on disk
-        // and will be replayed automatically on next startup — no
-        // operator action required. With WAL disabled, the records are
-        // genuinely lost.
-        if (wal.enabled()) {
-            logger.severe("Recorder shutdown flush gave up within deadline; "
-                    + batch.size() + " records left on the WAL and will be "
-                    + "replayed on next startup once the database is reachable.");
-        } else {
-            logger.severe("Recorder shutdown flush gave up within deadline; "
-                    + batch.size() + " records could not be persisted and are lost. "
-                    + "Database was unreachable through the full flush-timeout. "
-                    + "Set storage.durability = \"wal-batched\" to make this recoverable.");
-            dropped.addAndGet(batch.size());
-        }
+        // shutdown window. The records are genuinely lost; spilled bulk-edit
+        // segments are unaffected (they stay on disk and replay on next start).
+        logger.severe("Recorder shutdown flush gave up within deadline; "
+                + batch.size() + " records could not be persisted and are lost. "
+                + "Database was unreachable through the full flush-timeout; "
+                + "raise storage.flush-timeout to ride out longer outages at shutdown.");
+        dropped.addAndGet(batch.size());
     }
 
     public record ShutdownReport(long drained, long dropped, long remaining) {

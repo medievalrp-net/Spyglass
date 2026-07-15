@@ -30,22 +30,31 @@ public final class WorldEditLifecycleListener implements Listener {
     private final Executor asyncExecutor;
     private final org.bukkit.plugin.Plugin plugin;
     private final Logger logger;
+    private final java.util.function.BooleanSupplier enabledGate;
     private WorldEditSubscriber subscriber;
 
     public WorldEditLifecycleListener(Recorder recorder, RecordingSupport support,
                                       Executor asyncExecutor, org.bukkit.plugin.Plugin plugin,
-                                      Logger logger, @Nullable WorldEditSubscriber existing) {
+                                      Logger logger, @Nullable WorldEditSubscriber existing,
+                                      java.util.function.BooleanSupplier enabledGate) {
         this.recorder = recorder;
         this.support = support;
         this.asyncExecutor = asyncExecutor;
         this.plugin = plugin;
         this.logger = logger;
+        this.enabledGate = enabledGate;
         this.subscriber = existing;
     }
 
     @EventHandler
     public void onPluginEnable(PluginEnableEvent event) {
         if (!isWorldEdit(event.getPlugin().getName())) {
+            return;
+        }
+        // Respect the #332 toggle: a WE hot-load must not silently re-arm
+        // logging the operator turned off. Read live so a later /sg reload
+        // that flips worldedit.enabled back on takes effect here too.
+        if (!enabledGate.getAsBoolean()) {
             return;
         }
         if (subscriber != null) {

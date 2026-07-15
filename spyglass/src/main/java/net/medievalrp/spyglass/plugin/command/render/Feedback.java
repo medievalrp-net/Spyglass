@@ -76,8 +76,14 @@ public final class Feedback {
         return Component.text(message, NamedTextColor.GREEN);
     }
 
-    /** `«Spyglass» --- TARGET at x y z ---` — used by the wand before a lookup. */
-    public static Component inspectHeader(String target, BlockLocation location) {
+    /**
+     * {@code «Spyglass» --- TARGET at x y z (last 26w) ---}, used by the
+     * wand before a lookup. The window is always shown so an empty result
+     * reads as "nothing inside the window", never "no history exists"
+     * (#271).
+     */
+    public static Component inspectHeader(String target, BlockLocation location,
+                                          net.medievalrp.spyglass.api.util.Duration window) {
         return Component.text()
                 .append(PREFIX)
                 .append(Component.text(" --- ", NamedTextColor.GREEN))
@@ -86,6 +92,8 @@ public final class Feedback {
                 .append(Component.text(
                         location.x() + " " + location.y() + " " + location.z(),
                         NamedTextColor.GREEN))
+                .append(Component.text(" (last " + window.compact() + ")",
+                        NamedTextColor.GRAY))
                 .append(Component.text(" ---", NamedTextColor.GREEN))
                 .asComponent();
     }

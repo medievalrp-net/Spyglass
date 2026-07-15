@@ -91,8 +91,18 @@ class PredicateToBsonTest {
 
     @Test
     void translatesNotWrapping() {
+        // Not renders as a single-clause $nor, never a top-level $not: the
+        // server rejects $not around compound children ("unknown top level
+        // operator"), first hit by the container-aware b: exclude (#263)
+        // whose Not wraps an Or. $nor has identical semantics for simple
+        // shapes too.
         BsonDocument doc = asBson(translator.translate(new QueryPredicate.Not(new QueryPredicate.Eq("event", "break"))));
-        assertThat(doc.toJson()).contains("$not");
+        assertThat(doc.toJson()).contains("$nor");
+        BsonDocument compound = asBson(translator.translate(new QueryPredicate.Not(
+                new QueryPredicate.Or(List.of(
+                        new QueryPredicate.Eq("event", "break"),
+                        new QueryPredicate.Eq("event", "place"))))));
+        assertThat(compound.toJson()).contains("$nor").doesNotContain("$not");
     }
 
     @Test

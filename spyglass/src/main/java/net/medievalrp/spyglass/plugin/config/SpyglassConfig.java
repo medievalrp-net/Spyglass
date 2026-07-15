@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.medievalrp.spyglass.api.util.Duration;
+import net.medievalrp.spyglass.plugin.storage.MongoConnectionString;
 import org.bukkit.Material;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.spongepowered.configurate.ConfigurationNode;
@@ -22,7 +23,8 @@ public record SpyglassConfig(
         Server server,
         Metrics metrics,
         Analytics analytics,
-        Commands commands) {
+        Commands commands,
+        WorldEdit worldedit) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -35,6 +37,33 @@ public record SpyglassConfig(
             "login", "register", "l", "reg", "changepassword", "changepw",
             "unregister", "premium", "2fa", "totp", "auth");
 
+    /**
+     * Current config schema version. Bumped whenever the on-disk layout changes
+     * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
+     * A config with an older {@code config-version} is migrated on load.
+     */
+    public static final int CONFIG_VERSION = 2;
+
+    // v1 -> v2 (v1 = the unversioned format up through release 1.0.9; #311,
+    // #307, and #312 all land in one release, so they share one hop): the
+    // bare database.uri/name/collection keys moved under a mongo { } block
+    // with `name` becoming `database`, and storage.durability (#307) +
+    // storage.rolled-audit (#312) were removed - a null target drops the
+    // key. Map.of rejects null values, so the table is built by hand.
+    // Package-visible so ConfigMigratorTest exercises the real table
+    // instead of a mirror.
+    static final Map<String, String> MIGRATION_REMAP;
+
+    static {
+        Map<String, String> remap = new java.util.HashMap<>();
+        remap.put("database.uri", "database.mongo.uri");
+        remap.put("database.name", "database.mongo.database");
+        remap.put("database.collection", "database.mongo.collection");
+        remap.put("storage.durability", null);
+        remap.put("storage.rolled-audit", null);
+        MIGRATION_REMAP = java.util.Collections.unmodifiableMap(remap);
+    }
+
     public static SpyglassConfig load(JavaPlugin plugin) throws IOException {
         Path path = plugin.getDataFolder().toPath().resolve("config.conf");
         Files.createDirectories(path.getParent());
@@ -45,7 +74,62 @@ public record SpyglassConfig(
         HoconConfigurationLoader loader = HoconConfigurationLoader.builder()
                 .path(path)
                 .build();
-        ConfigurationNode root = loader.load();
+        ConfigurationNode root;
+        try {
+            root = loader.load();
+        } catch (IOException ex) {
+            // A hand-broken config must not silently reset to defaults - that
+            // would repoint the backend and credentials. Preserve it and stop.
+            Path saved = ConfigMigrator.backup(path, "corrupt");
+            throw new IOException("Spyglass config.conf could not be parsed; backed up to "
+                    + saved.getFileName() + ". Fix the syntax and restart.", ex);
+        }
+
+        int version = ConfigMigrator.readVersion(root);
+        if (version < CONFIG_VERSION) {
+            try {
+                root = ConfigMigrator.migrate(root, loadBundledDefaults(plugin),
+                        MIGRATION_REMAP, CONFIG_VERSION);
+            } catch (org.spongepowered.configurate.serialize.SerializationException ex) {
+                throw new IOException(
+                        "Spyglass config migration failed; your config.conf was not modified.", ex);
+            }
+            // Persisting the rewrite is a convenience, not a requirement: the
+            // migrated settings drive this boot either way. A data folder that
+            // can't be written (read-only mount, odd symlink target) migrates
+            // in memory on every boot instead of hard-disabling the plugin -
+            // the old jar booted the same folder without complaint. Backup
+            // strictly precedes the rewrite, so the operator's file is only
+            // ever replaced once a copy of it exists.
+            try {
+                Path saved = ConfigMigrator.backup(path, "v" + version);
+                loader.save(root);
+                plugin.getLogger().info("Spyglass: migrated config v" + version + " -> v" + CONFIG_VERSION
+                        + "; previous file backed up to " + saved.getFileName());
+            } catch (IOException persistFailure) {
+                plugin.getLogger().warning("Spyglass: config migrated v" + version + " -> v"
+                        + CONFIG_VERSION + " in memory, but the file could not be rewritten ("
+                        + persistFailure.getMessage() + "). Running on the migrated settings;"
+                        + " fix the data-folder permissions to persist the upgrade and silence"
+                        + " this warning.");
+            }
+        } else {
+            // A hand-stamped config-version on an old-format file skips
+            // migration, so its pre-move keys would be silently ignored
+            // (e.g. bare database.uri no longer selects the Mongo target).
+            // Say so instead of misreading the operator's intent quietly.
+            ConfigurationNode current = root;
+            java.util.List<String> stale = MIGRATION_REMAP.keySet().stream()
+                    .filter(key -> !current.node((Object[]) key.split("\\.")).virtual())
+                    .sorted()
+                    .toList();
+            if (!stale.isEmpty()) {
+                plugin.getLogger().warning("Spyglass: config-version is current (" + version
+                        + ") but the file still contains pre-v" + CONFIG_VERSION + " keys "
+                        + stale + "; they are IGNORED. Remove the hand-set config-version"
+                        + " line to migrate them, or delete the old keys.");
+            }
+        }
 
         // Auto-merge: any event present in the jar's default config.conf but missing from
         // the on-disk config gets added with defaults. Prevents silent "event not enabled"
@@ -53,7 +137,15 @@ public record SpyglassConfig(
         ConfigurationNode bundled = loadBundledDefaults(plugin);
         boolean changed = mergeMissingEvents(root, bundled);
         if (changed) {
-            loader.save(root);
+            try {
+                loader.save(root);
+            } catch (IOException persistFailure) {
+                // Same convenience-not-requirement rule as the migration
+                // rewrite above: the merged defaults drive this boot either
+                // way, so an unwritable folder costs a warning, not the plugin.
+                plugin.getLogger().warning("Spyglass: new event defaults merged in memory, but "
+                        + "config.conf could not be rewritten (" + persistFailure.getMessage() + ").");
+            }
         }
 
         Map<String, EventSettings> events = new LinkedHashMap<>();
@@ -78,9 +170,16 @@ public record SpyglassConfig(
         return new SpyglassConfig(
                 new Database(
                         backend,
-                        root.node("database", "uri").getString("mongodb://localhost:27017"),
-                        root.node("database", "name").getString("Spyglass"),
-                        root.node("database", "collection").getString("EventRecords"),
+                        new Mongo(
+                                MongoConnectionString.resolve(
+                                        root.node("database", "mongo", "uri").getString(""),
+                                        root.node("database", "mongo", "host").getString("localhost"),
+                                        root.node("database", "mongo", "port").getInt(27017),
+                                        root.node("database", "mongo", "user").getString(""),
+                                        root.node("database", "mongo", "password").getString(""),
+                                        root.node("database", "mongo", "ssl").getBoolean(false)),
+                                root.node("database", "mongo", "database").getString("Spyglass"),
+                                root.node("database", "mongo", "collection").getString("EventRecords")),
                         new ClickHouse(
                                 root.node("database", "clickhouse", "host").getString("localhost"),
                                 root.node("database", "clickhouse", "port").getInt(8123),
@@ -104,17 +203,14 @@ public record SpyglassConfig(
                         root.node("storage", "queue-max").getInt(500_000),
                         root.node("storage", "spill-to-disk").getBoolean(true),
                         root.node("storage", "spill-drain-rate").getInt(20_000),
-                        Duration.parse(root.node("storage", "flush-timeout").getString("5s")),
-                        parseDurability(root.node("storage", "durability").getString("ram")),
-                        "synthesized".equalsIgnoreCase(
-                                root.node("storage", "rolled-audit").getString("synthesized"))),
+                        Duration.parse(root.node("storage", "flush-timeout").getString("5s"))),
                 new Defaults(
                         root.node("defaults", "enabled").getBoolean(true),
                         root.node("defaults", "radius").getInt(250),
                         Duration.parse(root.node("defaults", "time").getString("4h"))),
                 new Limits(
-                        root.node("limits", "max-radius").getInt(250),
-                        root.node("limits", "search-result").getInt(1_000),
+                        root.node("limits", "max-radius").getInt(500),
+                        root.node("limits", "search-result").getInt(5_000),
                         root.node("limits", "chat-dump").getInt(50),
                         root.node("limits", "rollback-batch-size").getInt(4_000),
                         Duration.parse(root.node("limits", "rollback-flush-timeout").getString("30s")),
@@ -127,13 +223,26 @@ public record SpyglassConfig(
                         root.node("limits", "rollback-tick-budget-ms").getLong(15L)),
                 Map.copyOf(events),
                 commandRedact,
-                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false)),
+                new Tool(Material.matchMaterial(root.node("tool", "material").getString("REDSTONE_LAMP"), false),
+                        // How far back the wand's inspect looks. A point query
+                        // on one block, already capped by limits.search-result,
+                        // so a long default is cheap (#271).
+                        Duration.parse(root.node("tool", "lookback").getString("26w"))),
                 new Server(root.node("server", "name").getString("default")),
                 parseMetrics(root),
                 parseAnalytics(root),
-                // #250: /s as a third root alias, opt-in - single-letter
-                // roots collide with other plugins, so off by default.
-                new Commands(root.node("commands", "s-alias").getBoolean(false)));
+                // /s as a third root alias next to /spyglass and /sg. On by
+                // default (#279, reversing #250's opt-in); an operator whose
+                // server has another plugin claiming /s sets s-alias = false.
+                new Commands(root.node("commands", "s-alias").getBoolean(true)),
+                // WorldEdit/FAWE logging hook. On by default (#332); an
+                // absent key reads true so upgrades keep recording. When
+                // false, the subscriber and FAWE hook are never registered,
+                // so large //set / //replace ops build no records and run at
+                // native speed. NOT the same as events.place/break, which
+                // only gate hand place/break - flipping those does nothing
+                // to a WorldEdit op.
+                new WorldEdit(root.node("worldedit", "enabled").getBoolean(true)));
     }
 
     /**
@@ -238,12 +347,23 @@ public record SpyglassConfig(
 
     public record Database(
             Backend backend,
-            String uri,
-            String name,
-            String collection,
+            Mongo mongo,
             ClickHouse clickhouse,
             Sqlite sqlite,
             MariaDb mariadb) {
+    }
+
+    /**
+     * Resolved MongoDB connection (used when {@code backend = "mongo"}). The
+     * {@code uri} is either the operator's explicit {@code uri} override or a
+     * string assembled from the discrete host/port/user/password/ssl fields by
+     * {@link MongoConnectionString}, so downstream only ever sees a connection
+     * string plus the database and collection names.
+     */
+    public record Mongo(
+            String uri,
+            String database,
+            String collection) {
     }
 
     /**
@@ -326,43 +446,9 @@ public record SpyglassConfig(
      *                      window to recover a big backlog faster.
      * @param flushTimeout  upper bound on how long {@code onDisable} will
      *                      wait for the queue to drain before returning.
-     * @param durability    how aggressive the write path is about
-     *                      surviving hard JVM crashes. {@link
-     *                      Durability#RAM} (default) keeps the in-flight
-     *                      queue purely in memory — fast, but anything
-     *                      between event-fired and DB-acked is lost on
-     *                      power-cut / OOM / SIGKILL. {@link
-     *                      Durability#WAL_BATCHED} writes each drain
-     *                      batch to an append-only file with one
-     *                      {@code fsync} before pushing to the database
-     *                      and deletes it after the DB acks; on next
-     *                      startup any leftover files are replayed.
-     *                      One fsync amortised over a 512-row batch is
-     *                      cheap; per-event overhead is negligible.
      */
     public record Storage(Duration retention, int queueCapacity, int queueMax,
-                          boolean spillToDisk, int spillDrainRate, Duration flushTimeout,
-                          Durability durability, boolean rolledAuditSynthesized) {
-    }
-
-    /**
-     * Crash-recovery contract for the in-flight ingest queue.
-     */
-    public enum Durability {
-        /**
-         * In-RAM queue only. Hard JVM crash loses everything queued
-         * but not yet pushed to the DB (typically the last ~250 ms
-         * of events). Fastest option; fine for community servers.
-         */
-        RAM,
-        /**
-         * Append-only write-ahead log per drain batch with one
-         * {@code fsync} before the DB push. Crash recovery replays
-         * any pending files on next startup. Right choice for
-         * servers that crash regularly or for compliance-style
-         * audit logs.
-         */
-        WAL_BATCHED
+                          boolean spillToDisk, int spillDrainRate, Duration flushTimeout) {
     }
 
     /**
@@ -443,16 +529,6 @@ public record SpyglassConfig(
                 storage.retention().seconds(), overrides);
     }
 
-    private static Durability parseDurability(String raw) {
-        String key = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_');
-        return switch (key) {
-            case "wal_batched", "wal" -> Durability.WAL_BATCHED;
-            case "ram", "" -> Durability.RAM;
-            default -> throw new IllegalArgumentException(
-                    "Unknown storage.durability: " + raw + " (expected 'ram' or 'wal-batched')");
-        };
-    }
-
     public record Defaults(boolean enabled, int radius, Duration time) {
     }
 
@@ -471,9 +547,10 @@ public record SpyglassConfig(
     public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds) {
     }
 
-    public record Tool(Material material) {
+    public record Tool(Material material, Duration lookback) {
         public Tool {
             material = material == null ? Material.REDSTONE_LAMP : material;
+            lookback = lookback == null ? Duration.parse("26w") : lookback;
         }
     }
 
@@ -484,6 +561,16 @@ public record SpyglassConfig(
      * to {@code "default"} for a single-server deployment.
      */
     public record Commands(boolean sAlias) {
+    }
+
+    /**
+     * The WorldEdit/FAWE logging hook (#332). {@code enabled} defaults to
+     * {@code true}; set {@code worldedit.enabled = false} to stop Spyglass
+     * recording WorldEdit and FAWE edits. Distinct from the
+     * {@code events.place}/{@code events.break} toggles, which only gate the
+     * Bukkit hand-place/break listeners and have no effect on a WorldEdit op.
+     */
+    public record WorldEdit(boolean enabled) {
     }
 
     public record Server(String name) {

@@ -109,6 +109,74 @@ class QueryStringParserTest {
         assertThat(request.predicates()).hasSize(2);
     }
 
+    // ---- #287: rollback inclusion flags ----
+
+    @Test
+    void inclusionFlagsParseWithSingleOrDoubleDash() throws Exception {
+        SpyglassApi api = mock(SpyglassApi.class);
+        QueryRequest doubled = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "--containers --entities", 0);
+        assertThat(doubled.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS,
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+
+        QueryRequest single = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "-containers", 0);
+        assertThat(single.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS)
+                .doesNotContain(net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+
+        QueryRequest none = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "-g", 0);
+        assertThat(none.flags())
+                .doesNotContain(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS,
+                        net.medievalrp.spyglass.api.query.Flag.INCLUDE_ENTITIES);
+    }
+
+    // ---- #333: smart-punctuation dashes still read as flags ----
+
+    @Test
+    void smartPunctuationDashesParseAsFlags() throws Exception {
+        SpyglassApi api = mock(SpyglassApi.class);
+        // iOS converts a typed "--" into a single em dash. Under the old
+        // classifier this token fell through to the p: fallback and failed
+        // as "Unknown parameter: p" on this bare mock.
+        QueryRequest em = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "\u2014containers", 0);
+        assertThat(em.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.INCLUDE_CONTAINERS);
+
+        // En dash and non-breaking hyphen variants behave like "-".
+        QueryRequest en = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "\u2013ng \u2011g", 0);
+        assertThat(en.flags())
+                .contains(net.medievalrp.spyglass.api.query.Flag.NO_GROUP,
+                        net.medievalrp.spyglass.api.query.Flag.GLOBAL);
+
+        // Value separators survive the normalization.
+        QueryRequest ord = new QueryStringParser(api, configNoDefaults())
+                .parse(null, "\u2014ord=asc", 0);
+        assertThat(ord.sort()).isEqualTo(net.medievalrp.spyglass.api.query.Sort.OLDEST_FIRST);
+    }
+
+    @Test
+    void mangledUnknownFlagFailsAsAFlagNotAsAPlayerFilter() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        assertThatThrownBy(() -> new QueryStringParser(api, configNoDefaults())
+                .parse(null, "\u2014sideways", 0))
+                .isInstanceOf(ParamParseException.class)
+                .hasMessageContaining("Unknown flag");
+    }
+
+    @Test
+    void tripleAsciiDashKeepsItsOldUnknownFlagShape() {
+        SpyglassApi api = mock(SpyglassApi.class);
+        assertThatThrownBy(() -> new QueryStringParser(api, configNoDefaults())
+                .parse(null, "---containers", 0))
+                .isInstanceOf(ParamParseException.class)
+                .hasMessageContaining("Unknown flag");
+    }
+
     // ---- #150: ip: pre-resolution off the main thread ----
 
     @Test

@@ -108,13 +108,13 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | F9 | Wither spawn breaks containment blocks | Entity grief rollback | C | rcon |
 | F10 | Lightning starts a fire | Attribution chain (natural); rollback scope correct | C | rcon |
 
-## G. Rollback semantics — G1–G14
+## G. Rollback semantics - G1-G15
 
 | # | Scenario | Verify | Dim | Auto |
 |---|---|---|---|---|
 | G1 | Standard grief → rollback | Server-truth sampling (`verify-rollback.js`): 100% of sampled cells match pre-grief | C | bot |
 | G2 | Rollback → undo | World returns to exact post-grief state (undo = inverse) | C | bot |
-| G3 | Rollback, manual edits inside region, identical rollback re-run | Changed blocks skipped with reasons; SG store grows +1 op row (synthesis); CP growth measured | C,S | bot |
+| G3 | Identical rollback re-run over the same region | Force-overwrite (#69) re-applies every matched cell to the same recorded state; world converges with zero drift | C,S | bot |
 | G4 | Two overlapping ops by one operator; undo twice | LIFO per-operator undo ordering correct both times | C | bot |
 | G5 | Player standing inside region during rollback | No suffocation in restored blocks / sane player handling both sides | U | man |
 | G6 | Preview before applying | **CP `#preview` exists; SG has none — expected CP-ahead capability cell** | K,U | man |
@@ -122,10 +122,11 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 | G8 | `kill -9` the server mid-rollback, restart | SG resume marker offers continuation and completes; CP behavior documented | K,C | man |
 | G9 | Region half loaded, half unloaded | Both halves restored equally | C | bot |
 | G10 | Search `a:rolled-place` after a rollback, then attempt to roll back those entries | Audit entries visible in search; not themselves re-rollbackable into a feedback loop | C,U | bot |
-| G11 | Crater containing chests with loot | Tile entities restored with contents post-rollback | C | bot |
+| G11 | Crater containing chests with loot | Tile entities restored with contents post-rollback (needs `-containers`, opt-in since #287) | C | bot |
 | G12 | Over-broad rollback fixed by `restore` of the same query | World returns to pre-rollback state exactly | C | bot |
 | G13 | Rollback everything except chests (negation filter) | Exclusion honored both sides | C,K | bot |
 | G14 | Rollback while 600 ev/s of live traffic ingests | Read-your-writes: just-recorded grief included (flush gate); no lost or phantom restores | C,P | bot |
+| G15 | Place/break/place churn at ONE cell, then rollback | One net reversal (count=1), world back to pre-churn air, exactly one `ROLLBACK broke` receipt, undo restores dirt (#321) | C | bot |
 
 ## H. Query & search capability — H1–H12
 
@@ -161,11 +162,11 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 
 | # | Scenario | Verify | Dim | Auto |
 |---|---|---|---|---|
-| J1 | DB down during play with `durability=wal-batched` | Events fsynced to WAL, replayed on DB return — zero loss; CP behavior with DB down documented | K,C | man |
+| J1 | DB down during play | Ingest queues and retries; bulk-edit overflow spills to disk; everything drains losslessly once the DB returns (a shutdown while the DB is still down loses only the unflushed queue, logged at SEVERE); CP behavior with DB down documented | K,C | man |
 | J2 | DB dies mid-rollback | Clean operator-facing failure; resumable once DB returns | U,C | man |
 | J3 | Retention expiry (`4w`) + undo TTL (24h) | Expired events leave search AND disk (after merges); expired undo fails gracefully with a clear message | C,S,U | rcon |
 | J4 | Same suite on Mongo backend | Every C-dimension case above passes identically on Mongo (backend parity) | C | bot |
-| J5 | `kill -9` mid-ingest-burst with WAL, restart | Replay produces no duplicate rows post-merge (ReplacingMergeTree dedup) | C | man |
+| J5 | `kill -9` mid-ingest-burst, restart | In-RAM queue loss bounded (~last drain interval); spilled segments replay with no duplicate rows post-merge (ReplacingMergeTree dedup) | C | man |
 | J6 | Two servers share one store with distinct `server.name` | `srv:` partitions results correctly; rollback scoped to own server | C,K | man |
 | J7 | Store written by a pre-synthesis build (persisted receipts) read by current build | Legacy rolled-* rows still searchable alongside synthesized ones; no double-render | C | rcon |
 | J8 | Full permission matrix (search/rollback/restore/undo/wand/global) | Each node gates exactly its commands; failure messages clean | U | bot |
@@ -176,7 +177,7 @@ Measurement discipline (from the perf campaign): same-run comparisons only; judg
 
 Going in, these are the *expected* capability splits to confirm or refute — each is a scored case above, not an assumption:
 
-- **Expected SG-only:** item name/lore/enchant search (H3–H5), cross-server proxy search (H8), bundle ops (C10), mount/teleport trails (D4, E4), crash-resume of an interrupted rollback (G8), WAL durability (J1), unlimited rollback size + flat lag profile at scale (I2–I3), +1-row re-run storage (I7).
+- **Expected SG-only:** item name/lore/enchant search (H3-H5), cross-server proxy search (H8), bundle ops (C10), mount/teleport trails (D4, E4), crash-resume of an interrupted rollback (G8), unlimited rollback size + flat lag profile at scale (I2-I3), +1-row re-run storage (I7).
 - **Expected CP-ahead:** `#preview` (G6 — SG has no preview mode today). Anything else CP-ahead that the suite surfaces gets filed as an issue.
 - **Known SG loss by design:** bytes/row (~3× CP) — richer forensic payload; tracked under S-dimension cases (F6, I6–I7) so the trade stays measured, not assumed.
 

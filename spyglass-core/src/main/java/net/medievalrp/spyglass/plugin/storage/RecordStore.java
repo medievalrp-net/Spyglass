@@ -160,6 +160,12 @@ public interface RecordStore extends AutoCloseable {
             RollbackEffect effect = rollback
                     ? rollbackable.rollbackEffect()
                     : rollbackable.restoreEffect();
+            if (effect == null) {
+                // The record declined this direction (e.g. an environment
+                // death is never resurrected, #284) - cursor past it.
+                sink.skip(record.occurred(), record.id());
+                return;
+            }
             if (effect instanceof RollbackEffect.BlockReplace br
                     && br.replacement() != null && br.replacement().simple()) {
                 net.medievalrp.spyglass.api.util.BlockLocation loc = br.location();

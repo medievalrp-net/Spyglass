@@ -2,7 +2,7 @@
 
 Full reference for every command, permission, query key, and flag. For the project overview and feature comparison, see the [README](README.md).
 
-Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases too, so `/sg s` is `/sg search`. Every permission defaults to `op`; grant them through your permissions plugin to open them up.
+Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-letter `/s`. If another plugin on your server claims `/s`, set `commands.s-alias = false` in `config.conf`; `/spyglass` and `/sg` always work. Subcommands take short aliases too, so `/sg s` is `/sg search`. Every permission defaults to `op`; grant them through your permissions plugin to open them up.
 
 ## Commands
 
@@ -19,9 +19,7 @@ Root command is `/spyglass`, aliased to `/sg`. Subcommands take short aliases to
 | `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
 | `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
-| `/sg tele <world> <x> <y> <z>` | - | `spyglass.tele` | Teleport (used by clickable search results) |
-| `/sg import <file>` | - | `spyglass.import` | Import a CoreProtect SQLite database from `plugins/Spyglass/import/` |
-| `/sg import mysql <source>` | - | `spyglass.import` | Import a live CoreProtect MySQL database (sources defined in `import.conf`) |
+| `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
 
 ## Permissions
@@ -75,7 +73,7 @@ Values are plain terms. Wrap in double quotes to search for a value that contain
 | `before:` | - | `t:12h before:6h` | Upper time bound. `t:12h before:6h` = events between 12h and 6h ago |
 | `w:` | `world:` | `w:world_nether` | Restrict to one world |
 | `srv:` | `server:` | `srv:survival` | Restrict to one server name (multi-server setups) |
-| `trg:` | `target:` | `trg:100,64,200` | Specific block coords `x,y,z` |
+| `trg:` | `target:` | `trg:100,64,200` · `trg:chest` | Coords `x,y,z` pin the query to that single block (no default radius). Any other value is a case-insensitive substring match on the record's target |
 | `ip:` | - | `ip:192.168.1.10` | Source IP. Requires the `spyglass.search.ip` permission |
 
 ### Flags
@@ -86,11 +84,13 @@ Flags start with `-` and take no value unless noted.
 |---|---|---|
 | `-g` | `-global` | Skip the default radius for a whole-world or whole-server search |
 | `-we` | `-worldedit` | Use your active WorldEdit selection as the region |
-| `-ord:<asc\|desc>` | `-order:` | Sort order. Default is newest first for search and rollback, oldest first for restore |
+| `-ord:<asc\|desc>` | `-order:` | Search sort order (newest first by default). `-ord:asc` and `-ord=asc` both work. Rollback and restore ignore it: they force newest-first / oldest-first, or the apply order would corrupt the result |
 | `-ng` | `-nogroup` | Don't merge duplicate adjacent events in the result list |
 | `-nc` | `-nochat` | Don't echo the summary line to chat (action-bar only) |
 | `-ex` | `-extended` | Include extra detail columns in the result list |
-| `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` runs with no radius or time bound |
+| `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` (or `-nod=r,t`) runs with no radius or time bound |
+| `--containers` | `-containers` | Rollback/restore also touches containers. Without it, a rollback never places a container block, never overwrites a live one, and never reverts deposits/withdrawals |
+| `--entities` | `-entities` | Rollback/restore also spawns/removes entities. Without it, death records are left alone |
 
 ### Time formats
 
@@ -106,7 +106,9 @@ Player-lit TNT records the igniter as the actor, so `p:<griefer>` searches and r
 /sg tool
 ```
 
-Toggles inspection mode. Left-click a block to see its full history, including blocks a previous rollback restored. Right-click to preview what is about to happen near it. Toggle off the same way.
+Toggles inspection mode. Left-click a block to see its history, including blocks a previous rollback restored. Right-click to preview what is about to happen near it. Toggle off the same way.
+
+The wand looks back `tool.lookback` (default `26w`), and the inspect header always names the window, e.g. `STONE at 100 64 200 (last 26w)`. An empty inspect means nothing happened *inside that window*; for anything older, or for more results than the cap shows, run `/sg search t:... trg:x,y,z` at the block.
 
 ## Rollback
 
@@ -123,6 +125,8 @@ Rollback and restore **force-overwrite**: each matched block is set back to its 
 
 The trade-off: a rollback does not skip a cell just because someone changed it afterward, so a rollback scoped to one player can overwrite a *legitimate* later edit by another player in those exact cells. Scope the query by player, region `r:`, and time `t:` to the grief you mean to revert; review with `/sg search` first if unsure. Items in a container the rollback overwrites are recoverable - see [Container salvage](#container-salvage).
 
+**Water and lava re-flow, they are not replayed.** After the writes land, Spyglass re-arms the fluid engine over the rolled cells and their border, and the water settles to its natural level for the restored terrain. Fluid flow itself is never logged (the volume would rival hopper traffic), so the result is the equilibrium state, which for water is almost always indistinguishable from what stood at the timestamp - but it is a re-simulation, not a replay.
+
 ### Undo and restore
 
 ```
@@ -131,6 +135,14 @@ The trade-off: a rollback does not skip a cell just because someone changed it a
 ```
 
 `/sg undo` reverses your most recent operation. Run it again to keep walking back, newest first. Undo references the last 24 hours.
+
+Undo's limits, spelled out:
+
+- **Per player, player only.** It walks *your* operations; console-run rollbacks never enter the ledger and console cannot invoke undo.
+- **24 hour window.** Older operations age out of the ledger (the records themselves keep `storage.retention`).
+- **No redo.** An undo cannot itself be undone; to re-apply, run `/sg restore` with the original query.
+- **It replays the query, not the world.** Undo re-runs the stored query in the opposite direction. Container items the rollback destroyed come back only via [Container salvage](#container-salvage), and a cell someone legitimately edited *after* the original window replays to its recorded state, not to that later edit.
+- An unreadable ledger entry is discarded on contact; run `/sg undo` again to reach the operation beneath it.
 
 ## Queue
 

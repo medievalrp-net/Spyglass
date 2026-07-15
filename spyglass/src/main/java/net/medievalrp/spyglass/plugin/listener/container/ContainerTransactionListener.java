@@ -53,12 +53,16 @@ public final class ContainerTransactionListener implements RecordingListener {
     private final Recorder recorder;
     private final RecordingSupport support;
     private final Executor serializer;
+    private final Executor nextTick;
 
     public ContainerTransactionListener(Recorder recorder, RecordingSupport support,
-                                        Executor serializer) {
+                                        Executor serializer, Executor nextTick) {
         this.recorder = recorder;
         this.support = support;
         this.serializer = serializer;
+        // Main-thread, next-tick. Shift-click deposits are diffed after the
+        // click applies (#268); everything else records at event time.
+        this.nextTick = nextTick;
     }
 
     @Override
@@ -184,42 +188,77 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (topHolder instanceof ShulkerBox) {
             return;
         }
-        // Withdraw shift-clicks index the container (top) inventory, so the
-        // clicked slot is a container slot to translate. Deposit shift-clicks
-        // index the player (bottom) inventory and record slot -1, so resolve
-        // with -1 to pin a stable half and never mistranslate a player slot.
-        int containerSlot = clickedIsTop ? event.getSlot() : -1;
-        SlotTarget resolved = resolveSlotTarget(topHolder, containerSlot);
-        if (resolved == null) {
-            return;
-        }
-        ContainerTarget containerTarget = resolved.target();
 
         ItemStack moved = clicked.getItem(event.getSlot());
         if (moved == null || moved.getType() == Material.AIR) {
             return;
         }
-        int amount = moved.getAmount();
-        BlockLocation location = containerTarget.location();
-        String containerType = containerTarget.type();
 
-        ItemStack movedSnapshot = moved.clone(); // pre-click; serialized off-thread
-        String target = moved.getType().name();
         if (clickedIsTop) {
             // Shift-click from container to player inventory -> withdraw.
+            // The clicked slot IS a container slot to translate.
+            SlotTarget resolved = resolveSlotTarget(topHolder, event.getSlot());
+            if (resolved == null) {
+                return;
+            }
             int recordSlot = resolved.slot();
-            deferWithdraw(player, location, containerType, recordSlot, amount, target,
-                    occurred, recordSlot, movedSnapshot, null);
+            deferWithdraw(player, resolved.target().location(), resolved.target().type(),
+                    recordSlot, moved.getAmount(), moved.getType().name(),
+                    occurred, recordSlot, moved.clone(), null);
             return;
         }
         if (!clicked.equals(bottom)) {
             return;
         }
-        // Shift-click from player inventory to container -> deposit. Slot is
-        // -1 (no specific container slot); the after-item carries the source
-        // player-inventory slot, matching the single-chest behavior.
-        deferDeposit(player, location, containerType, -1, amount, target,
-                occurred, event.getSlot(), null, movedSnapshot);
+        // Trackable destination only: a Container/minecart, or a DoubleChest
+        // (which resolveTarget alone drops but resolveSlotTarget handles
+        // per-slot). Anvils, brewing stands etc. bail before the snapshot.
+        if (!(topHolder instanceof DoubleChest) && resolveTarget(topHolder) == null) {
+            return;
+        }
+        // Shift-click from player inventory to container -> deposit. The
+        // event names no destination: vanilla merges into partial stacks
+        // first, then empty slots, so ONE click can touch SEVERAL container
+        // slots, and nothing in the event says which. Snapshot the top
+        // inventory now (MONITOR fires before the click applies) and diff
+        // it one tick later, emitting one per-slot record - the same
+        // granularity ContainerDragListener gets from getNewItems() (#268).
+        // The old single record carried slot -1, which every rollback path
+        // rejects, so shift-click deposits were never rolled back; it also
+        // recorded the full stack even when a full container took nothing.
+        int topSize = top.getSize();
+        ItemStack[] beforeTop = new ItemStack[topSize];
+        for (int i = 0; i < topSize; i++) {
+            beforeTop[i] = cloneOrNull(top.getItem(i));
+        }
+        Material movedType = moved.getType();
+        nextTick.execute(() -> {
+            for (int rawSlot = 0; rawSlot < topSize; rawSlot++) {
+                ItemStack now = top.getItem(rawSlot);
+                if (now == null || now.getType() != movedType) {
+                    continue;
+                }
+                ItemStack was = beforeTop[rawSlot];
+                boolean wasEmpty = was == null || was.getType() == Material.AIR;
+                if (!wasEmpty && was.getType() != movedType) {
+                    // A different material sat here before the click; vanilla
+                    // never merges into it, so this change is not ours.
+                    continue;
+                }
+                int delta = now.getAmount() - (wasEmpty ? 0 : was.getAmount());
+                if (delta <= 0) {
+                    continue;
+                }
+                SlotTarget slotTarget = resolveSlotTarget(topHolder, rawSlot);
+                if (slotTarget == null) {
+                    continue;
+                }
+                int recordSlot = slotTarget.slot();
+                deferDeposit(player, slotTarget.target().location(), slotTarget.target().type(),
+                        recordSlot, delta, movedType.name(),
+                        occurred, recordSlot, wasEmpty ? null : was, now.clone());
+            }
+        });
     }
 
     private void handleHotbarSwap(InventoryClickEvent event, ContainerTarget containerTarget, Player player,
