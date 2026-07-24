@@ -56,8 +56,38 @@ public final class SpyglassSuggestions {
                 .map(Suggestion::suggestion).toList();
     }
 
+    // The restricted key set /sg snapshot accepts (#341): a point-in-time
+    // snapshot has no radius/action/time-window keys, so this is deliberately
+    // NOT the full query-param set the search/rollback params share.
+    private static final List<String> SNAPSHOT_KEYS = List.of("t:", "p:", "trg:", "w:");
+
     public ParserDescriptor<CommandSender, String> paramsParser() {
         return StringParser.greedyStringParser();
+    }
+
+    public ParserDescriptor<CommandSender, String> snapshotParamsParser() {
+        return StringParser.greedyStringParser();
+    }
+
+    /**
+     * Whole-span completion for {@code /sg snapshot <params>}. The params
+     * argument is greedy, so Cloud hands us the entire remaining span and then
+     * filters our output down to suggestions that start with it; a bare
+     * {@code p:} would fail that filter the moment {@code t:} is already typed.
+     * Prepend the already-typed prefix so each suggestion spans the whole
+     * argument and survives, exactly as {@link #paramsProvider} does (#55).
+     */
+    public BlockingSuggestionProvider<CommandSender> snapshotParamsProvider() {
+        return (ctx, input) -> {
+            String remaining = input.remainingInput();
+            String lastToken = lastToken(remaining);
+            String prefix = remaining.substring(0, remaining.length() - lastToken.length());
+            return SNAPSHOT_KEYS.stream()
+                    .filter(key -> key.startsWith(lastToken))
+                    .map(key -> prefix + key)
+                    .map(Suggestion::suggestion)
+                    .toList();
+        };
     }
 
     public BlockingSuggestionProvider<CommandSender> paramsProvider() {
