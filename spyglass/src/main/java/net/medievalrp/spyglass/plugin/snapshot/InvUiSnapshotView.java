@@ -78,8 +78,16 @@ final class InvUiSnapshotView implements SnapshotView {
         this.takes = takes;
         this.logger = logger;
         // InvUI resolves its scheduler/listeners from the owning plugin; must be
-        // set before any Window is built.
-        InvUI.getInstance().setPlugin(plugin);
+        // set before any Window is built. The singleton accepts exactly one
+        // setPlugin for the plugin's lifetime, and InvUiSalvageView (constructed
+        // earlier in onEnable) has usually claimed it already with the same
+        // plugin - that state is expected, not an error (caught live on the
+        // first #341 boot; unit tests cannot reach the relocated singleton).
+        try {
+            InvUI.getInstance().setPlugin(plugin);
+        } catch (IllegalStateException alreadySet) {
+            // Same plugin either way; nothing to do.
+        }
     }
 
     @Override
