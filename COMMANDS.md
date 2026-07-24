@@ -18,6 +18,7 @@ Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-let
 | `/sg rbqueue [...]` | `queue`, `rbq` | `spyglass.rollback` | List, cancel, or resume rollback jobs |
 | `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
 | `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
+| `/sg snapshot <params>` | `snap` | `spyglass.snapshot` | View a player inventory or container as of a past instant (GUI, or a listing where there is no GUI) |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
@@ -33,6 +34,8 @@ All default to `op`.
 | `spyglass.search.ip` | reveals join IPs in results and unlocks the `ip:` key. Without it, IPs render as `(ip hidden)` and `ip:` errors. Applies on Paper and the proxy |
 | `spyglass.rollback` | rollback, restore, undo, rbqueue |
 | `spyglass.salvage` | `/sg inventory` container salvage (recover items a rollback destroyed). Independent of `spyglass.rollback` |
+| `spyglass.snapshot` | `/sg snapshot` - view a player inventory or container as of a past instant |
+| `spyglass.snapshot.take` | Take a copy of an item out of a snapshot view (GUI click or text-fallback `take`). Independent of `spyglass.snapshot` - view-only access is a legitimate grant |
 | `spyglass.tool` | inspection wand |
 | `spyglass.tele` | teleport (used by clickable result rows) |
 | `spyglass.worldedit` | allows the `-we` flag to use your WorldEdit selection as the search region |
@@ -95,6 +98,17 @@ Flags start with `-` and take no value unless noted.
 ### Time formats
 
 `30s`, `15m`, `4h`, `2d`, `1w`, `1mo`. Combine them: `t:1d12h`.
+
+### Snapshot keys
+
+`/sg snapshot` does not use the query language above - it takes a small, restricted key set, and injects no default radius or time. Any other key or flag is an error.
+
+| Key | Aliases | Example | Notes |
+|---|---|---|---|
+| `t:` | `since:` | `t:1h` | Required. The instant to reconstruct: now minus the duration |
+| `p:` | `player:` | `p:Steve` | View this player's inventory as of `t:`. Exactly one bare name - no `!` or commas. Present = player mode; absent = container mode |
+| `trg:` | `target:` | `trg:100,64,200` | Exact container coordinates. Omit to use the block you're looking at (same reach as the inspection wand). Cannot be combined with `p:` |
+| `w:` | `world:` | `w:world_nether` | World for `trg:`, when running from the console (a player defaults to their current world). Requires `trg:` |
 
 ## Explosion attribution
 
@@ -166,6 +180,24 @@ On Minecraft 1.21.x, `/sg inventory` (alias `inv`) opens a paginated GUI, groupe
 On servers without the GUI (Minecraft 26.x) and from the console or RCON, `/sg inventory` prints a text listing instead. Each captured container shows an id; recover it with `/sg inventory <id>` (in-game players only), or click the `[Recover]` prompt next to a listing line. The command withdraws that container's items straight into your inventory server-side, with no inventory-drag surface. Either way, every withdrawal is logged as a `salvage-withdraw` event (find them with `/sg search a:salvage-withdraw`).
 
 Only containers the rollback *actually* destroys are salvaged - a chest in the rolled region that the rollback leaves untouched is never captured, so items are never duplicated. Salvage snapshots are kept for 30 days.
+
+## Snapshot
+
+`/sg snapshot` (alias `snap`) shows what a player was carrying, or what a container held, at a past instant. It is read-only - nothing about the live player or container changes just from viewing it:
+
+```
+/sg snapshot p:Steve t:1h          # Steve's inventory as of 1 hour ago
+/sg snapshot t:30m                 # the container you're looking at, as of 30 minutes ago
+/sg snapshot t:6h trg:100,64,200   # a specific container by coordinates
+```
+
+**Player mode** (`p:`) reads the subject's newest captured inventory at or before `t:`. Player inventories are captured on join, quit, death, world change, and a periodic sweep - crafting, consuming, trading, and plugin-given items leave no event trail a rollback could replay from, so a dedicated capture is the only honest source for "what were they carrying".
+
+**Container mode** (no `p:`) reconstructs the container from the deposit/withdraw log: it reverse-applies every recorded change back to `t:`, then forward-replays to check the result matches the container's current contents. A reconstruction that reproduces the live container exactly is marked **certain**; one the log can't fully account for - a legacy pre-slot-logging row, a self-mutating block (furnace, brewing stand, campfire), the container's shape having changed, or a change the log never captured - is marked **uncertain**, with the specific reason named. A double chest reconstructs both halves and merges them into one 54-slot view.
+
+On Minecraft 1.21.x, the result opens in a GUI - extract-only, click a slot to take a copy. Elsewhere (26.x, console/RCON), it prints a text listing with a `[take]` link per occupied slot running `/sg snapshot take <token> <slot>`; the token expires after 15 minutes, so re-run `/sg snapshot` if you see "snapshot expired".
+
+A take is a **copy**: the live inventory or container is never touched, and a destination inventory that cannot fit the whole stack refuses the take rather than placing part of it or dropping the rest on the ground. `spyglass.snapshot.take` gates every take, in both the GUI and the text fallback; grant `spyglass.snapshot` without it for view-only access. Every take is logged as a `snapshot-take` event (`/sg search a:snapshot-take`).
 
 ## Importing and migrating
 
