@@ -37,6 +37,16 @@ permissions:
   spyglass.migrate:
     description: Migrate Spyglass records between storage backends.
     default: op
+  # /sg snapshot - view a player inventory or container as of a past
+  # instant. Viewing and taking are separate nodes (#341), same split as
+  # spyglass.salvage: a view-only grant is legitimate on its own.
+  spyglass.snapshot:
+    default: op
+  # Take a copy of an item out of a snapshot view. Gates BOTH surfaces
+  # (the GUI re-checks it per click, the text-fallback take command
+  # checks it too) - independent of spyglass.snapshot.
+  spyglass.snapshot.take:
+    default: op
 
 # Externalized at runtime via Paper's library loader (Maven Central, cached
 # under <server>/libraries/); versions injected from Gradle at build time. The

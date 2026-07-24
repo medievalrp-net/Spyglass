@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.mongodb.MongoClientSettings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
@@ -334,6 +335,47 @@ class EventRecordCodecTest {
         assertThat(item.name()).isEqualTo("Excaliblur");
         assertThat(item.lore()).containsExactly("Forged in fire");
         assertThat(item.enchants()).containsExactly("sharpness=5");
+    }
+
+    @Test
+    void roundTripsSnapshotTakeWithExtensions() {
+        // #341: snapshot-take reuses ItemPickupRecord with its new
+        // extensions channel (snapshot-subject / snapshot-at). Mongo's
+        // RecordCodecProvider is generic over record components, so this
+        // only needs to prove the new component actually rides the wire -
+        // no codec change was required to support it.
+        StoredItem projection = new StoredItem(3, "DIAMOND_SWORD", null);
+        ItemPickupRecord original = new ItemPickupRecord(
+                UUID.randomUUID(), "snapshot-take", WHEN, WHEN.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 1, 64, 2),
+                "test", "DIAMOND_SWORD", 1, projection,
+                Map.of("snapshot-subject", "Bob", "snapshot-at", WHEN.minusSeconds(120).toString()));
+
+        EventRecord decoded = decode(encode(original));
+
+        assertThat(decoded).isInstanceOf(ItemPickupRecord.class).isEqualTo(original);
+        ItemPickupRecord back = (ItemPickupRecord) decoded;
+        assertThat(back.extensions())
+                .containsEntry("snapshot-subject", "Bob")
+                .containsEntry("snapshot-at", WHEN.minusSeconds(120).toString());
+    }
+
+    @Test
+    void backCompatItemPickupConstructorLeavesExtensionsEmptyAndStillRoundTrips() {
+        // Pre-#341 call sites (CoreProtectMapper, CreativeCloneListener) still
+        // use the 11-arg constructor. It must leave extensions empty (same as
+        // an explicit Map.of()) and the resulting record must still round-trip.
+        StoredItem projection = new StoredItem(0, "STONE", null);
+        ItemPickupRecord viaBackCompat = new ItemPickupRecord(
+                UUID.randomUUID(), "pickup", WHEN, WHEN.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"),
+                new BlockLocation(WORLD, "world", 0, 64, 0),
+                "test", "STONE", 1, projection);
+
+        assertThat(viaBackCompat.extensions()).isEmpty();
+        EventRecord decoded = decode(encode(viaBackCompat));
+        assertThat(decoded).isInstanceOf(ItemPickupRecord.class).isEqualTo(viaBackCompat);
     }
 
     @Test
