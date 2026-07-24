@@ -11,7 +11,7 @@ import org.jetbrains.annotations.ApiStatus;
 /**
  * DDL for the ClickHouse-backed Spyglass deployment.
  *
- * <p>Three tables in one database:
+ * <p>Five tables in one database:
  *
  * <ul>
  *   <li>{@code event_records} — the primary forensic event log.
@@ -28,6 +28,16 @@ import org.jetbrains.annotations.ApiStatus;
  *       engine: a CH table backed by RocksDB key-value, designed
  *       exactly for "small mutable lookup table next to a MergeTree
  *       analytics table".</li>
+ *   <li>{@code player_snapshots} - captured player inventories (#341).
+ *       ReplacingMergeTree sorted by {@code (player_uuid, occurred,
+ *       id)} for point "latest at or before T" lookups; parallel slot
+ *       arrays hold interned {@code snapshot_items} hash refs, not the
+ *       item blobs. Retention is enforced by {@code prune}'s lightweight
+ *       DELETE, not a TTL, so it stays uniform across backends.</li>
+ *   <li>{@code snapshot_items} - content-addressed item payload store
+ *       for {@code player_snapshots}. ReplacingMergeTree keyed on the
+ *       16-byte content hash, so a re-intern of the same payload is a
+ *       natural insert-or-get that collapses on the next merge.</li>
  * </ul>
  *
  * <h2>event_records column strategy</h2>
@@ -131,6 +141,8 @@ final class ClickHouseSchema {
         }
         execute(client, buildUndoHistoryTable(database));
         execute(client, buildToolStatesTable(database));
+        execute(client, buildPlayerSnapshotsTable(database));
+        execute(client, buildSnapshotItemsTable(database));
     }
 
     /**
@@ -206,6 +218,14 @@ final class ClickHouseSchema {
 
     static String toolStatesTable(String database) {
         return qualifiedTable(database, "tool_states");
+    }
+
+    static String playerSnapshotsTable(String database) {
+        return qualifiedTable(database, "player_snapshots");
+    }
+
+    static String snapshotItemsTable(String database) {
+        return qualifiedTable(database, "snapshot_items");
     }
 
     // ---------------------------------------------------------------
@@ -386,6 +406,59 @@ final class ClickHouseSchema {
                 + "    enabled_at DateTime64(3, 'UTC')\n"
                 + ") ENGINE = EmbeddedRocksDB\n"
                 + "PRIMARY KEY player_id";
+    }
+
+    // ---------------------------------------------------------------
+    // player_snapshots / snapshot_items (#341)
+    // ---------------------------------------------------------------
+
+    private static String buildPlayerSnapshotsTable(String database) {
+        // Keyframe player-inventory snapshots. Slots are three parallel
+        // arrays (the CH idiom the wide event_records schema follows for
+        // its repeated fields) rather than a packed blob, so a slot's
+        // interned payload is a 16-byte hash ref into snapshot_items, not
+        // the item bytes. The table is tiny (one row per capture, and the
+        // dirty-check upstream drops unchanged captures), so no partition
+        // key; retention is prune()'s lightweight DELETE, kept uniform
+        // with the other backends instead of a TTL. ReplacingMergeTree on
+        // (player_uuid, occurred, id) means a re-save of the same capture
+        // id collapses on merge while distinct captures coexist. The id is
+        // the EventIds sequence stored as UInt64 (same Delta treatment as
+        // event_records.id), reconstructed to the public UUID on read.
+        // content_hash is the capture service's 64-bit digest, signed here
+        // because Java hands it over as a long; kind is the reserved
+        // keyframe/delta discriminator, always 0 in v1.
+        return "CREATE TABLE IF NOT EXISTS " + playerSnapshotsTable(database) + " (\n"
+                + "    id UInt64 CODEC(Delta, ZSTD(1)),\n"
+                + "    player_uuid UUID,\n"
+                + "    player_name String,\n"
+                + "    occurred DateTime64(3, 'UTC'),\n"
+                + "    cause LowCardinality(String),\n"
+                + "    kind UInt8,\n"
+                + "    content_hash Int64,\n"
+                + "    slots_slot Array(UInt8),\n"
+                + "    slots_hash Array(FixedString(16)),\n"
+                + "    slots_count Array(UInt16)\n"
+                + ") ENGINE = ReplacingMergeTree\n"
+                + "ORDER BY (player_uuid, occurred, id)\n"
+                + "SETTINGS index_granularity = 8192";
+    }
+
+    private static String buildSnapshotItemsTable(String database) {
+        // Content-addressed intern table for the item payloads referenced
+        // by player_snapshots.slots_hash. The 16-byte SHA-256/16 of the
+        // raw serializeAsBytes payload is the sort key, so ReplacingMergeTree
+        // makes a re-intern of the same item a natural insert-or-get that
+        // collapses on merge (no upsert, no throw). data holds the base64
+        // payload under ZSTD(3): a CH String column stores text cleanly, and
+        // the same kit carried for a week costs one row, not one per capture.
+        return "CREATE TABLE IF NOT EXISTS " + snapshotItemsTable(database) + " (\n"
+                + "    hash FixedString(16),\n"
+                + "    material LowCardinality(String),\n"
+                + "    data String CODEC(ZSTD(3))\n"
+                + ") ENGINE = ReplacingMergeTree\n"
+                + "ORDER BY hash\n"
+                + "SETTINGS index_granularity = 8192";
     }
 
     private static String quoteIdentifier(String identifier) {

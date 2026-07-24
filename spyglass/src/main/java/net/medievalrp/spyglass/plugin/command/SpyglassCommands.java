@@ -13,6 +13,7 @@ import net.medievalrp.spyglass.plugin.command.service.RollbackMode;
 import net.medievalrp.spyglass.plugin.command.service.RollbackService;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
 import net.medievalrp.spyglass.plugin.command.service.SearchService;
+import net.medievalrp.spyglass.plugin.command.service.SnapshotService;
 import net.medievalrp.spyglass.plugin.command.service.StatsService;
 import net.medievalrp.spyglass.plugin.command.service.TeleportService;
 import net.medievalrp.spyglass.plugin.command.service.ToolService;
@@ -54,6 +55,7 @@ public final class SpyglassCommands {
     private final ToolService tool;
     private final TeleportService teleport;
     private final SalvageService salvage;
+    private final SnapshotService snapshot;
     private final StatsService stats;
     private final SpyglassSuggestions suggestions;
     private final ImportService imports;
@@ -72,6 +74,7 @@ public final class SpyglassCommands {
                         ToolService tool,
                         TeleportService teleport,
                         SalvageService salvage,
+                        SnapshotService snapshot,
                         StatsService stats,
                         SpyglassSuggestions suggestions,
                         ImportService imports,
@@ -90,6 +93,7 @@ public final class SpyglassCommands {
         this.tool = tool;
         this.teleport = teleport;
         this.salvage = salvage;
+        this.snapshot = snapshot;
         this.stats = stats;
         this.suggestions = suggestions;
         this.imports = imports;
@@ -113,6 +117,7 @@ public final class SpyglassCommands {
     private static final List<String> EVENTS_ALIASES = List.of("events", "e");
     private static final List<String> HELP_ALIASES = List.of("help", "h", "?");
     private static final List<String> INVENTORY_ALIASES = List.of("inventory", "inv", "salvage");
+    private static final List<String> SNAPSHOT_ALIASES = List.of("snapshot", "snap");
     private static final List<String> VERSION_ALIASES = List.of("version", "ver");
     private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 
@@ -222,6 +227,31 @@ public final class SpyglassCommands {
                         .required("id", StringParser.stringParser())
                         .permission("spyglass.salvage")
                         .handler(ctx -> salvage.withdraw(ctx.sender(), ctx.get("id"))));
+            }
+
+            for (String name : SNAPSHOT_ALIASES) {
+                // /sg snapshot <params>: view a player inventory or container as
+                // of a past instant (#341). Greedy params (t:/p:/trg:/w:), the
+                // house style; whole-span suggestions keep multi-key completion
+                // alive (#55). Gated on spyglass.snapshot - viewing without the
+                // take grant is legitimate.
+                manager.command(manager.commandBuilder(root).literal(name)
+                        .required("params", suggestions.snapshotParamsParser(),
+                                suggestions.snapshotParamsProvider())
+                        .permission("spyglass.snapshot")
+                        .handler(ctx -> snapshot.execute(ctx.sender(), ctx.get("params"))));
+                // /sg snapshot take <token> <slot>: the text-fallback take path
+                // (the GUI clicks reach the same SnapshotService.take). Gated on
+                // spyglass.snapshot.take, which the GUI re-checks per click. The
+                // literal "take" child is matched before the greedy params above,
+                // the same literal-before-variable routing /sg import mysql relies
+                // on. Hidden from help - it exists for the listing's [take] links.
+                manager.command(manager.commandBuilder(root).literal(name).literal("take")
+                        .required("token", StringParser.stringParser())
+                        .required("slot", IntegerParser.integerParser())
+                        .permission("spyglass.snapshot.take")
+                        .handler(ctx -> snapshot.take(ctx.sender(),
+                                ctx.get("token"), ctx.get("slot"))));
             }
 
             // /spyglass tele <world> <x> <y> <z> — wired to search-result click

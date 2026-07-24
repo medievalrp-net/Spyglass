@@ -16,6 +16,7 @@ import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemPickupRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -430,6 +431,38 @@ class ClickHouseRecordStoreIT {
         assertThat(store.query(byContent).records())
                 .as("m:/content: (OR message,commandLine) must match the message column")
                 .hasSize(1);
+    }
+
+    @Test
+    void roundTripsSnapshotTakeWithExtensions() {
+        // #341: snapshot-take reuses ItemPickupRecord with its extensions
+        // channel (snapshot-subject / snapshot-at). The pickup decode branch
+        // used to skip the extensions column entirely (unlike Chat/Custom),
+        // so this pins that it now reads it back on a real ClickHouse.
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation loc = new BlockLocation(WORLD, "world", 1, 64, 2);
+        StoredItem projection = new StoredItem(3, "DIAMOND_SWORD", null, "Excaliblur", List.of(), List.of());
+        ItemPickupRecord rec = new ItemPickupRecord(
+                UUID.randomUUID(), "snapshot-take", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"), loc, "test",
+                "DIAMOND_SWORD", 1, projection,
+                Map.of("snapshot-subject", "Bob", "snapshot-at", now.minusSeconds(120).toString()));
+        store.save(List.of(rec));
+        flushAsyncInserts();
+
+        QueryRequest byEvent = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "snapshot-take")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        ItemPickupRecord back = (ItemPickupRecord) store.query(byEvent).records().get(0);
+        assertThat(back.extensions()).containsEntry("snapshot-subject", "Bob");
+        assertThat(back.extensions()).containsKey("snapshot-at");
+        assertThat(back.item().name()).isEqualTo("Excaliblur");
+
+        QueryRequest bySubject = new QueryRequest(
+                List.of(new QueryPredicate.Eq("event", "snapshot-take"),
+                        new QueryPredicate.Eq("extensions.snapshot-subject", "Bob")),
+                Sort.NEWEST_FIRST, 10, EnumSet.noneOf(Flag.class), false);
+        assertThat(store.query(bySubject).records()).hasSize(1);
     }
 
     @Test

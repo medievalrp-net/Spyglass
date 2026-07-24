@@ -130,6 +130,19 @@ import net.medievalrp.spyglass.plugin.salvage.SalvageViews;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawals;
 import net.medievalrp.spyglass.plugin.command.service.SalvageService;
+import net.medievalrp.spyglass.plugin.command.service.SnapshotService;
+import net.medievalrp.spyglass.plugin.snapshot.ClickHousePlayerSnapshotStore;
+import net.medievalrp.spyglass.plugin.snapshot.MariaDbPlayerSnapshotStore;
+import net.medievalrp.spyglass.plugin.snapshot.MongoPlayerSnapshotStore;
+import net.medievalrp.spyglass.plugin.snapshot.PlayerSnapshotListener;
+import net.medievalrp.spyglass.plugin.snapshot.PlayerSnapshotService;
+import net.medievalrp.spyglass.plugin.snapshot.PlayerSnapshotStore;
+import net.medievalrp.spyglass.plugin.snapshot.SnapshotSessions;
+import net.medievalrp.spyglass.plugin.snapshot.SnapshotTakeLogger;
+import net.medievalrp.spyglass.plugin.snapshot.SnapshotTakes;
+import net.medievalrp.spyglass.plugin.snapshot.SnapshotView;
+import net.medievalrp.spyglass.plugin.snapshot.SnapshotViews;
+import net.medievalrp.spyglass.plugin.snapshot.SqlitePlayerSnapshotStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.ClickHouseToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MariaDbToolStateStore;
 import net.medievalrp.spyglass.plugin.command.service.tool.MongoToolStateStore;
@@ -179,6 +192,13 @@ public final class SpyglassPlugin extends JavaPlugin {
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
     private SalvageStore salvageStore;
+    /** Per-backend store for player-inventory snapshots (#341); built next to
+     *  {@link #salvageStore} for every backend, closed in onDisable after the
+     *  capture service that writes to it is stopped. */
+    private PlayerSnapshotStore playerSnapshotStore;
+    /** Periodic + event-driven inventory capture (#341); null when
+     *  {@code snapshot.players.enabled} is false. */
+    private PlayerSnapshotService playerSnapshotService;
     private Executor queryExecutor;
     /**
      * Off-main serialization stage for the item-heavy listeners. Item
@@ -223,6 +243,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                             mongoStore.database(), getLogger());
                     salvageStore = new MongoSalvageStore(
                             mongoStore.database(), mongoStore.codecRegistry(), 30L);
+                    playerSnapshotStore = new MongoPlayerSnapshotStore(
+                            mongoStore.database(), mongoStore.codecRegistry());
                 }
                 case CLICKHOUSE -> {
                     SpyglassConfig.ClickHouse ch = config.database().clickhouse();
@@ -236,6 +258,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                             chStore.client(), ch.database());
                     salvageStore = new ClickHouseSalvageStore(
                             chStore.client(), ch.database(), 30L);
+                    playerSnapshotStore = new ClickHousePlayerSnapshotStore(
+                            chStore.client(), ch.database());
                 }
                 case SQLITE -> {
                     // One embedded file holds every store. A relative path
@@ -254,6 +278,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                     undoStack = new SqliteUndoStack(sqliteStore);
                     toolStateStore = new SqliteToolStateStore(sqliteStore);
                     salvageStore = new SqliteSalvageStore(sqliteStore, 30L);
+                    playerSnapshotStore = new SqlitePlayerSnapshotStore(sqliteStore);
                 }
                 case MARIADB -> {
                     // Client-server SQL backend: records, undo ledger, wand
@@ -269,6 +294,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                     undoStack = new MariaDbUndoStack(mariaStore);
                     toolStateStore = new MariaDbToolStateStore(mariaStore);
                     salvageStore = new MariaDbSalvageStore(mariaStore, 30L);
+                    playerSnapshotStore = new MariaDbPlayerSnapshotStore(mariaStore);
                 }
             }
             // #22: searches synthesize per-block rolled-* entries
@@ -554,6 +580,26 @@ public final class SpyglassPlugin extends JavaPlugin {
         } else {
             getLogger().info("Spyglass: container salvage capture disabled for this backend.");
         }
+        // Player-inventory snapshots (#341): the capture service (periodic sweep +
+        // join/quit/death/world-change listener) is gated by snapshot.players.enabled,
+        // NOT the events map (PlayerSnapshotListener is a plain Listener, not a
+        // RecordingListener). The store itself is always built above so viewing and
+        // taking stay available even when capture is off.
+        if (config.snapshot().players().enabled()) {
+            playerSnapshotService = new PlayerSnapshotService(
+                    playerSnapshotStore,
+                    config.snapshot().players().interval(),
+                    config.snapshot().players().retention(),
+                    getLogger());
+            playerSnapshotService.start(this);
+            getServer().getPluginManager().registerEvents(
+                    new PlayerSnapshotListener(playerSnapshotService, this), this);
+            getLogger().info("Spyglass: player snapshot capture enabled (every "
+                    + config.snapshot().players().interval().seconds() + "s, retained "
+                    + config.snapshot().players().retention().seconds() + "s).");
+        } else {
+            getLogger().info("Spyglass: player snapshot capture disabled (snapshot.players.enabled=false).");
+        }
         ServiceSupport serviceSupport = ServiceSupport.bukkit(this);
 
         QueryStringParser parser = new QueryStringParser(apiImpl, config);
@@ -702,6 +748,23 @@ public final class SpyglassPlugin extends JavaPlugin {
                         config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
                 salvageStore, salvageView, salvageWithdrawals, config.limits().searchResult(), serviceSupport);
+
+        // /sg snapshot (#341): view a player inventory or container as of a past
+        // instant and take copies out. Every take is audited onto snapshot-take
+        // (reusing ItemPickupRecord + the extensions channel, the salvage-withdraw
+        // precedent). SnapshotViews.guiOrNull returns the InvUI GUI on 1.x and null
+        // on 26.x, where the service falls back to a clickable text listing - the
+        // same split SalvageViews draws. The take permission gates both surfaces.
+        SnapshotTakeLogger snapshotTakeLogger =
+                new SnapshotTakeLogger(apiImpl, support, getLogger());
+        SnapshotSessions snapshotSessions = new SnapshotSessions();
+        getServer().getPluginManager().registerEvents(snapshotSessions, this);
+        SnapshotTakes snapshotTakes = new SnapshotTakes(snapshotTakeLogger);
+        SnapshotView snapshotView = SnapshotViews.guiOrNull(
+                this, getServer().getBukkitVersion(), snapshotTakes, getLogger());
+        SnapshotService snapshotService = new SnapshotService(
+                playerSnapshotStore, recordStore, recorder, config, serviceSupport,
+                snapshotSessions, snapshotTakes, snapshotView, getLogger());
         // #168: /spyglass stats. Null ingestStats (analytics off) => the command
         // explains how to enable it.
         StatsService statsService = new StatsService(ingestStats, recorder::spillSnapshot);
@@ -718,6 +781,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 toolService,
                 teleportService,
                 salvageService,
+                snapshotService,
                 statsService,
                 suggestions,
                 importService,
@@ -838,6 +902,22 @@ public final class SpyglassPlugin extends JavaPlugin {
                 active.unregister();
             } catch (Throwable ignored) {
             }
+        }
+        // Stop player-snapshot capture before any store is torn down (#341):
+        // the capture executor writes to playerSnapshotStore, which for the
+        // SQLite/MariaDB backends shares the record store's connection, so its
+        // in-flight captures must drain before recordStore.close() below.
+        // Service stop first, then the store (mirrors salvage/tool teardown).
+        if (playerSnapshotService != null) {
+            playerSnapshotService.stop();
+            playerSnapshotService = null;
+        }
+        if (playerSnapshotStore != null) {
+            try {
+                playerSnapshotStore.close();
+            } catch (Exception ignored) {
+            }
+            playerSnapshotStore = null;
         }
         // Drain the off-thread serialization stage BEFORE the recorder,
         // so any in-flight snapshots (deferred item pickups) finish

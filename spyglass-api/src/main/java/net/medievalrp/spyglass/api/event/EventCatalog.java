@@ -92,6 +92,11 @@ public final class EventCatalog {
         // snapshot via /sg inventory (#76). Reuses the withdraw record shape,
         // so both storage backends already persist it.
         m.put("salvage-withdraw", ContainerWithdrawRecord.class);
+        // Emitted when an operator takes an item out of a /sg snapshot view
+        // (a past-instant player inventory or container, #341). Reuses the
+        // pickup record shape - already persisted by every backend - with
+        // its extensions channel naming the snapshot subject and as-of time.
+        m.put("snapshot-take", ItemPickupRecord.class);
         m.put("bookshelf-insert", ContainerDepositRecord.class);
         m.put("bookshelf-remove", ContainerWithdrawRecord.class);
         m.put("pot-insert", ContainerDepositRecord.class);

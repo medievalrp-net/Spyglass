@@ -1028,7 +1028,8 @@ public final class ClickHouseRecordStore implements RecordStore {
             return new ItemPickupRecord(id, event, occurred, expiresAt,
                     origin, source, location, server, target,
                     row.getInteger("amount"),
-                    BsonBlobs.decodeStoredItem(row.getString("item")));
+                    BsonBlobs.decodeStoredItem(row.getString("item")),
+                    readStringMap(row, "extensions"));
         }
         if (clazz == TeleportRecord.class) {
             BlockLocation from = readOptionalLocation(row, "teleport_from_");
