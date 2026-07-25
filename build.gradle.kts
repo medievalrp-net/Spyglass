@@ -18,11 +18,22 @@ nmcpAggregation {
         // AUTOMATIC: the release job publishes without a human clicking
         // "Publish" in the Portal. Was USER_MANAGED, which uploaded and
         // validated but stopped there - the job still went green, so 1.0.8,
-        // 1.0.9 and 1.0.10 sat unpublished and Central served 1.0.7 for two
-        // months. Central releases are immutable, so the tradeoff is that a
-        // bad version can't be pulled back; the release only runs on a
-        // version bump reaching main, which is the gate we actually watch.
+        // 1.0.9 and 1.0.10 stranded and Central served 1.0.7 from 2026-07-08
+        // until someone noticed. Central releases are immutable, so the
+        // tradeoff is that a bad version can't be pulled back; the release
+        // only runs on a version bump reaching main, the gate we do watch.
         publishingType = "AUTOMATIC"
+        // Without this, AUTOMATIC alone does NOT mean the job confirms
+        // publication. nmcp 1.6.1 defaults publishingTimeout to 0, and its
+        // AUTOMATIC branch is guarded on `isPositive`, so it skips the wait
+        // for PUBLISHED, logs "deployment is publishing... Check the central
+        // portal UI" and exits 0. That is the same trust-the-green-job hole
+        // that stranded the three releases above, one step further along.
+        // A positive timeout makes the task block until Central reports
+        // PUBLISHED and fail otherwise. If it ever times out on a deployment
+        // that did land, republish by id with publish-central.yml rather than
+        // lowering this back to zero.
+        publishingTimeout = java.time.Duration.ofMinutes(30)
     }
 }
 

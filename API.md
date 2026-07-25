@@ -54,8 +54,9 @@ dependencies {
 
 ### Local jar (for prototyping, or when Central is behind)
 
-Every GitHub release attaches `spyglass-api.jar` alongside the plugin jars,
-with `-sources` and `-javadoc` next to it. Drop it into a `libs/` folder:
+Releases from 1.0.11 onward attach `spyglass-api.jar` alongside the plugin
+jars, with `-sources` and `-javadoc` next to it. Earlier releases carry only
+the plugin jars. Drop it into a `libs/` folder:
 
 ```kotlin
 dependencies {
@@ -66,11 +67,13 @@ dependencies {
 Or build it from a tag, which works for any version:
 
 ```bash
-git checkout v1.0.10 && ./gradlew :spyglass-api:publishToMavenLocal
+git clone https://github.com/medievalrp-net/Spyglass.git
+cd Spyglass && git checkout v1.0.10
+./gradlew :spyglass-api:publishToMavenLocal
 ```
 
-then add `mavenLocal()` to your repositories and depend on the coordinates
-above as normal.
+then add `mavenLocal()` to your repositories and depend on
+`net.medievalrp:spyglass-api:1.0.10`, matching the tag you built.
 
 ### plugin.yml
 
@@ -676,8 +679,11 @@ version (`1.+` in Gradle) and stay forward-compatible.
 
 - **Javadoc**: published as `spyglass-api-<version>-javadoc.jar`
   alongside the main artifact.
-- **License**: see [LICENSE](LICENSE) — this API jar is shipped under
-  the same terms as the plugin.
+- **License**: `spyglass-api` is Apache-2.0
+  ([spyglass-api/LICENSE](spyglass-api/LICENSE)). The plugin itself is
+  GPL-3.0. Build against this artifact and the GPL does not reach your
+  plugin; compile against `Spyglass.jar` and it does. See
+  [LICENSING.md](LICENSING.md).
 - **Issues / PRs**: https://github.com/medievalrp-net/Spyglass
 
 For operator-side configuration (retention, limits), see the

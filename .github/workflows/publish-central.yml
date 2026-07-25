@@ -17,6 +17,10 @@ on:
         required: true
         type: string
 
+# Talks to Sonatype, never to this repo. Nothing here needs a write token.
+permissions:
+  contents: read
+
 concurrency:
   group: publish-central
   cancel-in-progress: false
@@ -39,14 +43,24 @@ jobs:
       # Publishes an already-uploaded bundle by id. Nothing is built or
       # re-signed here, so this runs the same from any ref regardless of the
       # version the bundle carries.
+      # DEPLOYMENT_ID is bound to an env var, never interpolated into the
+      # script. Actions expands ${{ }} textually before bash parses the line,
+      # so an inlined input containing a quote would run as a command in a
+      # step holding the Portal credentials. The UUID check is the second
+      # line of defence, and rejects a fat-fingered id early either way.
       - name: Publish deployment
         env:
           CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
           CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
         run: |
           test -n "$CENTRAL_PORTAL_USERNAME" || {
             echo "CENTRAL_PORTAL_USERNAME is not set - see PUBLISHING.md."; exit 1;
           }
+          if ! printf '%s' "$DEPLOYMENT_ID" | grep -Eq \
+            '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            echo "deployment_id is not a UUID."; exit 1
+          fi
           ./gradlew nmcpPublishDeployment \
-            -PnmcpDeploymentId='${{ inputs.deployment_id }}' \
+            -PnmcpDeploymentId="$DEPLOYMENT_ID" \
             --no-daemon --stacktrace
