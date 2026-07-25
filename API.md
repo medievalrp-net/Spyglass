@@ -52,15 +52,25 @@ dependencies {
 </dependency>
 ```
 
-### Local jar (for prototyping)
+### Local jar (for prototyping, or when Central is behind)
 
-Drop `spyglass-api-1.0.7.jar` into a `libs/` folder and:
+Every GitHub release attaches `spyglass-api.jar` alongside the plugin jars,
+with `-sources` and `-javadoc` next to it. Drop it into a `libs/` folder:
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/spyglass-api-1.0.7.jar"))
+    compileOnly(files("libs/spyglass-api.jar"))
 }
 ```
+
+Or build it from a tag, which works for any version:
+
+```bash
+git checkout v1.0.10 && ./gradlew :spyglass-api:publishToMavenLocal
+```
+
+then add `mavenLocal()` to your repositories and depend on the coordinates
+above as normal.
 
 ### plugin.yml
 

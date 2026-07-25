@@ -81,6 +81,13 @@ jobs:
           cp "spyglass/build/libs/Spyglass-${v}.jar"        "dist/Spyglass.jar"
           cp "spyglass/build/libs/Spyglass-${v}-shaded.jar" "dist/Spyglass-shaded.jar"
           cp "spyglass-velocity/build/libs/Spyglass-Velocity-${v}.jar" "dist/Spyglass-Velocity.jar"
+          # spyglass-api ships here too, as a fallback channel to Maven Central.
+          # Central is the supported route, but when a publish stalls (see
+          # PUBLISHING.md) this is the difference between an integrator being
+          # mildly inconvenienced and being blocked with no artifact at all.
+          cp "spyglass-api/build/libs/spyglass-api-${v}.jar"         "dist/spyglass-api.jar"
+          cp "spyglass-api/build/libs/spyglass-api-${v}-sources.jar" "dist/spyglass-api-sources.jar"
+          cp "spyglass-api/build/libs/spyglass-api-${v}-javadoc.jar" "dist/spyglass-api-javadoc.jar"
           {
             echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
             echo
@@ -103,6 +110,12 @@ jobs:
             echo "  cross-server search. Read-only: never writes records, never rolls back."
             echo "  Install on the proxy only if you run a Velocity network; a standalone"
             echo "  Paper server doesn't need it."
+            echo
+            echo "### For plugin developers"
+            echo "- **\`spyglass-api.jar\`** (plus \`-sources\`/\`-javadoc\`) - the Apache-2.0"
+            echo "  API, for compiling against Spyglass. Prefer Maven Central:"
+            echo "  \`net.medievalrp:spyglass-api:${v}\`. These jars are a fallback for when"
+            echo "  Central hasn't caught up yet. Server owners don't need this file."
           } > dist/NOTES.md
 
       - name: Create release
@@ -112,6 +125,7 @@ jobs:
         run: |
           gh release create "v${{ steps.ver.outputs.version }}" \
             dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
+            dist/spyglass-api.jar dist/spyglass-api-sources.jar dist/spyglass-api-javadoc.jar \
             --title "Spyglass ${{ steps.ver.outputs.version }}" \
             --notes-file dist/NOTES.md
 
