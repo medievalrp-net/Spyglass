@@ -193,8 +193,8 @@ class documents them.
 
 ### Origin and Source
 
-`Origin` is *who in the system* caused this — a player, a plugin, the
-environment. `Source` is *what specifically* — a player UUID + name,
+`Origin` is *who in the system* caused this - a player, a plugin, the
+environment. `Source` is *what specifically* - a player UUID + name,
 an entity, a command block, a plugin name, etc. Both are sealed
 hierarchies with static factories:
 
@@ -292,7 +292,7 @@ Predicates use dotted Mongo-style field paths. The most useful are:
 Item-payload paths (`item.name`, `item.lore`, `item.enchants`,
 `originalBlock.containerItems.lore`, etc.) are searchable on the
 Mongo backend. The ClickHouse backend stores those as opaque BSON
-blobs and can't filter on them — those queries fail with a clear
+blobs and can't filter on them - those queries fail with a clear
 error.
 
 ### Flags
@@ -407,7 +407,7 @@ sg.registerFlagHandler(new FriendlyOnlyFlag());
 ```
 
 Built-in flag aliases (`ng`, `g`, `nc`, `ex`, `we`, `ord`, `nod`)
-cannot be shadowed — the parser checks built-ins first.
+cannot be shadowed - the parser checks built-ins first.
 
 ---
 
@@ -478,7 +478,7 @@ public final class CommitListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onCommit(RecordCommittedEvent e) {
-        // Listener may run on any thread — check before touching world state.
+        // Listener may run on any thread - check before touching world state.
         if (e.isAsynchronous()) {
             // Hop to main if needed, or stay async for I/O / network calls.
         }
@@ -490,7 +490,7 @@ public final class CommitListener implements Listener {
 ```
 
 Register the listener with Bukkit (`getServer().getPluginManager()
-.registerEvents(new CommitListener(), this)`) — there is no
+.registerEvents(new CommitListener(), this)`) - there is no
 Spyglass-specific registration step.
 
 The event auto-detects sync vs async based on the calling thread.
@@ -519,7 +519,7 @@ public final class FactionTerritoryHandler implements RollbackEffectHandler {
 
     @Override
     public RollbackResult apply(RollbackEffect.Custom effect) {
-        // Decode your own payload — version it so older entries decode.
+        // Decode your own payload - version it so older entries decode.
         TerritoryChange change = TerritoryChange.decode(effect.payload());
 
         boolean ok = factionService.restore(change);
@@ -555,14 +555,14 @@ RollbackEffect.Custom effect = new RollbackEffect.Custom(
 
 The handler runs on the **main server thread**; world mutations are
 safe but long-running I/O is not. Embed a version byte in your
-payload — the undo ledger may hold effects emitted by older plugin
+payload - the undo ledger may hold effects emitted by older plugin
 versions.
 
 ---
 
 ## 7. Discovering enabled events
 
-Configurations vary — operators can disable any built-in event. Hide
+Configurations vary - operators can disable any built-in event. Hide
 your UI for events that aren't being recorded:
 
 ```java
@@ -607,7 +607,7 @@ extension config during startup).
 These names are what the bundled listeners record. You can use them
 in `Eq`/`In` predicates, in `enabledEvents()` checks, or pass them to
 `registerDisplayRenderer`. Custom event names you push via
-`record()` are also valid — there's no registration step.
+`record()` are also valid - there's no registration step.
 
 ```
 Block events: break, place, decay, form, grow, ignite, brush, vault
@@ -622,7 +622,7 @@ Items: drop, pickup, clone
 Combat / NPCs: death, hit, shot, mount, dismount, named
 Player: join, quit, teleport
 Chat: say, command
-Rollback: rolled-place, rolled-break (synthesized — read-only)
+Rollback: rolled-place, rolled-break (synthesized - read-only)
 ```
 
 ---
@@ -666,7 +666,7 @@ The API jar follows semantic versioning. Within a major version:
 - Default methods on extension interfaces (`DisplayRenderer`,
   `QueryParamHandler`) shield existing implementors from new
   capabilities.
-- Record fields are immutable and additive — new fields land on the
+- Record fields are immutable and additive - new fields land on the
   end via new factory overloads, never reorder existing ones.
 
 Pin to a specific minor version in your dependency declaration if
