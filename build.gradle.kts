@@ -15,10 +15,14 @@ nmcpAggregation {
     centralPortal {
         username = System.getenv("CENTRAL_PORTAL_USERNAME")
         password = System.getenv("CENTRAL_PORTAL_PASSWORD")
-        // USER_MANAGED: CI uploads and validates the deployment, then a human
-        // clicks "Publish" in the Central Portal (releases are immutable once
-        // published). Switch to "AUTOMATIC" to release without that step.
-        publishingType = "USER_MANAGED"
+        // AUTOMATIC: the release job publishes without a human clicking
+        // "Publish" in the Portal. Was USER_MANAGED, which uploaded and
+        // validated but stopped there - the job still went green, so 1.0.8,
+        // 1.0.9 and 1.0.10 sat unpublished and Central served 1.0.7 for two
+        // months. Central releases are immutable, so the tradeoff is that a
+        // bad version can't be pulled back; the release only runs on a
+        // version bump reaching main, which is the gate we actually watch.
+        publishingType = "AUTOMATIC"
     }
 }
 

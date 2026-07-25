@@ -14,10 +14,17 @@ the GitHub release, the `publish-maven-central` job runs
 the artifact. The job is skipped (not failed) until the credentials below are
 set, so nothing here changes the release flow before setup is done.
 
-With `publishingType = "USER_MANAGED"` (in the root `build.gradle.kts`) the
-upload is validated and staged, then you log in to the Portal and click
-**Publish**. Central deployments are immutable once published, so this is the
-safe default. Switch to `"AUTOMATIC"` to release without the manual click.
+`publishingType` (root `build.gradle.kts`) is `"AUTOMATIC"`: the upload is
+validated and then released in the same job, so a version bump reaching `main`
+is the only gate. Central deployments are immutable once published, so a bad
+version can't be withdrawn, only superseded.
+
+It used to be `"USER_MANAGED"`, which staged the deployment and waited for
+someone to click **Publish** in the Portal. Nobody did, and the job reported
+success either way, so 1.0.8, 1.0.9 and 1.0.10 never reached Central. If you
+switch back, add a check that fails the job on a validated-but-unpublished
+deployment - a silent stage is indistinguishable from a successful release in
+the logs.
 
 ## One-time setup
 

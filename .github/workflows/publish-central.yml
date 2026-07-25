@@ -1,0 +1,52 @@
+name: Publish Central deployment
+
+# Manual escape hatch for a deployment that reached the Central Portal but
+# never went public - the failure mode that stranded 1.0.8, 1.0.9 and 1.0.10
+# while the release job reported success. Normal releases don't need this:
+# release.yml publishes automatically (publishingType = AUTOMATIC).
+#
+# Find the bundle id in the release run's "Publish spyglass-api to Maven
+# Central" step ("Nmcp: deployment bundle '<id>' uploaded"), or in the Portal
+# under Deployments. Publishing is irreversible - Central releases are
+# immutable once public.
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Central Portal deployment bundle id (UUID)
+        required: true
+        type: string
+
+concurrency:
+  group: publish-central
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Publishes an already-uploaded bundle by id. Nothing is built or
+      # re-signed here, so this runs the same from any ref regardless of the
+      # version the bundle carries.
+      - name: Publish deployment
+        env:
+          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
+        run: |
+          test -n "$CENTRAL_PORTAL_USERNAME" || {
+            echo "CENTRAL_PORTAL_USERNAME is not set - see PUBLISHING.md."; exit 1;
+          }
+          ./gradlew nmcpPublishDeployment \
+            -PnmcpDeploymentId='${{ inputs.deployment_id }}' \
+            --no-daemon --stacktrace
