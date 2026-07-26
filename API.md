@@ -191,6 +191,52 @@ Each subtype has a static `of(ctx, ...)` factory; the constructor
 parameters list the type-specific fields. The Javadoc on each record
 class documents them.
 
+### Block snapshots
+
+`BlockBreakRecord` and `BlockPlaceRecord` carry a `BlockSnapshot` for the
+before and after state. Build one with `BlockSnapshots`, in
+`net.medievalrp.spyglass.api.capture`:
+
+```java
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
+
+void logCustomBreak(Player who, Block block) {
+    BlockSnapshot before = BlockSnapshots.capture(block.getState());
+    // ... your plugin removes the block ...
+    sg.record(BlockBreakRecord.of(ctx, "myplugin-break", block.getType().name(),
+            before, BlockSnapshots.air()));
+}
+```
+
+`capture()` reads live world state, so it must run on the main thread. It
+picks up the tile-entity payload rollback needs: container contents, sign
+text, banner patterns, jukebox disc, decorated-pot sherds. Constructing a
+`BlockSnapshot` by hand instead is allowed but drops all of that, so a
+rollback restores the block without its contents.
+
+For bulk work, split it across threads. `captureRaw()` does the live reads
+and clones on the tick; `finishCapture()` does the item serialization and
+block-data stringification, and is safe anywhere:
+
+```java
+var raw = BlockSnapshots.captureRaw(block.getState());   // main thread
+CompletableFuture.runAsync(() -> {
+    BlockSnapshot snap = BlockSnapshots.finishCapture(raw);   // any thread
+    sg.record(...);
+});
+```
+
+Also on the class: `air()` for the after-state of a break (a shared
+constant), `of(material, blockData)` when you have no `BlockState`, and
+`matchMaterial(name)` for resolving a stored material string.
+
+> Coming from CoreProtect: its API lives inside the CoreProtect plugin jar,
+> so the habit is to put the plugin jar on your compile classpath. Don't do
+> that here. `Spyglass.jar` exposes its internals but is GPL-3.0, and
+> compiling against it pulls that onto your plugin. Everything you need is
+> in the Apache-2.0 `spyglass-api` artifact; if something you want is
+> missing from it, open an issue rather than reaching into the plugin jar.
+
 ### Origin and Source
 
 `Origin` is *who in the system* caused this - a player, a plugin, the
