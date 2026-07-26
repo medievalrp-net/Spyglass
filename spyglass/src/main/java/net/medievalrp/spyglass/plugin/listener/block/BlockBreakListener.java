@@ -9,8 +9,9 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
+import net.medievalrp.spyglass.plugin.util.BlockCaptureCache;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.BlockBreakEvent;
@@ -60,7 +61,7 @@ public final class BlockBreakListener implements RecordingListener {
         // captureRawCached grabs only the immutable BlockData and skips the
         // CraftBlockState build for materials proven to carry no tile-entity data
         // (#168 stage 2); getAsString() stays deferred to finishCapture (#154).
-        BlockSnapshots.RawCapture rawOriginal = BlockSnapshots.captureRawCached(event.getBlock());
+        BlockSnapshots.RawCapture rawOriginal = BlockCaptureCache.captureRawCached(event.getBlock());
         BlockSnapshot after = BlockSnapshots.air();
         BlockLocation location = BlockLocations.fromBlock(event.getBlock());
         // Build context (stamps occurred + time-ordered id) on the main thread

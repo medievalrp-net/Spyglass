@@ -10,7 +10,7 @@ import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.event.StoredItem;
-import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;

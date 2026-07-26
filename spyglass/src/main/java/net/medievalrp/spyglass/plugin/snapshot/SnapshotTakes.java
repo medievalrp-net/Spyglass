@@ -1,7 +1,7 @@
 package net.medievalrp.spyglass.plugin.snapshot;
 
 import java.util.List;
-import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;

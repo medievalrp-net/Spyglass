@@ -8,7 +8,7 @@ import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;

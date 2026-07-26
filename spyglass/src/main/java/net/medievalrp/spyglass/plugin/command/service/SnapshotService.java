@@ -39,7 +39,7 @@ import net.medievalrp.spyglass.plugin.snapshot.SnapshotTakes;
 import net.medievalrp.spyglass.plugin.snapshot.SnapshotView;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.block.Block;

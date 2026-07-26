@@ -9,7 +9,7 @@ import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.BlockGrowEvent;

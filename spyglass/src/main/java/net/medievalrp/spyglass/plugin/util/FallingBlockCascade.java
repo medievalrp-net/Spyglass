@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.util;
 
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import net.medievalrp.spyglass.api.event.BlockBreakRecord;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.RecordContext;

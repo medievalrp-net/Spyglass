@@ -9,8 +9,9 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
+import net.medievalrp.spyglass.plugin.util.BlockCaptureCache;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -73,7 +74,7 @@ public final class BlockPlaceListener implements RecordingListener {
         // (#168 stage 2); getAsString() stays deferred to finishCapture (#154).
         // (The before-state above uses the snapshot Bukkit already built for the
         // event, so there is no getState() of ours to skip there.)
-        BlockSnapshots.RawCapture rawAfter = BlockSnapshots.captureRawCached(event.getBlock());
+        BlockSnapshots.RawCapture rawAfter = BlockCaptureCache.captureRawCached(event.getBlock());
 
         // Allocation trim (#116): fromBlock avoids a throwaway Location allocation.
         BlockLocation location = BlockLocations.fromBlock(event.getBlock());

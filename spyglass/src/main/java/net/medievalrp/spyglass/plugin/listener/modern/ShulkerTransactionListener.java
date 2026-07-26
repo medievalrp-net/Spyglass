@@ -12,7 +12,7 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.InventoryActions;
 import net.medievalrp.spyglass.plugin.util.InventoryActions.Direction;
-import net.medievalrp.spyglass.plugin.util.ItemSerialization;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;

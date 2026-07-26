@@ -27,7 +27,7 @@ import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import net.medievalrp.spyglass.plugin.util.FallingBlockCascade;
 import org.bukkit.Bukkit;
 import org.bukkit.World;

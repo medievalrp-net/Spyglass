@@ -14,10 +14,25 @@ the GitHub release, the `publish-maven-central` job runs
 the artifact. The job is skipped (not failed) until the credentials below are
 set, so nothing here changes the release flow before setup is done.
 
-With `publishingType = "USER_MANAGED"` (in the root `build.gradle.kts`) the
-upload is validated and staged, then you log in to the Portal and click
-**Publish**. Central deployments are immutable once published, so this is the
-safe default. Switch to `"AUTOMATIC"` to release without the manual click.
+`publishingType` (root `build.gradle.kts`) is `"AUTOMATIC"`, so a version bump
+reaching `main` is the only gate. Central deployments are immutable once
+published, so a bad version can't be withdrawn, only superseded.
+
+`publishingTimeout` next to it is load-bearing, not decoration. nmcp defaults it
+to zero, and its AUTOMATIC path only waits for `PUBLISHED` when the timeout is
+positive. Leave it unset and the task returns success as soon as Central has
+*validated* the bundle, having merely asked for publication. A green job would
+then mean "validated", while everyone reading it assumes "released".
+
+That distinction is the whole bug. `publishingType` used to be `"USER_MANAGED"`,
+which staged the deployment and waited for someone to click **Publish** in the
+Portal. Nobody did, the job reported success either way, and 1.0.8, 1.0.9 and
+1.0.10 never reached Central while it kept serving 1.0.7 from 2026-07-08.
+
+So: whatever you change here, make sure a green job cannot mean anything short
+of published. If you set `publishingType` back to `"USER_MANAGED"`, add a check
+that fails on a validated-but-unpublished deployment. If you drop
+`publishingTimeout`, you have re-created the same hole one step further along.
 
 ## One-time setup
 

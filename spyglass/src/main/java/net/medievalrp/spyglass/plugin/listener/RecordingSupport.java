@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.plugin.listener;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
+import net.medievalrp.spyglass.api.capture.CaptureText;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.RecordContext;
 import net.medievalrp.spyglass.api.event.Source;
@@ -33,7 +34,7 @@ public final class RecordingSupport {
      * single record by ~1 MB and wedges any operator running a wide
      * search across that row.
      */
-    public static final int MAX_TEXT_LEN = 32_768;
+    public static final int MAX_TEXT_LEN = CaptureText.MAX_TEXT_LEN;
 
     /**
      * Mandatory passthrough for ANY player-typed string before it lands
@@ -63,8 +64,8 @@ public final class RecordingSupport {
      * {@code serializeAsBytes()} are binary-safe and don't need this.
      *
      * <p>Static so static utilities ({@link
-     * net.medievalrp.spyglass.plugin.util.ItemSerialization},
-     * {@link net.medievalrp.spyglass.plugin.util.BlockSnapshots})
+     * net.medievalrp.spyglass.api.capture.ItemSerialization},
+     * {@link net.medievalrp.spyglass.api.capture.BlockSnapshots})
      * that capture player text without holding a {@code RecordingSupport}
      * can sanitize at the source instead of forcing every caller to wrap.
      *
@@ -72,14 +73,7 @@ public final class RecordingSupport {
      * and one {@code String} allocation; truncation is a {@code substring}.
      */
     public static String safeText(String input) {
-        if (input == null || input.isEmpty()) {
-            return input;
-        }
-        String roundTripped = new String(input.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
-        if (roundTripped.length() > MAX_TEXT_LEN) {
-            return roundTripped.substring(0, MAX_TEXT_LEN);
-        }
-        return roundTripped;
+        return CaptureText.safeText(input);
     }
 
     public Instant now() {

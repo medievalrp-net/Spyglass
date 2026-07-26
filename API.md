@@ -52,15 +52,28 @@ dependencies {
 </dependency>
 ```
 
-### Local jar (for prototyping)
+### Local jar (for prototyping, or when Central is behind)
 
-Drop `spyglass-api-1.0.7.jar` into a `libs/` folder and:
+Releases from 1.0.11 onward attach `spyglass-api.jar` alongside the plugin
+jars, with `-sources` and `-javadoc` next to it. Earlier releases carry only
+the plugin jars. Drop it into a `libs/` folder:
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/spyglass-api-1.0.7.jar"))
+    compileOnly(files("libs/spyglass-api.jar"))
 }
 ```
+
+Or build it from a tag, which works for any version:
+
+```bash
+git clone https://github.com/medievalrp-net/Spyglass.git
+cd Spyglass && git checkout v1.0.10
+./gradlew :spyglass-api:publishToMavenLocal
+```
+
+then add `mavenLocal()` to your repositories and depend on
+`net.medievalrp:spyglass-api:1.0.10`, matching the tag you built.
 
 ### plugin.yml
 
@@ -178,10 +191,56 @@ Each subtype has a static `of(ctx, ...)` factory; the constructor
 parameters list the type-specific fields. The Javadoc on each record
 class documents them.
 
+### Block snapshots
+
+`BlockBreakRecord` and `BlockPlaceRecord` carry a `BlockSnapshot` for the
+before and after state. Build one with `BlockSnapshots`, in
+`net.medievalrp.spyglass.api.capture`:
+
+```java
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
+
+void logCustomBreak(Player who, Block block) {
+    BlockSnapshot before = BlockSnapshots.capture(block.getState());
+    // ... your plugin removes the block ...
+    sg.record(BlockBreakRecord.of(ctx, "myplugin-break", block.getType().name(),
+            before, BlockSnapshots.air()));
+}
+```
+
+`capture()` reads live world state, so it must run on the main thread. It
+picks up the tile-entity payload rollback needs: container contents, sign
+text, banner patterns, jukebox disc, decorated-pot sherds. Constructing a
+`BlockSnapshot` by hand instead is allowed but drops all of that, so a
+rollback restores the block without its contents.
+
+For bulk work, split it across threads. `captureRaw()` does the live reads
+and clones on the tick; `finishCapture()` does the item serialization and
+block-data stringification, and is safe anywhere:
+
+```java
+var raw = BlockSnapshots.captureRaw(block.getState());   // main thread
+CompletableFuture.runAsync(() -> {
+    BlockSnapshot snap = BlockSnapshots.finishCapture(raw);   // any thread
+    sg.record(...);
+});
+```
+
+Also on the class: `air()` for the after-state of a break (a shared
+constant), `of(material, blockData)` when you have no `BlockState`, and
+`matchMaterial(name)` for resolving a stored material string.
+
+> Coming from CoreProtect: its API lives inside the CoreProtect plugin jar,
+> so the habit is to put the plugin jar on your compile classpath. Don't do
+> that here. `Spyglass.jar` exposes its internals but is GPL-3.0, and
+> compiling against it pulls that onto your plugin. Everything you need is
+> in the Apache-2.0 `spyglass-api` artifact; if something you want is
+> missing from it, open an issue rather than reaching into the plugin jar.
+
 ### Origin and Source
 
-`Origin` is *who in the system* caused this — a player, a plugin, the
-environment. `Source` is *what specifically* — a player UUID + name,
+`Origin` is *who in the system* caused this - a player, a plugin, the
+environment. `Source` is *what specifically* - a player UUID + name,
 an entity, a command block, a plugin name, etc. Both are sealed
 hierarchies with static factories:
 
@@ -279,7 +338,7 @@ Predicates use dotted Mongo-style field paths. The most useful are:
 Item-payload paths (`item.name`, `item.lore`, `item.enchants`,
 `originalBlock.containerItems.lore`, etc.) are searchable on the
 Mongo backend. The ClickHouse backend stores those as opaque BSON
-blobs and can't filter on them — those queries fail with a clear
+blobs and can't filter on them - those queries fail with a clear
 error.
 
 ### Flags
@@ -394,7 +453,7 @@ sg.registerFlagHandler(new FriendlyOnlyFlag());
 ```
 
 Built-in flag aliases (`ng`, `g`, `nc`, `ex`, `we`, `ord`, `nod`)
-cannot be shadowed — the parser checks built-ins first.
+cannot be shadowed - the parser checks built-ins first.
 
 ---
 
@@ -465,7 +524,7 @@ public final class CommitListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onCommit(RecordCommittedEvent e) {
-        // Listener may run on any thread — check before touching world state.
+        // Listener may run on any thread - check before touching world state.
         if (e.isAsynchronous()) {
             // Hop to main if needed, or stay async for I/O / network calls.
         }
@@ -477,7 +536,7 @@ public final class CommitListener implements Listener {
 ```
 
 Register the listener with Bukkit (`getServer().getPluginManager()
-.registerEvents(new CommitListener(), this)`) — there is no
+.registerEvents(new CommitListener(), this)`) - there is no
 Spyglass-specific registration step.
 
 The event auto-detects sync vs async based on the calling thread.
@@ -506,7 +565,7 @@ public final class FactionTerritoryHandler implements RollbackEffectHandler {
 
     @Override
     public RollbackResult apply(RollbackEffect.Custom effect) {
-        // Decode your own payload — version it so older entries decode.
+        // Decode your own payload - version it so older entries decode.
         TerritoryChange change = TerritoryChange.decode(effect.payload());
 
         boolean ok = factionService.restore(change);
@@ -542,14 +601,14 @@ RollbackEffect.Custom effect = new RollbackEffect.Custom(
 
 The handler runs on the **main server thread**; world mutations are
 safe but long-running I/O is not. Embed a version byte in your
-payload — the undo ledger may hold effects emitted by older plugin
+payload - the undo ledger may hold effects emitted by older plugin
 versions.
 
 ---
 
 ## 7. Discovering enabled events
 
-Configurations vary — operators can disable any built-in event. Hide
+Configurations vary - operators can disable any built-in event. Hide
 your UI for events that aren't being recorded:
 
 ```java
@@ -594,7 +653,7 @@ extension config during startup).
 These names are what the bundled listeners record. You can use them
 in `Eq`/`In` predicates, in `enabledEvents()` checks, or pass them to
 `registerDisplayRenderer`. Custom event names you push via
-`record()` are also valid — there's no registration step.
+`record()` are also valid - there's no registration step.
 
 ```
 Block events: break, place, decay, form, grow, ignite, brush, vault
@@ -609,7 +668,7 @@ Items: drop, pickup, clone
 Combat / NPCs: death, hit, shot, mount, dismount, named
 Player: join, quit, teleport
 Chat: say, command
-Rollback: rolled-place, rolled-break (synthesized — read-only)
+Rollback: rolled-place, rolled-break (synthesized - read-only)
 ```
 
 ---
@@ -653,7 +712,7 @@ The API jar follows semantic versioning. Within a major version:
 - Default methods on extension interfaces (`DisplayRenderer`,
   `QueryParamHandler`) shield existing implementors from new
   capabilities.
-- Record fields are immutable and additive — new fields land on the
+- Record fields are immutable and additive - new fields land on the
   end via new factory overloads, never reorder existing ones.
 
 Pin to a specific minor version in your dependency declaration if
@@ -666,8 +725,11 @@ version (`1.+` in Gradle) and stay forward-compatible.
 
 - **Javadoc**: published as `spyglass-api-<version>-javadoc.jar`
   alongside the main artifact.
-- **License**: see [LICENSE](LICENSE) — this API jar is shipped under
-  the same terms as the plugin.
+- **License**: `spyglass-api` is Apache-2.0
+  ([spyglass-api/LICENSE](spyglass-api/LICENSE)). The plugin itself is
+  GPL-3.0. Build against this artifact and the GPL does not reach your
+  plugin; compile against `Spyglass.jar` and it does. See
+  [LICENSING.md](LICENSING.md).
 - **Issues / PRs**: https://github.com/medievalrp-net/Spyglass
 
 For operator-side configuration (retention, limits), see the
