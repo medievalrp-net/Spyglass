@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import org.bukkit.Material;
@@ -50,7 +51,7 @@ class BlockSnapshotsTest {
     void clearPlainnessCache() {
         // The plainness cache (#168 stage 2) is static; reset it so each test
         // starts from a cold cache regardless of order.
-        BlockSnapshots.resetPlainnessCache();
+        BlockCaptureCache.resetPlainnessCache();
     }
 
     // ---- #168 stage 2: captureRawCached / the learned plainness cache --------
@@ -64,11 +65,11 @@ class BlockSnapshotsTest {
     void captureRawCachedLearnsPlainThenSkipsGetState() {
         PlainFixture f = plainFixture(Material.STONE);
 
-        BlockSnapshots.RawCapture r1 = BlockSnapshots.captureRawCached(f.block);
+        BlockSnapshots.RawCapture r1 = BlockCaptureCache.captureRawCached(f.block);
         // First time: must read the real state to learn the verdict.
         verify(f.block, times(1)).getState();
 
-        BlockSnapshots.RawCapture r2 = BlockSnapshots.captureRawCached(f.block);
+        BlockSnapshots.RawCapture r2 = BlockCaptureCache.captureRawCached(f.block);
         // Proven plain: getState() is NOT called again - the whole point of #168.
         verify(f.block, times(1)).getState();
 
@@ -95,9 +96,9 @@ class BlockSnapshotsTest {
 
         BlockSnapshot viaState = BlockSnapshots.finishCapture(BlockSnapshots.captureRaw(f.state));
 
-        BlockSnapshots.captureRawCached(f.block);                              // learn DIRT=plain
+        BlockCaptureCache.captureRawCached(f.block);                              // learn DIRT=plain
         BlockSnapshot viaFast = BlockSnapshots.finishCapture(
-                BlockSnapshots.captureRawCached(f.block));                     // fast path
+                BlockCaptureCache.captureRawCached(f.block));                     // fast path
 
         assertThat(viaFast.material()).isEqualTo(viaState.material());
         assertThat(viaFast.blockData()).isEqualTo(viaState.blockData());
@@ -119,13 +120,13 @@ class BlockSnapshotsTest {
         when(block.getBlockData()).thenReturn(data);
         when(block.getState()).thenReturn(cf.state);
 
-        BlockSnapshots.RawCapture r1 = BlockSnapshots.captureRawCached(block);
+        BlockSnapshots.RawCapture r1 = BlockCaptureCache.captureRawCached(block);
         verify(block, times(1)).getState();
         assertThat(r1.containerContents())
                 .as("contents captured on the first (learning) sighting")
                 .containsExactly(cf.clone0, null, cf.clone2);
 
-        BlockSnapshots.RawCapture r2 = BlockSnapshots.captureRawCached(block);
+        BlockSnapshots.RawCapture r2 = BlockCaptureCache.captureRawCached(block);
         verify(block, times(2)).getState();
         assertThat(r2.containerContents())
                 .as("a known-data-bearing material STILL goes through getState - no data loss")
@@ -153,11 +154,11 @@ class BlockSnapshotsTest {
     @Test
     void verdictsAreLearnedPerMaterial() {
         PlainFixture stone = plainFixture(Material.STONE);
-        BlockSnapshots.captureRawCached(stone.block);          // STONE -> plain
-        BlockSnapshots.captureRawCached(stone.block);
+        BlockCaptureCache.captureRawCached(stone.block);          // STONE -> plain
+        BlockCaptureCache.captureRawCached(stone.block);
 
         PlainFixture glass = plainFixture(Material.GLASS);
-        BlockSnapshots.captureRawCached(glass.block);          // GLASS unseen -> consults state
+        BlockCaptureCache.captureRawCached(glass.block);          // GLASS unseen -> consults state
         verify(glass.block, times(1)).getState();
     }
 

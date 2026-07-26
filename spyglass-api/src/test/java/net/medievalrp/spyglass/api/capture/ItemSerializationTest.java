@@ -1,4 +1,4 @@
-package net.medievalrp.spyglass.plugin.util;
+package net.medievalrp.spyglass.api.capture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;

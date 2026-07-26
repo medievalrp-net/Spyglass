@@ -1,25 +1,54 @@
-package net.medievalrp.spyglass.plugin.util;
+package net.medievalrp.spyglass.api.capture;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.StoredItem;
-import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
-import java.util.Map;
 import org.bukkit.Material;
 import org.bukkit.block.Banner;
-import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
 import org.bukkit.block.DecoratedPot;
 import org.bukkit.block.Jukebox;
 import org.bukkit.block.Sign;
-import org.bukkit.block.banner.Pattern;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.sign.Side;
 import org.bukkit.inventory.ItemStack;
 
+/**
+ * Builds a {@link BlockSnapshot} from a live Bukkit block.
+ *
+ * <p>{@link BlockSnapshot} is a required argument to {@code BlockBreakRecord}
+ * and {@code BlockPlaceRecord}, so any plugin recording its own block events
+ * needs a way to produce one. This is that way. Constructing the record by
+ * hand is possible but drops the tile-entity payload (container contents, sign
+ * text, banner patterns, jukebox disc, pot sherds), which is exactly what
+ * rollback needs to restore the block faithfully.
+ *
+ * <h2>Threading</h2>
+ *
+ * {@link #capture} reads live world state and MUST run on the main thread.
+ * For bulk work, split it: call {@link #captureRaw} on the main thread and
+ * {@link #finishCapture} off it. The two together are equivalent to
+ * {@link #capture} and yield an identical snapshot, but the expensive halves
+ * (item serialisation, block-data stringification) move off the tick.
+ *
+ * <pre>{@code
+ * // simple case, on the main thread
+ * BlockSnapshot before = BlockSnapshots.capture(block.getState());
+ * sg.record(BlockBreakRecord.of(ctx, "myplugin-break", target,
+ *         before, BlockSnapshots.air()));
+ *
+ * // bulk case: cheap half on the tick, expensive half on a worker
+ * var raw = BlockSnapshots.captureRaw(block.getState());   // main thread
+ * CompletableFuture.runAsync(() -> {
+ *     BlockSnapshot snap = BlockSnapshots.finishCapture(raw);  // any thread
+ *     sg.record(...);
+ * });
+ * }</pre>
+ */
 public final class BlockSnapshots {
 
     private BlockSnapshots() {
@@ -27,14 +56,11 @@ public final class BlockSnapshots {
 
     /**
      * Capture a full {@link BlockSnapshot} from a (live or snapshot)
-     * {@link BlockState}. MUST run on the main thread - it reads live Bukkit
+     * {@link BlockState}. MUST run on the main thread: it reads live Bukkit
      * state (the jukebox/decorated-pot upgrade reads the live block) and
      * serializes container contents inline.
      *
-     * <p>Equivalent to {@code finishCapture(captureRaw(state))}: for the bulk
-     * paths (explosions) that want to keep the heavy item serialization off the
-     * tick, call {@link #captureRaw} on the main thread and {@link #finishCapture}
-     * off it. Both yield an identical snapshot.
+     * <p>Equivalent to {@code finishCapture(captureRaw(state))}.
      */
     public static BlockSnapshot capture(BlockState state) {
         return finishCapture(captureRaw(state));
@@ -51,7 +77,7 @@ public final class BlockSnapshots {
      *       copy returned by {@link BlockState#getBlockData()} - it is already
      *       world-detached and safe to hand across threads. {@link #finishCapture}
      *       calls {@code getAsString()} on it off the main thread, deferring the
-     *       string allocation away from the server tick (#154).</li>
+     *       string allocation away from the server tick.</li>
      * </ul>
      * {@link #finishCapture} can therefore run both the expensive
      * {@code serializeAsBytes()} AND {@code getAsString()} off-thread.
@@ -149,102 +175,32 @@ public final class BlockSnapshots {
                 potSherds);
     }
 
-    // ---- stage 2: skip getState() for blocks that carry no tile-entity data ----
-    //
-    // For the overwhelming majority of break/place volume - plain terrain and
-    // building blocks - building a full CraftBlockState (an allocation plus a
-    // tile-entity chunk lookup) is wasted: captureRaw reads only the material
-    // and the immutable BlockData from it. captureRawCached grabs just that
-    // BlockData (the irreducible main-thread cost) and skips getState() for any
-    // material PROVEN to produce a non-data-bearing state.
-
-    private static final byte UNKNOWN = 0;
-    private static final byte PLAIN = 1;
-    private static final byte DATA_BEARING = 2;
-
     /**
-     * Per-{@link Material} plainness verdict, indexed by {@link Material#ordinal()}:
-     * {@code UNKNOWN}, {@code PLAIN} (no tile-entity data {@link #captureRaw}
-     * would extract) or {@code DATA_BEARING} (a Container / Sign / Banner /
-     * Jukebox / DecoratedPot).
-     *
-     * <p>The verdict is learned lazily from the authoritative {@link BlockState}
-     * itself: the first event for a material always runs the full
-     * {@link #captureRaw} path and only then records what that state turned out
-     * to be. A material therefore can never be misclassified into the fast path -
-     * the fast path is only taken after the plugin has seen, on this exact
-     * server, that the material's state is not data-bearing. This is strictly
-     * safer than a hand-maintained allowlist (which a new game version could make
-     * wrong) while needing zero per-version maintenance.
-     *
-     * <p>Bukkit block events fire on the main thread and {@link #captureRaw} is
-     * already documented as main-thread-only, so this array is main-thread
-     * confined and needs no synchronization. (A {@code byte} write is atomic
-     * regardless; the worst a hypothetical race could do is re-learn the same
-     * verdict - never a wrong one, since every learn reads a real state.)
-     */
-    private static final byte[] PLAINNESS = new byte[Material.values().length];
-
-    /**
-     * {@link #captureRaw} for callers holding a live {@link Block} (the break and
-     * place-after hot paths). For a material proven {@link #PLAIN} this skips the
-     * {@link Block#getState()} CraftBlockState construction and its tile-entity
-     * lookup, grabbing only the immutable {@link BlockData} every snapshot needs.
-     * For anything not yet proven plain it falls back to {@code getState()} +
-     * {@link #captureRaw} - byte-for-byte the original behavior - and learns the
-     * verdict for next time.
-     *
-     * <p><b>Correctness:</b> a misclassified container would silently lose its
-     * contents and break rollback for it, so the fast path is gated on the
-     * plugin having itself observed a non-data-bearing state for this material.
-     * {@link #isDataBearing} MUST mirror the tile-entity types special-cased in
-     * {@link #captureRaw}; see its note.
-     */
-    public static RawCapture captureRawCached(Block block) {
-        // The grab: one chunk read + an immutable, world-detached BlockData copy.
-        // This is unavoidable on the main thread and is needed by every snapshot.
-        BlockData data = block.getBlockData();
-        Material type = data.getMaterial();
-        if (PLAINNESS[type.ordinal()] == PLAIN) {
-            return plainCapture(type, data);
-        }
-        // Unknown or known-data-bearing: take the authoritative full path. On the
-        // first sighting of a material, learn its verdict from the real state.
-        BlockState state = block.getState();
-        if (PLAINNESS[type.ordinal()] == UNKNOWN) {
-            PLAINNESS[type.ordinal()] = isDataBearing(state) ? DATA_BEARING : PLAIN;
-        }
-        return captureRaw(state);
-    }
-
-    /**
-     * The {@link RawCapture} for a block with no tile-entity payload - identical
+     * The {@link RawCapture} for a block with no tile-entity payload, identical
      * to what {@link #captureRaw} produces for a plain block (empty item / sign /
      * banner / pot lists, null container contents and jukebox disc), without
      * building a {@link BlockState}.
+     *
+     * <p>Only sound for a material proven not to be {@link #isDataBearing}.
      */
-    private static RawCapture plainCapture(Material type, BlockData data) {
+    public static RawCapture plainCapture(Material type, BlockData data) {
         return new RawCapture(type, data, null, List.of(), List.of(), List.of(), null, List.of());
     }
 
     /**
      * Whether {@link #captureRaw} would extract tile-entity data from this state.
-     * This is the safety predicate behind {@link #captureRawCached}: it MUST list
-     * exactly the tile-entity types {@link #captureRaw} special-cases. Adding a
-     * new branch to {@code captureRaw} without adding it here would let the
-     * proven-plain fast path silently drop the new data.
+     * This is the safety predicate behind any fast path that skips
+     * {@code getState()}: it MUST list exactly the tile-entity types
+     * {@link #captureRaw} special-cases. Adding a new branch to
+     * {@code captureRaw} without adding it here would let a proven-plain fast
+     * path silently drop the new data.
      */
-    static boolean isDataBearing(BlockState state) {
+    public static boolean isDataBearing(BlockState state) {
         return state instanceof Container
                 || state instanceof Sign
                 || state instanceof Banner
                 || state instanceof Jukebox
                 || state instanceof DecoratedPot;
-    }
-
-    /** Visible for tests: clear the learned plainness verdicts. */
-    static void resetPlainnessCache() {
-        java.util.Arrays.fill(PLAINNESS, UNKNOWN);
     }
 
     /**
@@ -253,15 +209,9 @@ public final class BlockSnapshots {
      * container contents and jukebox disc, and assembles the final
      * {@link BlockSnapshot}. Everything it touches is world-detached, so it is
      * safe to run off the main thread.
-     *
-     * <p>{@code getAsString()} is the deferred call (#154): it was previously
-     * called in {@link #captureRaw} on the server tick and accounts for ~19% of
-     * Spyglass's per-event main-thread cost for plain break/place events. Moving
-     * it here yields the same string with no behavior change - just a different
-     * thread.
      */
     public static BlockSnapshot finishCapture(RawCapture raw) {
-        // getAsString() deferred off the main thread (#154).
+        // getAsString() deferred off the main thread.
         String blockDataString = raw.blockData().getAsString();
         List<StoredItem> items = raw.containerContents() == null
                 ? List.of()
@@ -285,20 +235,21 @@ public final class BlockSnapshots {
      * identity-checks it, so sharing one instance is observably identical to
      * constructing a new one each call - it just skips the per-break
      * allocation (and the compact constructor's {@code List.copyOf} /
-     * {@code simple} recompute) across the ~12 break call sites.
+     * {@code simple} recompute).
      */
     private static final BlockSnapshot AIR = new BlockSnapshot(Material.AIR, "minecraft:air",
             List.of(), List.of(), List.of(), List.of(), null);
 
+    /** The shared air snapshot, for the after-state of a break. */
     public static BlockSnapshot air() {
         return AIR;
     }
 
     /**
      * Plain material + blockData snapshot for callers that don't have a
-     * {@link BlockState} handy (FAWE chunk diff, brush/vault delayed checks).
-     * Inventory / sign / banner / jukebox lists are empty - callers pass a
-     * {@link BlockState} to {@link #capture} when they want that data.
+     * {@link BlockState} handy. Inventory / sign / banner / jukebox lists are
+     * empty; pass a {@link BlockState} to {@link #capture} when you want that
+     * data.
      */
     public static BlockSnapshot of(Material material, String blockData) {
         return new BlockSnapshot(material, blockData,
@@ -306,9 +257,9 @@ public final class BlockSnapshots {
     }
 
     /**
-     * Resolves a stored material string (e.g. from a v1 MaterialType field or
-     * a FAWE blockData string) to a Bukkit {@link Material}. Falls back to
-     * {@link Material#AIR} on null/blank/unknown input.
+     * Resolves a stored material string (e.g. from a legacy MaterialType field
+     * or a WorldEdit blockData string) to a Bukkit {@link Material}. Falls back
+     * to {@link Material#AIR} on null/blank/unknown input.
      */
     public static Material matchMaterial(String name) {
         if (name == null || name.isBlank()) {
@@ -344,7 +295,7 @@ public final class BlockSnapshots {
     private static List<String> lines(Sign sign, Side side) {
         return sign.getSide(side).lines().stream()
                 .map(PlainTextComponentSerializer.plainText()::serialize)
-                .map(RecordingSupport::safeText)
+                .map(CaptureText::safeText)
                 .toList();
     }
 }

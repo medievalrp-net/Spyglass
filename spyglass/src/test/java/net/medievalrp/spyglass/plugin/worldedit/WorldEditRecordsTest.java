@@ -15,7 +15,7 @@ import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.Material;
 import org.junit.jupiter.api.Test;
 

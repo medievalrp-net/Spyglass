@@ -10,8 +10,9 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
+import net.medievalrp.spyglass.plugin.util.BlockCaptureCache;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
@@ -106,7 +107,7 @@ public final class BucketListener implements RecordingListener {
         Block block = event.getBlock();
         // Pre-change: the block still holds the state the pour replaces. This is
         // the "before" a rollback restores when it removes the poured fluid.
-        BlockSnapshots.RawCapture rawBefore = BlockSnapshots.captureRawCached(block);
+        BlockSnapshots.RawCapture rawBefore = BlockCaptureCache.captureRawCached(block);
         // The placed fluid source. createBlockData() on the main thread mirrors
         // BlockIgniteListener; getAsString() stays deferred to the serializer.
         BlockData afterData = fluid.createBlockData();
@@ -132,7 +133,7 @@ public final class BucketListener implements RecordingListener {
         // the "before" a rollback restores. The target material comes straight
         // from it (WATER / LAVA / POWDER_SNOW) rather than the bucket, which
         // avoids the empty-vs-filled ambiguity of getBucket() on a fill.
-        BlockSnapshots.RawCapture rawBefore = BlockSnapshots.captureRawCached(block);
+        BlockSnapshots.RawCapture rawBefore = BlockCaptureCache.captureRawCached(block);
         BlockSnapshot after = BlockSnapshots.air();
         BlockLocation location = BlockLocations.fromBlock(block);
         RecordContext ctx = support.playerContext(event.getPlayer(), location);

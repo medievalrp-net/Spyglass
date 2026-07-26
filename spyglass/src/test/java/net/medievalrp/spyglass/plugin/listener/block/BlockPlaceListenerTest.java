@@ -15,7 +15,7 @@ import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
-import net.medievalrp.spyglass.plugin.util.BlockSnapshots;
+import net.medievalrp.spyglass.api.capture.BlockSnapshots;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;

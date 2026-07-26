@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.listener.block;
 
+import net.medievalrp.spyglass.plugin.util.BlockCaptureCache;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -292,7 +293,7 @@ class BucketListenerTest {
      * A live block of {@code type}. Stubs both getBlockData() and
      * getState().getBlockData() to the same mock so the capture is deterministic
      * whether or not the static plainness cache is already warm for {@code type}
-     * (BlockSnapshots.captureRawCached takes different paths cold vs warm).
+     * (BlockCaptureCache.captureRawCached takes different paths cold vs warm).
      */
     private Block block(Material type, String blockDataString) {
         when(world.getUID()).thenReturn(WORLD_ID);

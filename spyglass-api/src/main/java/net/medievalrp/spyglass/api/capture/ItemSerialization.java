@@ -1,4 +1,4 @@
-package net.medievalrp.spyglass.plugin.util;
+package net.medievalrp.spyglass.api.capture;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -8,7 +8,6 @@ import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.StoredItem;
-import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
@@ -52,7 +51,7 @@ public final class ItemSerialization {
      * {@code data} {@code null}, skipping the {@code serializeAsBytes()} +
      * Base64 encode that dominates per-item allocation. Use for forensic
      * records that are never rolled back or salvaged
-     * ({@code ItemPickupRecord}, {@code ItemDropRecord}) — nothing ever
+     * ({@code ItemPickupRecord}, {@code ItemDropRecord}) - nothing ever
      * decodes their blob, so it is pure dead weight in memory and on disk
      * (#103). {@code material}, {@code name}, {@code lore} and
      * {@code enchants} are populated exactly as in {@link #storedItem}, so
@@ -74,7 +73,7 @@ public final class ItemSerialization {
         // hasItemMeta() short-circuits the common no-NBT item (cobblestone,
         // plain tools): getItemMeta() allocates a fresh ItemMeta snapshot
         // even when there's nothing to extract, so skip it entirely there
-        // (#98 micro-opt). Output is identical — a meta-less stack has no
+        // (#98 micro-opt). Output is identical - a meta-less stack has no
         // name/lore/enchants.
         if (itemStack.hasItemMeta()) {
             ItemMeta meta = itemStack.getItemMeta();
@@ -82,7 +81,7 @@ public final class ItemSerialization {
                 if (meta.hasDisplayName()) {
                     Component displayName = meta.displayName();
                     if (displayName != null) {
-                        name = RecordingSupport.safeText(PLAIN.serialize(displayName));
+                        name = CaptureText.safeText(PLAIN.serialize(displayName));
                     }
                 }
                 if (meta.hasLore()) {
@@ -90,7 +89,7 @@ public final class ItemSerialization {
                     if (metaLore != null && !metaLore.isEmpty()) {
                         List<String> out = new ArrayList<>(metaLore.size());
                         for (Component line : metaLore) {
-                            out.add(RecordingSupport.safeText(PLAIN.serialize(line)));
+                            out.add(CaptureText.safeText(PLAIN.serialize(line)));
                         }
                         lore = out;
                     }
@@ -130,7 +129,7 @@ public final class ItemSerialization {
      *
      * <p>The scan is brace-balanced and quote-aware so a string value
      * containing a stray {@code {}/}} can't truncate or over-run the captured
-     * compound. Output is length-capped via {@link RecordingSupport#safeText}
+     * compound. Output is length-capped via {@link CaptureText#safeText}
      * to keep a pathological NBT blob from bloating a row. Package-private so
      * it can be unit-tested without a live server.
      */
@@ -183,7 +182,7 @@ public final class ItemSerialization {
                 case '}' -> {
                     if (--depth == 0) {
                         String value = componentString.substring(start, i + 1);
-                        return "{}".equals(value) ? null : RecordingSupport.safeText(value);
+                        return "{}".equals(value) ? null : CaptureText.safeText(value);
                     }
                 }
                 default -> {

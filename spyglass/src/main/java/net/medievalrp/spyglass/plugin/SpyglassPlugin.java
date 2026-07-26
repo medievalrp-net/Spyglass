@@ -9,6 +9,7 @@ import java.util.logging.Level;
 import java.util.stream.Collectors;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.api.SpyglassLimits;
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import net.medievalrp.spyglass.api.event.RecordCommittedEvent;
 import net.medievalrp.spyglass.api.util.Duration;
 import net.medievalrp.spyglass.plugin.api.SpyglassApiImpl;
@@ -730,7 +731,7 @@ public final class SpyglassPlugin extends JavaPlugin {
             net.medievalrp.spyglass.api.event.RecordContext salvageCtx =
                     support.playerContext(player, salvageLoc);
             net.medievalrp.spyglass.api.event.StoredItem salvageStored =
-                    net.medievalrp.spyglass.plugin.util.ItemSerialization.storedItem(0, taken);
+                    net.medievalrp.spyglass.api.capture.ItemSerialization.storedItem(0, taken);
             recorder.record(net.medievalrp.spyglass.api.event.ContainerWithdrawRecord.of(
                     salvageCtx, "salvage-withdraw", taken.getType().name(),
                     snap.containerType(), 0, amount, salvageStored, null));

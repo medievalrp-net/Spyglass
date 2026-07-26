@@ -15,6 +15,7 @@ val mongoDriverVersion: String by rootProject.extra
 val junitVersion: String by rootProject.extra
 val assertjVersion: String by rootProject.extra
 val jetbrainsAnnotationsVersion: String by rootProject.extra
+val mockitoVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -33,6 +34,13 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testImplementation("org.assertj:assertj-core:$assertjVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // The capture package reads live Bukkit state, so its tests need Paper on
+    // the test classpath (compileOnly does not reach testCompileClasspath) and
+    // Mockito to stand in for BlockState / ItemStack.
+    testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
+    testImplementation("org.mockito:mockito-core:$mockitoVersion")
+    testImplementation("org.mockito:mockito-junit-jupiter:$mockitoVersion")
 }
 
 tasks.withType<JacocoReport>().configureEach {

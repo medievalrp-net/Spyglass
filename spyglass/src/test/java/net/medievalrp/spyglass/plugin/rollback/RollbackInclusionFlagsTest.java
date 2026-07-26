@@ -1,5 +1,6 @@
 package net.medievalrp.spyglass.plugin.rollback;
 
+import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -45,7 +46,7 @@ class RollbackInclusionFlagsTest {
         // afterItem built by the real serializer over the same stubbed
         // bytes the live mock serializes to, so the expected-state guard
         // passes when the gate lets the write through.
-        StoredItem after = net.medievalrp.spyglass.plugin.util.ItemSerialization
+        StoredItem after = net.medievalrp.spyglass.api.capture.ItemSerialization
                 .storedItem(0, ironStack());
         return new ContainerDepositRecord(
                 UUID.randomUUID(), "deposit", now, now.plusSeconds(3600),
