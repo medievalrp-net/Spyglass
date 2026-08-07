@@ -27,14 +27,15 @@ class CommandListenerTest {
     private static final UUID WORLD_ID = UUID.fromString("77777777-7777-7777-7777-777777777777");
 
     private CapturingRecorder recorder;
+    private RecordingSupport support;
     private CommandListener listener;
 
     @BeforeEach
     void setUp() {
         recorder = new CapturingRecorder();
-        RecordingSupport support = new RecordingSupport(new Duration(3600), "test");
+        support = new RecordingSupport(new Duration(3600), "test");
         listener = new CommandListener(recorder, support,
-                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT));
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), false);
     }
 
     @Test
@@ -107,6 +108,72 @@ class CommandListenerTest {
         CommandRecord record = (CommandRecord) recorder.records.get(0);
         assertThat(record.target()).isEqualTo("login");
         assertThat(record.commandLine()).isEqualTo("login ***");
+    }
+
+    @Test
+    void skipsCancelledCommandsByDefault() {
+        Player alice = mockPlayer();
+        PlayerCommandPreprocessEvent event = mock(PlayerCommandPreprocessEvent.class);
+        when(event.getPlayer()).thenReturn(alice);
+        when(event.getMessage()).thenReturn("/give Alice diamond 64");
+        when(event.isCancelled()).thenReturn(true);
+
+        listener.onCommand(event);
+
+        assertThat(recorder.records).isEmpty();
+    }
+
+    @Test
+    void recordsCancelledPlayerCommandWhenLogCancelledEnabled() {
+        CommandListener logging = new CommandListener(recorder, support,
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), true);
+        Player alice = mockPlayer();
+        PlayerCommandPreprocessEvent event = mock(PlayerCommandPreprocessEvent.class);
+        when(event.getPlayer()).thenReturn(alice);
+        when(event.getMessage()).thenReturn("/give Alice diamond 64");
+        when(event.isCancelled()).thenReturn(true);
+
+        logging.onCommand(event);
+
+        assertThat(recorder.records).hasSize(1);
+        assertThat(((CommandRecord) recorder.records.get(0)).target()).isEqualTo("give");
+    }
+
+    @Test
+    void skipsCancelledConsoleCommandsByDefault() {
+        org.bukkit.event.server.ServerCommandEvent event =
+                mock(org.bukkit.event.server.ServerCommandEvent.class);
+        when(event.getSender()).thenReturn(mock(org.bukkit.command.CommandSender.class));
+        when(event.getCommand()).thenReturn("stop");
+        when(event.isCancelled()).thenReturn(true);
+
+        try (org.mockito.MockedStatic<org.bukkit.Bukkit> bukkit =
+                     org.mockito.Mockito.mockStatic(org.bukkit.Bukkit.class)) {
+            bukkit.when(org.bukkit.Bukkit::getWorlds).thenReturn(List.of());
+            listener.onServerCommand(event);
+        }
+
+        assertThat(recorder.records).isEmpty();
+    }
+
+    @Test
+    void recordsCancelledConsoleCommandWhenLogCancelledEnabled() {
+        CommandListener logging = new CommandListener(recorder, support,
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), true);
+        org.bukkit.event.server.ServerCommandEvent event =
+                mock(org.bukkit.event.server.ServerCommandEvent.class);
+        when(event.getSender()).thenReturn(mock(org.bukkit.command.CommandSender.class));
+        when(event.getCommand()).thenReturn("stop");
+        when(event.isCancelled()).thenReturn(true);
+
+        try (org.mockito.MockedStatic<org.bukkit.Bukkit> bukkit =
+                     org.mockito.Mockito.mockStatic(org.bukkit.Bukkit.class)) {
+            bukkit.when(org.bukkit.Bukkit::getWorlds).thenReturn(List.of());
+            logging.onServerCommand(event);
+        }
+
+        assertThat(recorder.records).hasSize(1);
+        assertThat(((CommandRecord) recorder.records.get(0)).target()).isEqualTo("stop");
     }
 
     @Test

@@ -154,7 +154,8 @@ public record SpyglassConfig(
                 new EventSettings(
                         value.node("enabled").getBoolean(true),
                         value.node("past-tense").getString(String.valueOf(key)),
-                        readEventRetention(value, String.valueOf(key), plugin.getLogger()))));
+                        readEventRetention(value, String.valueOf(key), plugin.getLogger()),
+                        readLogCancelled(value))));
 
         java.util.List<String> commandRedact = parseCommandRedact(root);
 
@@ -298,7 +299,13 @@ public record SpyglassConfig(
     }
 
     public boolean enabled(String eventName) {
-        return events.getOrDefault(eventName, new EventSettings(false, eventName, null)).enabled();
+        return events.getOrDefault(eventName, new EventSettings(false, eventName, null, false))
+                .enabled();
+    }
+
+    public boolean logCancelled(String eventName) {
+        EventSettings settings = events.get(eventName);
+        return settings != null && settings.logCancelled();
     }
 
     public String pastTense(String eventName) {
@@ -470,6 +477,19 @@ public record SpyglassConfig(
     }
 
     /**
+     * Read an event node's {@code log-cancelled} flag.
+     *
+     * <p>Defaults to {@code false}: a cancelled event is one the server
+     * refused, so recording it is opt-in — an upgrade must not silently start
+     * storing chat a mute plugin swallowed. Set it per event type, e.g.
+     * {@code events.say.log-cancelled = true}, to keep the attempt. Only the
+     * {@code say} and {@code command} listeners consult it.
+     */
+    static boolean readLogCancelled(ConfigurationNode eventNode) {
+        return eventNode.node("log-cancelled").getBoolean(false);
+    }
+
+    /**
      * Parse the global {@code storage.retention}, accepting the same
      * keep-forever tokens as per-event retention ({@code "0"} / {@code "never"}
      * / {@code "forever"} / {@code "off"} -> {@link
@@ -543,8 +563,12 @@ public record SpyglassConfig(
      *                         {@code storage.retention}. {@link
      *                         net.medievalrp.spyglass.plugin.storage.RetentionPolicy#NEVER_SECONDS}
      *                         marks a "keep forever" type.
+     * @param logCancelled     record the event even when another plugin
+     *                         cancelled it. Honoured by {@code say} and
+     *                         {@code command} only.
      */
-    public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds) {
+    public record EventSettings(boolean enabled, String pastTense, Long retentionSeconds,
+                                boolean logCancelled) {
     }
 
     public record Tool(Material material, Duration lookback) {

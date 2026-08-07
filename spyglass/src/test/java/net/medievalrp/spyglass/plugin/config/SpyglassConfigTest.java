@@ -20,6 +20,22 @@ class SpyglassConfigTest {
     }
 
     @Test
+    void absentLogCancelledDefaultsToFalse() throws SerializationException {
+        BasicConfigurationNode node = BasicConfigurationNode.root();
+        assertThat(SpyglassConfig.readLogCancelled(node)).isFalse();
+    }
+
+    @Test
+    void explicitLogCancelledIsHonoured() throws SerializationException {
+        BasicConfigurationNode node = BasicConfigurationNode.root();
+        node.node("log-cancelled").set(true);
+        assertThat(SpyglassConfig.readLogCancelled(node)).isTrue();
+
+        node.node("log-cancelled").set(false);
+        assertThat(SpyglassConfig.readLogCancelled(node)).isFalse();
+    }
+
+    @Test
     void perEventRetentionParsesDurations() {
         assertThat(SpyglassConfig.parseEventRetention("3d", "say", LOG))
                 .isEqualTo(3L * 24 * 60 * 60);
