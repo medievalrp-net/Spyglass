@@ -318,6 +318,30 @@ class SnapshotReconstructorTest {
         assertThat(r.notes()).isEmpty();
     }
 
+    @Test
+    void slotAccurateTransferReplaysAsAnOrdinaryOpAndStaysCertain() {
+        // Post-#354 hopper records carry the slot's exact (before, after)
+        // pair as ContainerWithdrawRecords under "transfer-withdraw": they
+        // must replay like any click, not trip the legacy-transfer flag.
+        StoredItem g5 = item("GOLD_INGOT", "gold#5");
+        StoredItem g2 = item("GOLD_INGOT", "gold#2");
+        ContainerWithdrawRecord drained = new ContainerWithdrawRecord(
+                EventIds.uuidOf(1), "transfer-withdraw", T.plusSeconds(10),
+                T.plusSeconds(3600), Origin.player(), Source.console(),
+                LOCATION, "srv", "GOLD_INGOT", "CHEST", 0, 3, g5, g2);
+
+        StoredItem[] live = empty();
+        live[0] = g2;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(drained), live, SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.CERTAIN);
+        assertThat(r.notes()).isEmpty();
+        assertThat(r.slots()).singleElement().satisfies(s ->
+                assertThat(s.item().data()).isEqualTo("gold#5"));
+    }
+
     // --- helpers ---
 
     private static ItemDropRecord transferOut(long seq, Instant occurred) {

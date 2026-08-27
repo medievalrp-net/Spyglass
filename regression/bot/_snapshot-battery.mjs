@@ -33,15 +33,20 @@ function logMark() { try { return fs.statSync(LOG).size; } catch { return 0; } }
 function logSince(mark) { const fd = fs.openSync(LOG, 'r'); const size = fs.fstatSync(fd).size; const len = size - mark; if (len <= 0) { fs.closeSync(fd); return ''; } const buf = Buffer.alloc(len); fs.readSync(fd, buf, 0, len, mark); fs.closeSync(fd); return buf.toString('utf8'); }
 function consoleCmd(cmd) { fs.appendFileSync(FIFO, cmd + '\n'); }
 async function consoleQuery(cmd, waitMs = 5000, until = null) {
-  const m = logMark(); consoleCmd(cmd);
-  const dl = Date.now() + waitMs;
-  let out = '';
-  while (Date.now() < dl) {
-    await sleep(500);
-    out = logSince(m);
-    if (until && until.test(out)) break;
+  // The FIFO occasionally drops a line before the console reads it (about
+  // one command in fifteen); a silent window gets one resend.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const m = logMark(); consoleCmd(cmd);
+    const dl = Date.now() + waitMs;
+    let out = '';
+    while (Date.now() < dl) {
+      await sleep(500);
+      out = logSince(m);
+      if (until && until.test(out)) return out;
+    }
+    if (out.trim() !== '') return out;
   }
-  return out;
+  return '';
 }
 
 function sql(q) { try { return execFileSync('sqlite3', ['-cmd', '.timeout 4000', '-readonly', DB, q], { encoding: 'utf8' }).trim(); } catch (e) { return 'SQLERR:' + (e.stderr || e.message); } }
@@ -109,18 +114,24 @@ async function openWithRetry(block, tries = 3) {
   await sleep(1500);
   const backC = () => Math.ceil((Date.now() - markC) / 1000);
 
-  // hopper interference chest
+  // hopper chest: REDSTONE-LOCKED hopper below gives a controllable window
+  // (deposit while locked, then unlock and let it drain). Slot-accurate
+  // transfer records must reverse-apply the drain so the locked instant
+  // reads back exactly.
   const C2 = { x: BX + 14, y: BY, z: BZ + 5 };
   await rcon(`setblock ${C2.x} ${C2.y - 1} ${C2.z} minecraft:hopper`); await sleep(200);
+  await rcon(`setblock ${C2.x + 1} ${C2.y - 1} ${C2.z} minecraft:redstone_block`); await sleep(200);
   await rcon(`setblock ${C2.x} ${C2.y} ${C2.z} minecraft:chest[facing=north]`); await sleep(400);
   await rcon(`give ${BOT} minecraft:gold_ingot 5`); await sleep(400);
   await rcon(`tp ${BOT} ${C2.x} ${C2.y} ${C2.z + 2}`); await sleep(1500);
-  const markH = Date.now(); // asOf BEFORE the deposit: the hopper drains the
-                            // chest within the same second the deposit lands
   cont = await openWithRetry(bot.blockAt(v(C2.x, C2.y, C2.z)));
   await cont.deposit(bot.registry.itemsByName.gold_ingot.id, null, 5);
   await sleep(400); await closeWin(cont);
-  await sleep(4000); // hopper finishes draining, unlogged by container events
+  await sleep(1500);
+  const markH = Date.now(); // locked instant: the chest holds exactly 5 gold
+  await sleep(2000);
+  await rcon(`setblock ${C2.x + 1} ${C2.y - 1} ${C2.z} minecraft:air`); await sleep(200); // unlock
+  await sleep(4000); // hopper drains all 5
   const backH = () => Math.ceil((Date.now() - markH) / 1000);
 
   // double chest
@@ -171,23 +182,23 @@ async function openWithRetry(block, tries = 3) {
   check('P1 header names the subject', new RegExp(BOT + ' as of').test(out), out.slice(-300));
 
   log('--- phase 2: parse errors ---');
-  out = await consoleQuery(`spyglass snapshot p:${BOT}`, 3500);
+  out = await consoleQuery(`spyglass snapshot p:${BOT}`, 6000, /t: is required/);
   check('P2 missing t: rejected', /t: is required/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot p:${BOT} t:banana`, 3500);
+  out = await consoleQuery(`spyglass snapshot p:${BOT} t:banana`, 6000, /Invalid duration/);
   check('P2 bad duration rejected', /Invalid duration/.test(out), out.slice(-300));
   out = await consoleQuery(`spyglass snapshot p:${BOT} trg:1,2,3 t:1h`, 6000, /cannot be combined/);
   check('P2 p:+trg: rejected', /cannot be combined/.test(out), out.slice(-300));
   out = await consoleQuery(`spyglass snapshot p:ZzNoSuch99 t:1h`, 6000, /Unknown player/);
   check('P2 unknown player rejected', /Unknown player/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot t:1h`, 3500);
+  out = await consoleQuery(`spyglass snapshot t:1h`, 6000, /needs a player|trg:x,y,z/);
   check('P2 console container mode needs trg:', /needs a player|trg:x,y,z/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot trg:1,2,3 t:1h`, 3500);
+  out = await consoleQuery(`spyglass snapshot trg:1,2,3 t:1h`, 6000, /needs w:/);
   check('P2 console trg: needs w:', /needs w:/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot trg:1,2,3 w:nope t:1h`, 3500);
+  out = await consoleQuery(`spyglass snapshot trg:1,2,3 w:nope t:1h`, 6000, /Unknown world/);
   check('P2 unknown world rejected', /Unknown world/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot p:${BOT} t:30d`, 3500);
+  out = await consoleQuery(`spyglass snapshot p:${BOT} t:30d`, 6000, /No snapshot for/);
   check('P2 no snapshot before T', /No snapshot for/.test(out), out.slice(-300));
-  out = await consoleQuery(`spyglass snapshot take 00000000-0000-0000-0000-000000000000 0`, 3500);
+  out = await consoleQuery(`spyglass snapshot take 00000000-0000-0000-0000-000000000000 0`, 6000, /as a player/);
   check('P3 console take refused', /as a player/.test(out), out.slice(-300));
 
   log('--- phase 2: container listings via console ---');
@@ -196,8 +207,8 @@ async function openWithRetry(block, tries = 3) {
   check('C1 reconstruction is certain', !/uncertain/i.test(out), out.slice(-400));
 
   out = await consoleQuery(`spyglass snapshot trg:${C2.x},${C2.y},${C2.z} w:world t:${backH()}s`);
-  check('C4 hopper drain flags uncertain', /uncertain/i.test(out), out.slice(-500));
-  check('C4 hopper drain notes unlogged change', /not in the log/.test(out), out.slice(-500));
+  check('C4 drained chest reconstructs exactly (GOLD_INGOT x5)', /GOLD_INGOT x5/.test(out), out.slice(-500));
+  check('C4 hopper replay is certain (no uncertainty flag)', !/uncertain/i.test(out), out.slice(-500));
 
   const F = { x: BX + 18, y: BY, z: BZ + 5 };
   await rcon(`setblock ${F.x} ${F.y} ${F.z} minecraft:furnace[facing=north]`); await sleep(400);
@@ -312,7 +323,7 @@ async function openWithRetry(block, tries = 3) {
   const markT = Date.now();
   await rcon(`clear ${BOT}`); await rcon(`give ${BOT} minecraft:iron_ingot 3`); await sleep(8000);
   const backS = Math.ceil((Date.now() - markT) / 1000);
-  out = await consoleQuery(`spyglass snapshot p:${BOT} t:${backS}s`);
+  out = await consoleQuery(`spyglass snapshot p:${BOT} t:${backS}s`, 8000, /x5|x3|Nothing in it/);
   check('P7 past instant shows DIAMOND x5', /DIAMOND x5/.test(out), out.slice(-400));
   check('P7 past instant hides IRON_INGOT', !/IRON_INGOT x3/.test(out), out.slice(-400));
 
@@ -322,7 +333,7 @@ async function openWithRetry(block, tries = 3) {
   await sleep(1500);
   await rcon(`give ${BOT2} minecraft:gold_block 9`); await sleep(1500);
   bot2.quit(); await sleep(2500);
-  out = await consoleQuery(`spyglass snapshot p:${BOT2} t:1s`);
+  out = await consoleQuery(`spyglass snapshot p:${BOT2} t:1s`, 8000, /GOLD_BLOCK|Nothing in it|No snapshot/);
   check('P9 offline player lookup shows GOLD_BLOCK x9', /GOLD_BLOCK x9/.test(out), out.slice(-400));
 
   log('--- phase 4: inventory at death ---');
@@ -332,7 +343,7 @@ async function openWithRetry(block, tries = 3) {
   try { bot.respawn(); } catch { }
   await sleep(3000);
   const backDth = Math.max(1, Math.floor((Date.now() - deathT) / 1000) - 1);
-  out = await consoleQuery(`spyglass snapshot p:${BOT} t:${backDth}s`);
+  out = await consoleQuery(`spyglass snapshot p:${BOT} t:${backDth}s`, 8000, /NETHERITE_INGOT|Nothing in it|No snapshot/);
   check('P8 inventory at death readable (NETHERITE_INGOT x2)', /NETHERITE_INGOT x2/.test(out), out.slice(-400));
   const causes = sql(`SELECT GROUP_CONCAT(DISTINCT cause) FROM player_snapshots;`);
   check('P8 join+sweep capture causes recorded', /join/.test(causes) && /sweep/.test(causes), 'causes=' + causes);
