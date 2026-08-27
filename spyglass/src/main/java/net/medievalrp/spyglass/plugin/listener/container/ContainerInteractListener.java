@@ -3,12 +3,9 @@ package net.medievalrp.spyglass.plugin.listener.container;
 import java.util.Set;
 import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.RecordContext;
-import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
-import net.medievalrp.spyglass.plugin.util.BlockLocations;
-import org.bukkit.block.Container;
 import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -48,14 +45,13 @@ public final class ContainerInteractListener implements RecordingListener {
         }
         Inventory inv = event.getInventory();
         InventoryHolder holder = inv.getHolder();
-        if (!(holder instanceof Container container)) {
+        ContainerHolders.Target target = ContainerHolders.resolve(holder);
+        if (target == null) {
             return;
         }
         String event_ = holder instanceof ShulkerBox ? "shulker-open" : "open";
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String target = container.getBlock().getType().name();
-        RecordContext ctx = support.playerContext(player, location);
-        recorder.record(ContainerInteractRecord.of(ctx, event_, target));
+        RecordContext ctx = support.playerContext(player, target.location());
+        recorder.record(ContainerInteractRecord.of(ctx, event_, target.type()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -65,13 +61,12 @@ public final class ContainerInteractListener implements RecordingListener {
         }
         Inventory inv = event.getInventory();
         InventoryHolder holder = inv.getHolder();
-        if (!(holder instanceof Container container)) {
+        ContainerHolders.Target target = ContainerHolders.resolve(holder);
+        if (target == null) {
             return;
         }
         String event_ = holder instanceof ShulkerBox ? "shulker-close" : "close";
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String target = container.getBlock().getType().name();
-        RecordContext ctx = support.playerContext(player, location);
-        recorder.record(ContainerInteractRecord.of(ctx, event_, target));
+        RecordContext ctx = support.playerContext(player, target.location());
+        recorder.record(ContainerInteractRecord.of(ctx, event_, target.type()));
     }
 }
