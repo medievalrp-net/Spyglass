@@ -307,7 +307,88 @@ class ContainerTransactionListenerTest {
         assertThat(record.slot()).isEqualTo(3);
     }
 
+    // ── entity-held container inventories (#347) ─────────────────
+
+    @Test
+    void donkeyChestDepositIsRecordedAgainstTheEntity() {
+        // A donkey's inventory holder is the AbstractHorse entity, not a
+        // block Container - the old resolver returned null and silently
+        // dropped every horse-family GUI click (#347).
+        InventoryClickEvent event = entityHolderClickEvent(
+                mock(org.bukkit.entity.Donkey.class), org.bukkit.entity.EntityType.DONKEY,
+                InventoryAction.PLACE_ALL, 2, null, ironStack(12));
+
+        listener.onInventoryClick(event);
+
+        assertThat(recorder.records)
+                .as("donkey chest deposits must be recorded, not dropped")
+                .hasSize(1);
+        ContainerDepositRecord record = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(record.containerType()).isEqualTo("DONKEY");
+        assertThat(record.slot()).isEqualTo(2);
+        assertThat(record.amount()).isEqualTo(12);
+        assertThat(record.location().x()).isEqualTo(5);
+    }
+
+    @Test
+    void horseSaddleSlotWithdrawIsRecorded() {
+        // Saddle (slot 0) and armor slots are ordinary slots of the same
+        // entity-held inventory.
+        InventoryClickEvent event = entityHolderClickEvent(
+                mock(org.bukkit.entity.Horse.class), org.bukkit.entity.EntityType.HORSE,
+                InventoryAction.PICKUP_ALL, 0, mockStack(Material.SADDLE, 1), null);
+
+        listener.onInventoryClick(event);
+
+        assertThat(recorder.records).hasSize(1);
+        ContainerWithdrawRecord record = (ContainerWithdrawRecord) recorder.records.get(0);
+        assertThat(record.containerType()).isEqualTo("HORSE");
+        assertThat(record.slot()).isEqualTo(0);
+        assertThat(record.target()).isEqualTo("SADDLE");
+    }
+
+    @Test
+    void chestBoatDepositIsRecordedAgainstTheEntity() {
+        InventoryClickEvent event = entityHolderClickEvent(
+                mock(org.bukkit.entity.ChestBoat.class), org.bukkit.entity.EntityType.OAK_CHEST_BOAT,
+                InventoryAction.PLACE_ALL, 4, null, ironStack(3));
+
+        listener.onInventoryClick(event);
+
+        assertThat(recorder.records).hasSize(1);
+        ContainerDepositRecord record = (ContainerDepositRecord) recorder.records.get(0);
+        assertThat(record.containerType()).isEqualTo("OAK_CHEST_BOAT");
+        assertThat(record.slot()).isEqualTo(4);
+    }
+
     // ── fixtures ─────────────────────────────────────────────────
+
+    /** A click in an entity-held container inventory (horse family, chest
+     *  boat): the holder is the entity itself, standing at (5, 64, 6). */
+    private <E extends org.bukkit.entity.Entity & org.bukkit.inventory.InventoryHolder>
+            InventoryClickEvent entityHolderClickEvent(E entity, org.bukkit.entity.EntityType type,
+                    InventoryAction action, int slot, ItemStack slotItem, ItemStack cursor) {
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(PLAYER_ID);
+        when(player.getName()).thenReturn("Alice");
+
+        when(world.getUID()).thenReturn(UUID.fromString("77777777-7777-7777-7777-777777777777"));
+        when(world.getName()).thenReturn("world");
+        when(entity.getLocation()).thenReturn(new Location(world, 5, 64, 6));
+        when(entity.getType()).thenReturn(type);
+
+        Inventory inventory = mock(Inventory.class);
+        when(inventory.getHolder(false)).thenReturn(entity);
+        when(inventory.getItem(slot)).thenReturn(slotItem);
+
+        InventoryClickEvent event = mock(InventoryClickEvent.class);
+        when(event.getWhoClicked()).thenReturn(player);
+        when(event.getClickedInventory()).thenReturn(inventory);
+        when(event.getAction()).thenReturn(action);
+        when(event.getSlot()).thenReturn(slot);
+        when(event.getCursor()).thenReturn(cursor);
+        return event;
+    }
 
     private InventoryClickEvent clickEvent(InventoryAction action, int slot,
                                            ItemStack slotItem, ItemStack cursor) {
