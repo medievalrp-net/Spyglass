@@ -43,7 +43,7 @@ public record SpyglassConfig(
      * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
      * A config with an older {@code config-version} is migrated on load.
      */
-    public static final int CONFIG_VERSION = 2;
+    public static final int CONFIG_VERSION = 3;
 
     // v1 -> v2 (v1 = the unversioned format up through release 1.0.9; #311,
     // #307, and #312 all land in one release, so they share one hop): the
@@ -62,6 +62,10 @@ public record SpyglassConfig(
         remap.put("database.collection", "database.mongo.collection");
         remap.put("storage.durability", null);
         remap.put("storage.rolled-audit", null);
+        // v3: hopper transfers became slot-accurate under new event names;
+        // an operator's toggle/retention on the old names carries over.
+        remap.put("events.transfer-out", "events.transfer-withdraw");
+        remap.put("events.transfer-in", "events.transfer-deposit");
         MIGRATION_REMAP = java.util.Collections.unmodifiableMap(remap);
     }
 

@@ -116,9 +116,15 @@ public final class SnapshotService {
     /** Container-family events {@link SnapshotReconstructor} can reason
      *  about - the deposit/withdraw log, plus its shulker and crafter
      *  aliases (same event names {@code ContainerTransactionListener} and
-     *  friends emit; see {@code EventCatalog}). */
+     *  friends emit; see {@code EventCatalog}). Slot-accurate hopper/dropper
+     *  movement (transfer-deposit / transfer-withdraw) replays like any other
+     *  slot op; the legacy coalesced pair (transfer-in / transfer-out, no
+     *  slot state) rides along only so the reconstructor can flag a window
+     *  containing them as UNCERTAIN. */
     private static final List<String> CONTAINER_EVENTS =
-            List.of("deposit", "withdraw", "shulker-deposit", "shulker-withdraw", "crafter");
+            List.of("deposit", "withdraw", "shulker-deposit", "shulker-withdraw", "crafter",
+                    "transfer-deposit", "transfer-withdraw",
+                    "transfer-in", "transfer-out");
 
     private static final Pattern COORDS =
             Pattern.compile("^(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})$");

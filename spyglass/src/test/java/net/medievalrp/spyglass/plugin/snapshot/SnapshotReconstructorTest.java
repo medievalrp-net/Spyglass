@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
+import net.medievalrp.spyglass.api.event.ItemDropRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.Source;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -286,7 +287,69 @@ class SnapshotReconstructorTest {
                 assertThat(s.item().data()).isEqualTo("stick#5"));
     }
 
+    // --- hopper/dropper transfers poison certainty (#226 records) ---
+
+    @Test
+    void transferInWindowForcesUncertainWithNote() {
+        // A hopper drained this chest after T: no slot ops at all, only a
+        // transfer-out marker. Without the flag this reconstructs to a clean
+        // wrong answer (live == candidate == replay) labeled CERTAIN.
+        ItemDropRecord transfer = transferOut(1, T.plusSeconds(5));
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(transfer), empty(), SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.UNCERTAIN);
+        assertThat(r.notes()).anySatisfy(note ->
+                assertThat(note).contains("hopper/dropper transfers"));
+        // No slot ops ride in, so the reconstruction itself is untouched.
+        assertThat(r.slots()).isEmpty();
+        assertThat(r.mismatches()).isEmpty();
+    }
+
+    @Test
+    void transferBeforeTIsIgnored() {
+        ItemDropRecord stale = transferOut(1, T.minusSeconds(60));
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(stale), empty(), SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.CERTAIN);
+        assertThat(r.notes()).isEmpty();
+    }
+
+    @Test
+    void slotAccurateTransferReplaysAsAnOrdinaryOpAndStaysCertain() {
+        // Post-#354 hopper records carry the slot's exact (before, after)
+        // pair as ContainerWithdrawRecords under "transfer-withdraw": they
+        // must replay like any click, not trip the legacy-transfer flag.
+        StoredItem g5 = item("GOLD_INGOT", "gold#5");
+        StoredItem g2 = item("GOLD_INGOT", "gold#2");
+        ContainerWithdrawRecord drained = new ContainerWithdrawRecord(
+                EventIds.uuidOf(1), "transfer-withdraw", T.plusSeconds(10),
+                T.plusSeconds(3600), Origin.player(), Source.console(),
+                LOCATION, "srv", "GOLD_INGOT", "CHEST", 0, 3, g5, g2);
+
+        StoredItem[] live = empty();
+        live[0] = g2;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(drained), live, SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.CERTAIN);
+        assertThat(r.notes()).isEmpty();
+        assertThat(r.slots()).singleElement().satisfies(s ->
+                assertThat(s.item().data()).isEqualTo("gold#5"));
+    }
+
     // --- helpers ---
+
+    private static ItemDropRecord transferOut(long seq, Instant occurred) {
+        return new ItemDropRecord(
+                EventIds.uuidOf(seq), "transfer-out", occurred, occurred.plusSeconds(3600),
+                Origin.player(), Source.console(),
+                LOCATION, "srv", "GOLD_INGOT", 1, item("GOLD_INGOT", "gold#1"));
+    }
 
     private static StoredItem[] empty() {
         return new StoredItem[SIZE];

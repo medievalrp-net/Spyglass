@@ -121,7 +121,22 @@ public final class SnapshotReconstructor {
         List<SlotOp> ops = new ArrayList<>();
         boolean legacy = false;     // any slot < 0 row (pre-#268 per-slot logging)
         boolean outOfRange = false; // a record slot beyond the current size (shape changed)
+        boolean transfers = false;  // hopper/dropper traffic in the window (not slot-tracked)
         for (EventRecord record : windowRecords == null ? List.<EventRecord>of() : windowRecords) {
+            // Automated hopper/dropper movement (#226) is logged as forensic
+            // drop/pickup shapes with no (slot, before, after) pair, and the
+            // dedup coalesces bursts - it cannot be replayed. Its presence in
+            // the window still means the container changed in ways the slot
+            // chain does not cover, so it must poison certainty: without this,
+            // a hopper-drained chest reconstructs to a clean wrong answer and
+            // the replay check cannot catch it (zero slot ops means candidate,
+            // replay, and live are trivially identical).
+            if (isTransfer(record)) {
+                if (t == null || !record.occurred().isBefore(t)) {
+                    transfers = true;
+                }
+                continue;
+            }
             SlotOp op = SlotOp.of(record);
             if (op == null) {
                 continue;
@@ -198,9 +213,13 @@ public final class SnapshotReconstructor {
             notes.add("self-mutating container (furnace/brewing/campfire family); "
                     + "its contents cannot be verified from records");
         }
+        if (transfers) {
+            notes.add("hopper/dropper transfers touched this container in the window; "
+                    + "they are not slot-tracked, so the reconstruction may be off");
+        }
 
         boolean uncertain = legacy || outOfRange || !containerPresent || selfMutating
-                || !mismatches.isEmpty();
+                || transfers || !mismatches.isEmpty();
         SnapshotSession.Certainty certainty = uncertain
                 ? SnapshotSession.Certainty.UNCERTAIN
                 : SnapshotSession.Certainty.CERTAIN;
@@ -214,6 +233,14 @@ public final class SnapshotReconstructor {
             result.add(new SnapshotSlot(i, COUNT_IN_BLOB, item));
         }
         return new Reconstruction(result, certainty, notes, mismatches);
+    }
+
+    /** The two hopper/dropper movement events {@code HopperTransferListener}
+     *  emits (#226), matched by name because they reuse the drop/pickup
+     *  record classes. */
+    private static boolean isTransfer(EventRecord record) {
+        String event = record.event();
+        return "transfer-in".equals(event) || "transfer-out".equals(event);
     }
 
     private static StoredItem[] normalize(StoredItem[] live, int slots) {
