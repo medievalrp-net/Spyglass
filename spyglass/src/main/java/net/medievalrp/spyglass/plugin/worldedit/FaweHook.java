@@ -31,7 +31,10 @@ final class FaweHook {
         FaweBatchLogger logger = new FaweBatchLogger(
                 recorder, support, source, world.getUID(), world.getName());
         try {
-            holder.addPostProcessor(logger);
+            // A regular processor, NOT addPostProcessor: the logger must see
+            // the (get, set) pair in the transform stage, before the chunk
+            // write consumes the set (FaweBatchLogger.processSet's doc).
+            holder.addProcessor(logger);
             return true;
         } catch (RuntimeException ex) {
             return false;
