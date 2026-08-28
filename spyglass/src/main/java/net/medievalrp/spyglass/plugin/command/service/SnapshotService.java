@@ -133,6 +133,10 @@ public final class SnapshotService {
     private final RecordStore recordStore;
     private final Recorder recorder;
     private final Duration flushTimeout;
+    /** Whether the capture side is running. Player mode is useless without
+     *  it once nothing has been stored, so the command says so outright
+     *  instead of reporting an empty history that looks like a real answer. */
+    private final boolean playerCaptureEnabled;
     private final ServiceSupport support;
     private final SnapshotSessions sessions;
     private final SnapshotTakes takes;
@@ -156,6 +160,7 @@ public final class SnapshotService {
         // knob: same "close the read-your-writes gap before a point-in-time
         // read" need the rollback path already solved (#205).
         this.flushTimeout = config.limits().rollbackFlushTimeout();
+        this.playerCaptureEnabled = config.snapshot().players().enabled();
         this.support = support;
         this.sessions = sessions;
         this.takes = takes;
@@ -228,15 +233,30 @@ public final class SnapshotService {
                 Optional<PlayerSnapshot> found = playerStore.latestAtOrBefore(uuid, parsed.asOf());
                 support.onMainThread(() -> {
                     if (found.isEmpty()) {
+                        // Nothing stored. If capture is off that is the whole
+                        // explanation, and "no snapshot" alone would read as
+                        // "this player has no history" - which is not the same
+                        // thing at all.
+                        if (!playerCaptureEnabled) {
+                            for (Component line : captureDisabledLines()) {
+                                sender.sendMessage(line);
+                            }
+                            return;
+                        }
                         sender.sendMessage(Feedback.error("No snapshot for " + name + " at or before "
                                 + formatInstant(parsed.asOf()) + "."));
                         return;
                     }
                     PlayerSnapshot snapshot = found.get();
+                    // Capture switched off after this was taken: the operator
+                    // is looking at frozen history, so say so rather than let
+                    // it pass for current.
+                    List<String> notes = playerCaptureEnabled ? List.of()
+                            : List.of("Inventory capture is off, so nothing newer than this exists.");
                     SnapshotSession session = new SnapshotSession(
                             UUID.randomUUID(), SnapshotSession.Kind.PLAYER, snapshot.playerName(),
                             parsed.asOf(), snapshot.capturedAt(), snapshot.cause(),
-                            SnapshotSession.Certainty.CERTAIN, List.of(), PLAYER_CONTAINER_ROWS,
+                            SnapshotSession.Certainty.CERTAIN, notes, PLAYER_CONTAINER_ROWS,
                             snapshot.slots());
                     sessions.store(sender, session);
                     openOrList(sender, session);
@@ -518,15 +538,30 @@ public final class SnapshotService {
         }
     }
 
+    /**
+     * What {@code /sg snapshot p:<name>} says when player capture is off and
+     * nothing was ever stored. Names the exact key to flip, and points at
+     * container mode, which needs no setting because it reconstructs from
+     * the deposit/withdraw log. Package-private and pure so the wording is
+     * unit-testable.
+     */
+    static List<Component> captureDisabledLines() {
+        return List.of(
+                Feedback.error("Player inventory snapshots are turned off."),
+                Feedback.bonus("Set snapshot.players.enabled = true in config.conf and restart"
+                        + " to start recording them."),
+                Feedback.bonus("Container snapshots need no setting: look at a container,"
+                        + " or use trg:x,y,z."));
+    }
+
     private static Component header(SnapshotSession session) {
         long elapsedSeconds = Math.max(0L,
                 Instant.now().getEpochSecond() - session.asOf().getEpochSecond());
         String ago = new Duration(elapsedSeconds).compact();
-        Component line = Feedback.info(session.subjectLabel() + " as of " + ago + " ago");
-        if (session.certainty() == SnapshotSession.Certainty.UNCERTAIN) {
-            line = line.append(Component.text(" (uncertain)", NamedTextColor.YELLOW));
-        }
-        return line;
+        // No "(uncertain)" marker: the notes rendered under this header say
+        // what could not be accounted for, in words. A clean reconstruction
+        // has no notes and needs no label.
+        return Feedback.info(session.subjectLabel() + " as of " + ago + " ago");
     }
 
     private static Component slotLine(SnapshotSession session, SnapshotSlot slot, boolean canTake) {

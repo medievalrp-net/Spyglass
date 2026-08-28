@@ -219,9 +219,21 @@ tasks.test {
     // fast; run via `./gradlew :spyglass:ingestBench` or
     // `./gradlew :spyglass:clickhouseBench`.
     useJUnitPlatform {
-        excludeTags("bench", "ch-bench")
+        excludeTags("bench", "ch-bench", "snapshot-bench")
     }
     finalizedBy(tasks.named("jacocoTestReport"))
+}
+
+// Player-snapshot on-disk footprint at server scale (SQLite, no Docker).
+// Answers "what does this cost with N players online" with measured bytes
+// rather than estimates. Not part of `check`; run explicitly.
+tasks.register<Test>("snapshotStorageBench") {
+    description = "Measures the player-snapshot disk footprint at server scale."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("snapshot-bench") }
+    testLogging { showStandardStreams = true }
 }
 
 // Ingest throughput benchmark: v2 AsyncRecorder + MongoRecordStore vs a

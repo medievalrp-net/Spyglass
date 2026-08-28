@@ -165,7 +165,7 @@ final class InvUiSnapshotView implements SnapshotView {
         Window.single()
                 .setViewer(viewer)
                 .setTitle(new AdventureComponentWrapper(
-                        Component.text(session.subjectLabel(), NamedTextColor.GOLD)))
+                        Component.text(session.subjectLabel())))
                 .setGui(gui)
                 .build()
                 .open();
@@ -296,9 +296,10 @@ final class InvUiSnapshotView implements SnapshotView {
                     lore.add(line("Cause: " + humanize(cause), NamedTextColor.DARK_GRAY));
                 }
             } else {
-                boolean certain = session.certainty() == SnapshotSession.Certainty.CERTAIN;
-                lore.add(line(certain ? "CERTAIN" : "UNCERTAIN",
-                        certain ? NamedTextColor.GREEN : NamedTextColor.GOLD));
+                // No confidence label. A reconstruction that reconciled has
+                // nothing to say and says nothing; one that did not lists the
+                // specific reasons below, which is the whole signal. Matches
+                // the chat listing, which never labelled the clean case.
                 for (String note : session.notes()) {
                     lore.add(line(note, NamedTextColor.DARK_GRAY));
                 }
