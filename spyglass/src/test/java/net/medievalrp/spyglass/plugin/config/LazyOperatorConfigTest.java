@@ -271,14 +271,15 @@ class LazyOperatorConfigTest {
 
     @Test
     void snapshotDefaultsWhenTheSectionIsAbsent(@TempDir Path dataFolder) throws Exception {
-        // #341: an upgraded config with no snapshot block still captures -
-        // enabled defaults true, same precedent as worldedit.enabled.
+        // An upgraded config with no snapshot block does NOT start capturing:
+        // this is the only capture on a timer rather than driven by events, so
+        // it stays opt-in and never grows disk on upgrade unasked.
         write(dataFolder, "database {\n  backend = \"sqlite\"\n}\n");
 
         SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
 
-        assertThat(config.snapshot().players().enabled()).isTrue();
-        assertThat(config.snapshot().players().interval().seconds()).isEqualTo(5L * 60L);
+        assertThat(config.snapshot().players().enabled()).isFalse();
+        assertThat(config.snapshot().players().interval().seconds()).isEqualTo(60L);
         assertThat(config.snapshot().players().retention().seconds())
                 .isEqualTo(30L * 24L * 60L * 60L);
     }

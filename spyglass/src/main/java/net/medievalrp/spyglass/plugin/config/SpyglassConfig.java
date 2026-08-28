@@ -323,9 +323,13 @@ public record SpyglassConfig(
      * unit-testable headless, like {@link #parseAnalytics}.
      */
     static Snapshot parseSnapshot(ConfigurationNode root) {
-        boolean enabled = root.node("snapshot", "players", "enabled").getBoolean(true);
+        // Absent section means an operator who never opted in: default OFF,
+        // matching the bundled config. This is the one capture that runs on a
+        // timer rather than reacting to events, so it would otherwise start
+        // consuming disk on upgrade without anyone asking for it.
+        boolean enabled = root.node("snapshot", "players", "enabled").getBoolean(false);
         Duration interval = Duration.parse(
-                root.node("snapshot", "players", "interval").getString("5m"));
+                root.node("snapshot", "players", "interval").getString("1m"));
         Duration retention = parseGlobalRetention(
                 root.node("snapshot", "players", "retention").getString("30d"));
         return new Snapshot(new SnapshotPlayers(enabled, interval, retention));
