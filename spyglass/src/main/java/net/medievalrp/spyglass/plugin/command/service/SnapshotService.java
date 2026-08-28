@@ -220,8 +220,20 @@ public final class SnapshotService {
             try {
                 UUID uuid = viaBukkit != null ? viaBukkit : recordStore.resolvePlayerId(name);
                 if (uuid == null) {
-                    support.onMainThread(() ->
-                            sender.sendMessage(Feedback.error("Unknown player: " + name)));
+                    // With capture off, an unresolvable name is a red herring:
+                    // on a server that never captured, every name fails to
+                    // resolve, and "Unknown player" sends the operator hunting
+                    // for a typo instead of the setting. The setting is the
+                    // real answer, so it wins.
+                    support.onMainThread(() -> {
+                        if (!playerCaptureEnabled) {
+                            for (Component line : captureDisabledLines()) {
+                                sender.sendMessage(line);
+                            }
+                            return;
+                        }
+                        sender.sendMessage(Feedback.error("Unknown player: " + name));
+                    });
                     return;
                 }
                 Optional<PlayerSnapshot> found = playerStore.latestAtOrBefore(uuid, parsed.asOf());
