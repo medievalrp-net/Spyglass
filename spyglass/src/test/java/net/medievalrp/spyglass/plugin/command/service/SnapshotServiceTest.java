@@ -29,8 +29,9 @@ class SnapshotServiceTest {
     @Test
     void historyGapNoteFlipsUncertainAndExplainsTheInference() {
         // t older than the container's entire recorded history used to
-        // reconstruct with full confidence and no note. The wrapper (applied when the existence probe finds nothing
-        // before t) must flag it and say the state is inferred.
+        // reconstruct with full confidence and no note. The wrapper, applied
+        // when the existence probe finds nothing before t, must flag it and
+        // say the state is inferred.
         Reconstruction clean = new Reconstruction(List.of(),
                 net.medievalrp.spyglass.plugin.snapshot.SnapshotSession.Certainty.CERTAIN,
                 List.of(), List.of());
