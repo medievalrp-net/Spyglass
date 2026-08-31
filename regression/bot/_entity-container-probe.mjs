@@ -6,7 +6,9 @@ import net from 'net';
 import { execFileSync } from 'child_process';
 
 const HOST = '127.0.0.1', PORT = 25590, RCON_PORT = 25580, PASS = 'test123';
-const DB = '/private/tmp/claude-502/-Volumes-External-NVME-Documents-GitHub-MedievalRP-Spyglass/70087784-6aef-47af-bc62-bb42bb5beb5d/scratchpad/sgfawe/plugins/Spyglass/spyglass.db';
+// Point SG_DB at the throwaway server's SQLite file.
+const DB = process.env.SG_DB;
+if (!DB) { console.error("set SG_DB=<path to the server's plugins/Spyglass/spyglass.db>"); process.exit(2); }
 const BOT = 'ec' + Date.now().toString(36).slice(-4);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log('[' + new Date().toISOString().slice(11, 19) + ']', ...a);
