@@ -24,7 +24,8 @@ public record SpyglassConfig(
         Metrics metrics,
         Analytics analytics,
         Commands commands,
-        WorldEdit worldedit) {
+        WorldEdit worldedit,
+        Snapshot snapshot) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -42,7 +43,7 @@ public record SpyglassConfig(
      * in a way {@link ConfigMigrator} has to reconcile (a moved or renamed key).
      * A config with an older {@code config-version} is migrated on load.
      */
-    public static final int CONFIG_VERSION = 2;
+    public static final int CONFIG_VERSION = 3;
 
     // v1 -> v2 (v1 = the unversioned format up through release 1.0.9; #311,
     // #307, and #312 all land in one release, so they share one hop): the
@@ -61,6 +62,10 @@ public record SpyglassConfig(
         remap.put("database.collection", "database.mongo.collection");
         remap.put("storage.durability", null);
         remap.put("storage.rolled-audit", null);
+        // v3: hopper transfers became slot-accurate under new event names;
+        // an operator's toggle/retention on the old names carries over.
+        remap.put("events.transfer-out", "events.transfer-withdraw");
+        remap.put("events.transfer-in", "events.transfer-deposit");
         MIGRATION_REMAP = java.util.Collections.unmodifiableMap(remap);
     }
 
@@ -242,7 +247,8 @@ public record SpyglassConfig(
                 // native speed. NOT the same as events.place/break, which
                 // only gate hand place/break - flipping those does nothing
                 // to a WorldEdit op.
-                new WorldEdit(root.node("worldedit", "enabled").getBoolean(true)));
+                new WorldEdit(root.node("worldedit", "enabled").getBoolean(true)),
+                parseSnapshot(root));
     }
 
     /**
@@ -295,6 +301,42 @@ public record SpyglassConfig(
             interval = Duration.parse("5s");
         }
         return new Analytics(enabled, interval);
+    }
+
+    /**
+     * Player-inventory snapshot capture (#341): periodic + event-driven
+     * snapshots of what a player is carrying, independent of the event log -
+     * crafting, consuming, trades, and plugin-given items leave no event
+     * trail a rollback could replay from, so this is the only honest source
+     * for "what was this player carrying at time T". Purely additive; no
+     * {@link #CONFIG_VERSION} bump.
+     *
+     * <p>{@code enabled} defaults to {@code true} - an absent key on an
+     * upgraded install starts capturing rather than silently doing nothing,
+     * matching the {@code worldedit.enabled} precedent. {@code interval} is
+     * the periodic sweep period (default {@code 5m}), parsed like any other
+     * plain duration (e.g. {@code tool.lookback}) - a malformed value hard-
+     * fails config load. {@code retention} is independent of {@code
+     * storage.retention} (default {@code 30d}) and is parsed with {@link
+     * #parseGlobalRetention} so it accepts the same keep-forever tokens
+     * ({@code "0"}/{@code "never"}/{@code "forever"}/{@code "off"}); a
+     * malformed value hard-fails the same way {@code storage.retention} does
+     * - deliberate, since retention drives deletion and guessing a default
+     * risks purging history the operator meant to keep (mirrors {@link
+     * #parseGlobalRetention}'s own javadoc). Static + package-visible so it's
+     * unit-testable headless, like {@link #parseAnalytics}.
+     */
+    static Snapshot parseSnapshot(ConfigurationNode root) {
+        // Absent section means an operator who never opted in: default OFF,
+        // matching the bundled config. This is the one capture that runs on a
+        // timer rather than reacting to events, so it would otherwise start
+        // consuming disk on upgrade without anyone asking for it.
+        boolean enabled = root.node("snapshot", "players", "enabled").getBoolean(false);
+        Duration interval = Duration.parse(
+                root.node("snapshot", "players", "interval").getString("1m"));
+        Duration retention = parseGlobalRetention(
+                root.node("snapshot", "players", "retention").getString("30d"));
+        return new Snapshot(new SnapshotPlayers(enabled, interval, retention));
     }
 
     public boolean enabled(String eventName) {
@@ -598,6 +640,26 @@ public record SpyglassConfig(
      * answers {@code /spyglass stats}.
      */
     public record Analytics(boolean enabled, Duration interval) {
+    }
+
+    /**
+     * Player-inventory snapshot capture (#341). See {@link #parseSnapshot}.
+     * A top-level wrapper (rather than folding {@code players} straight into
+     * {@link SpyglassConfig}) so a future non-player snapshot knob has
+     * somewhere to live without another top-level config key.
+     */
+    public record Snapshot(SnapshotPlayers players) {
+    }
+
+    /**
+     * @param enabled   capture join/quit/death/world-change/periodic-sweep
+     *                  snapshots of player inventories. Defaults to {@code true}.
+     * @param interval  periodic sweep period (default {@code 5m}).
+     * @param retention how long snapshot rows are kept, independent of {@code
+     *                  storage.retention} (default {@code 30d}); accepts the
+     *                  same keep-forever tokens as {@code storage.retention}.
+     */
+    public record SnapshotPlayers(boolean enabled, Duration interval, Duration retention) {
     }
 
     private static ConfigurationNode loadBundledDefaults(JavaPlugin plugin) throws IOException {

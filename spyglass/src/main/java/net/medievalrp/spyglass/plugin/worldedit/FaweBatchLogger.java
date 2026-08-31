@@ -55,14 +55,23 @@ final class FaweBatchLogger implements IBatchProcessor {
         this.worldName = worldName;
     }
 
+    // Logging runs in processSet, the transform stage whose return value FAWE
+    // consumes to write the chunk - the one point where (get, set) are
+    // guaranteed to be a coherent (before, after) pair. postProcessSet fires
+    // after application and races the chunk write on FAWE 2.15.2+: it can see
+    // `get` already holding the NEW blocks with the set consumed (all cells
+    // reserved), which turned every placed block into a spurious
+    // "break -> air" record with no place at all. FAWE may run processSet more
+    // than once per cell per edit; the per-edit dedupe keeps the first
+    // (coherent) pass and drops repeats.
     @Override
     public IChunkSet processSet(IChunk chunk, IChunkGet get, IChunkSet set) {
+        logSet(chunk, get, set);
         return set;
     }
 
     @Override
     public Future<?> postProcessSet(IChunk chunk, IChunkGet get, IChunkSet set) {
-        logSet(chunk, get, set);
         return CompletableFuture.completedFuture(null);
     }
 
@@ -98,7 +107,14 @@ final class FaweBatchLogger implements IBatchProcessor {
                         } catch (RuntimeException ex) {
                             continue;
                         }
-                        if (weAfter == null) {
+                        if (weAfter == null || isReserved(weAfter)) {
+                            // A chunk set covers whole 16x16x16 sections; a
+                            // cell the edit does not touch reads back as the
+                            // __reserved__ sentinel, and BukkitAdapter.adapt
+                            // maps that sentinel to AIR - which forged a
+                            // "break -> air" record for every untouched
+                            // non-air neighbor in the section (the #113
+                            // break over-count).
                             continue;
                         }
                         if (weBefore != null && weBefore.equalsFuzzy(weAfter)) {
@@ -129,6 +145,14 @@ final class FaweBatchLogger implements IBatchProcessor {
     @Override
     public ProcessorScope getScope() {
         return ProcessorScope.READING_BLOCKS;
+    }
+
+    /** FAWE's "cell not part of this edit" sentinel (ordinal 0), which a
+     *  section read hands back for every cell the set does not write. By id
+     *  string because this module compiles against upstream WorldEdit, whose
+     *  BlockTypes has no {@code __RESERVED__} field. */
+    private static boolean isReserved(BlockState state) {
+        return "minecraft:__reserved__".equals(state.getBlockType().getId());
     }
 
     private BlockSnapshot snapshot(BlockState weState, CompoundTag tile) {

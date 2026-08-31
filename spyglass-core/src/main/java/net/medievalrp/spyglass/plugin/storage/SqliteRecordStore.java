@@ -358,8 +358,10 @@ public final class SqliteRecordStore implements RecordStore {
     private static Set<String> rollbackableEventNames() {
         Set<String> names = new HashSet<>();
         for (String name : EventCatalog.eventNames()) {
-            Class<? extends EventRecord> clazz = EventCatalog.recordClassOf(name);
-            if (clazz != null && Rollbackable.class.isAssignableFrom(clazz)) {
+            // Catalog-level, not a bare class check: transfer-withdraw /
+            // transfer-deposit reuse the container record shapes but must
+            // never be replayed by a rollback (#226).
+            if (EventCatalog.isRollbackable(name)) {
                 names.add(name);
             }
         }

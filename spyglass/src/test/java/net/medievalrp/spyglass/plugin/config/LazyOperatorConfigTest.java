@@ -268,4 +268,59 @@ class LazyOperatorConfigTest {
         assertThat(config.enabled("break")).isTrue();
         assertThat(config.pastTense("break")).isEqualTo("break");
     }
+
+    @Test
+    void snapshotDefaultsWhenTheSectionIsAbsent(@TempDir Path dataFolder) throws Exception {
+        // An upgraded config with no snapshot block does NOT start capturing:
+        // this is the only capture on a timer rather than driven by events, so
+        // it stays opt-in and never grows disk on upgrade unasked.
+        write(dataFolder, "database {\n  backend = \"sqlite\"\n}\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.snapshot().players().enabled()).isFalse();
+        assertThat(config.snapshot().players().interval().seconds()).isEqualTo(60L);
+        assertThat(config.snapshot().players().retention().seconds())
+                .isEqualTo(30L * 24L * 60L * 60L);
+    }
+
+    @Test
+    void snapshotReadsExplicitOverrides(@TempDir Path dataFolder) throws Exception {
+        write(dataFolder, "snapshot {\n"
+                + "  players {\n"
+                + "    enabled = false\n"
+                + "    interval = \"10m\"\n"
+                + "    retention = \"7d\"\n"
+                + "  }\n"
+                + "}\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.snapshot().players().enabled()).isFalse();
+        assertThat(config.snapshot().players().interval().seconds()).isEqualTo(10L * 60L);
+        assertThat(config.snapshot().players().retention().seconds())
+                .isEqualTo(7L * 24L * 60L * 60L);
+    }
+
+    @Test
+    void snapshotRetentionUnparseableHardFailsLikeStorageRetention(@TempDir Path dataFolder)
+            throws Exception {
+        // Deliberate hard-fail, same as storage.retention: snapshot.players.retention
+        // drives deletion of player-inventory history, so a typo must not silently
+        // fall back to a guessed default.
+        write(dataFolder, "snapshot { players { retention = \"banana\" } }\n");
+
+        assertThatThrownBy(() -> SpyglassConfig.load(pluginIn(dataFolder)))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void snapshotRetentionAcceptsKeepForeverTokens(@TempDir Path dataFolder) throws Exception {
+        write(dataFolder, "snapshot { players { retention = \"never\" } }\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.snapshot().players().retention().seconds())
+                .isEqualTo(net.medievalrp.spyglass.plugin.storage.RetentionPolicy.NEVER_SECONDS);
+    }
 }

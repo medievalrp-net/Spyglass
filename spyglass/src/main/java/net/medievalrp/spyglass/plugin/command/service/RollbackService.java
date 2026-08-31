@@ -879,10 +879,9 @@ public final class RollbackService {
     private static java.util.Set<String> rollbackableEventNames() {
         java.util.Set<String> names = new java.util.HashSet<>();
         for (String name : net.medievalrp.spyglass.api.event.EventCatalog.eventNames()) {
-            Class<? extends net.medievalrp.spyglass.api.event.EventRecord> clazz =
-                    net.medievalrp.spyglass.api.event.EventCatalog.recordClassOf(name);
-            if (clazz != null && net.medievalrp.spyglass.api.rollback.Rollbackable.class
-                    .isAssignableFrom(clazz)) {
+            // Catalog-level check: transfer-withdraw / transfer-deposit reuse
+            // rollbackable record shapes but must never be replayed (#226).
+            if (net.medievalrp.spyglass.api.event.EventCatalog.isRollbackable(name)) {
                 names.add(name);
             }
         }
