@@ -9,10 +9,8 @@ import net.medievalrp.spyglass.api.util.BlockLocation;
 import net.medievalrp.spyglass.plugin.listener.RecordingSupport;
 import net.medievalrp.spyglass.plugin.listener.RecordingListener;
 import net.medievalrp.spyglass.plugin.pipeline.Recorder;
-import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
-import org.bukkit.block.Container;
 import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -46,15 +44,18 @@ public final class ContainerDragListener implements RecordingListener {
         }
         Inventory top = event.getView().getTopInventory();
         InventoryHolder holder = top.getHolder();
-        if (!(holder instanceof Container container)) {
-            return;
-        }
         if (holder instanceof ShulkerBox) {
             return;
         }
+        // Any trackable holder - block containers, minecarts, and entity-held
+        // inventories (horse family, chest boats; #347) alike.
+        ContainerHolders.Target target = ContainerHolders.resolve(holder);
+        if (target == null) {
+            return;
+        }
         int topSize = top.getSize();
-        BlockLocation location = BlockLocations.fromLocation(container.getBlock().getLocation());
-        String containerType = container.getBlock().getType().name();
+        BlockLocation location = target.location();
+        String containerType = target.type();
         Instant occurred = support.now();
         for (Map.Entry<Integer, ItemStack> entry : event.getNewItems().entrySet()) {
             int rawSlot = entry.getKey();

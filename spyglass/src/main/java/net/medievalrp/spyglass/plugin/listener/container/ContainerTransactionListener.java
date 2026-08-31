@@ -16,16 +16,11 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.plugin.util.InventoryActions;
 import net.medievalrp.spyglass.plugin.util.InventoryActions.Direction;
 import net.medievalrp.spyglass.api.capture.ItemSerialization;
-import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Chest;
-import org.bukkit.block.Container;
 import org.bukkit.block.DoubleChest;
 import org.bukkit.block.ShulkerBox;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.minecart.HopperMinecart;
-import org.bukkit.entity.minecart.StorageMinecart;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.inventory.InventoryAction;
@@ -109,7 +104,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (resolved == null) {
             return;
         }
-        ContainerTarget containerTarget = resolved.target();
+        ContainerHolders.Target containerTarget = resolved.target();
         // Block-local slot: what the single-block rollback path expects.
         int slot = resolved.slot();
         // Reads use the RAW slot (the combined inventory the player clicked);
@@ -210,10 +205,11 @@ public final class ContainerTransactionListener implements RecordingListener {
         if (!clicked.equals(bottom)) {
             return;
         }
-        // Trackable destination only: a Container/minecart, or a DoubleChest
-        // (which resolveTarget alone drops but resolveSlotTarget handles
-        // per-slot). Anvils, brewing stands etc. bail before the snapshot.
-        if (!(topHolder instanceof DoubleChest) && resolveTarget(topHolder) == null) {
+        // Trackable destination only: anything ContainerHolders resolves, or
+        // a DoubleChest (which the resolver alone drops but resolveSlotTarget
+        // handles per-slot). Anvils, brewing stands etc. bail before the
+        // snapshot.
+        if (!(topHolder instanceof DoubleChest) && ContainerHolders.resolve(topHolder) == null) {
             return;
         }
         // Shift-click from player inventory to container -> deposit. The
@@ -261,7 +257,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         });
     }
 
-    private void handleHotbarSwap(InventoryClickEvent event, ContainerTarget containerTarget, Player player,
+    private void handleHotbarSwap(InventoryClickEvent event, ContainerHolders.Target containerTarget, Player player,
                                   int slot, ItemStack slotItem, Instant occurred) {
         int hotbarButton = event.getHotbarButton();
         if (hotbarButton < 0) {
@@ -291,7 +287,7 @@ public final class ContainerTransactionListener implements RecordingListener {
         }
     }
 
-    private void handleSwap(ContainerTarget containerTarget, Player player, int slot,
+    private void handleSwap(ContainerHolders.Target containerTarget, Player player, int slot,
                             ItemStack slotItem, ItemStack cursor, Instant occurred) {
         BlockLocation location = containerTarget.location();
         String containerType = containerTarget.type();
@@ -362,14 +358,14 @@ public final class ContainerTransactionListener implements RecordingListener {
      *
      * <p>Double chests are the reason this exists: their holder is a
      * {@link DoubleChest} (which does <em>not</em> implement
-     * {@link Container}, so {@link #resolveTarget} alone drops them), and
+     * {@code Container}, so {@link ContainerHolders#resolve} alone drops them), and
      * they present one 54-slot inventory spanning two blocks. The clicked
      * slot is mapped back to the half it belongs to and re-based into that
      * half's 0-26 range so the recorded {@code (location, slot)} round-trips
      * through the single-block rollback path. A slot {@code < 0} (slotless
      * deposit) pins the left half.
      *
-     * <p>Every other holder delegates to {@link #resolveTarget} with the
+     * <p>Every other holder delegates to {@link ContainerHolders#resolve} with the
      * slot unchanged, so single chests, barrels and minecarts behave exactly
      * as before.
      */
@@ -382,52 +378,19 @@ public final class ContainerTransactionListener implements RecordingListener {
             int leftSize = left.getBlockInventory().getSize();
             Chest half = slot >= leftSize ? right : left;
             int localSlot = slot >= leftSize ? slot - leftSize : slot;
-            ContainerTarget target = new ContainerTarget(
+            ContainerHolders.Target target = new ContainerHolders.Target(
                     BlockLocations.fromLocation(half.getBlock().getLocation()),
                     half.getBlock().getType().name());
             return new SlotTarget(target, localSlot);
         }
-        ContainerTarget base = resolveTarget(holder);
+        ContainerHolders.Target base = ContainerHolders.resolve(holder);
         return base == null ? null : new SlotTarget(base, slot);
-    }
-
-    /**
-     * Resolve any inventory holder we care about into a uniform
-     * (BlockLocation, type-name) pair so the deposit / withdraw flow
-     * doesn't have to special-case minecart inventories vs block
-     * containers all over the place. Returns null for holders we
-     * don't track (player inventory, anvils, brewing stands, etc.).
-     */
-    private static @Nullable ContainerTarget resolveTarget(@Nullable InventoryHolder holder) {
-        if (holder instanceof Container blockContainer) {
-            Location loc = blockContainer.getBlock().getLocation();
-            return new ContainerTarget(BlockLocations.fromLocation(loc),
-                    blockContainer.getBlock().getType().name());
-        }
-        // Storage / hopper minecarts use the entity's current location
-        // — they're moving inventories, so the recorded location is a
-        // snapshot at deposit/withdraw time.
-        if (holder instanceof StorageMinecart cart) {
-            return entityTarget(cart);
-        }
-        if (holder instanceof HopperMinecart cart) {
-            return entityTarget(cart);
-        }
-        return null;
-    }
-
-    private static ContainerTarget entityTarget(Entity entity) {
-        return new ContainerTarget(
-                BlockLocations.fromLocation(entity.getLocation()),
-                entity.getType().name());
-    }
-
-    private record ContainerTarget(BlockLocation location, String type) {
     }
 
     /** A resolved container target paired with the block-local slot the
      *  click maps to (identical to the raw slot for everything but double
-     *  chests). */
-    private record SlotTarget(ContainerTarget target, int slot) {
+     *  chests). Holder resolution itself lives in {@link ContainerHolders},
+     *  shared with the drag and open/close listeners. */
+    private record SlotTarget(ContainerHolders.Target target, int slot) {
     }
 }
