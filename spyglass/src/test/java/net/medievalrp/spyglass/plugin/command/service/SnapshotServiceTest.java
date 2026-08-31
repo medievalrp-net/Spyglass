@@ -24,6 +24,45 @@ class SnapshotServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
+    // ---- evidence-gap wrappers ------------------------------------------
+
+    @Test
+    void historyGapNoteFlipsUncertainAndExplainsTheInference() {
+        // t older than the container's entire recorded history used to
+        // reconstruct with full confidence and no note. The wrapper, applied
+        // when the existence probe finds nothing before t, must flag it and
+        // say the state is inferred.
+        Reconstruction clean = new Reconstruction(List.of(),
+                net.medievalrp.spyglass.plugin.snapshot.SnapshotSession.Certainty.CERTAIN,
+                List.of(), List.of());
+
+        Reconstruction flagged = SnapshotService.noteHistoryGap(clean);
+
+        assertThat(flagged.certainty())
+                .isEqualTo(net.medievalrp.spyglass.plugin.snapshot.SnapshotSession.Certainty.UNCERTAIN);
+        assertThat(flagged.notes()).anySatisfy(note -> {
+            assertThat(note).contains("older than this container's recorded history");
+            assertThat(note).contains("inferred");
+        });
+    }
+
+    @Test
+    void truncationNoteFiresExactlyAtTheQueryCap() {
+        Reconstruction clean = new Reconstruction(List.of(),
+                net.medievalrp.spyglass.plugin.snapshot.SnapshotSession.Certainty.CERTAIN,
+                List.of(), List.of());
+
+        assertThat(SnapshotService.noteTruncation(clean, 49_999).notes()).isEmpty();
+
+        Reconstruction capped = SnapshotService.noteTruncation(clean, 50_000);
+        assertThat(capped.certainty())
+                .isEqualTo(net.medievalrp.spyglass.plugin.snapshot.SnapshotSession.Certainty.UNCERTAIN);
+        assertThat(capped.notes()).anySatisfy(note -> {
+            assertThat(note).contains("50000-record query cap");
+            assertThat(note).contains("oldest");
+        });
+    }
+
     // ---- capture-disabled feedback --------------------------------------
 
     @Test

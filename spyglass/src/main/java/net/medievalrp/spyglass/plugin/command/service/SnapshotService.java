@@ -123,6 +123,7 @@ public final class SnapshotService {
      *  containing them as UNCERTAIN. */
     private static final List<String> CONTAINER_EVENTS =
             List.of("deposit", "withdraw", "shulker-deposit", "shulker-withdraw", "crafter",
+                    "bookshelf-insert", "bookshelf-remove", "pot-insert", "pot-remove",
                     "transfer-deposit", "transfer-withdraw",
                     "transfer-in", "transfer-out");
 
@@ -309,9 +310,22 @@ public final class SnapshotService {
             try {
                 recorder.flush(flushTimeout);
                 recordStore.flushPendingWrites();
-                Reconstruction result = reconstructTarget(target, t);
+                ReconOutcome outcome = reconstructTarget(target, t);
                 support.onMainThread(() -> {
-                    SnapshotSession session = buildContainerSession(target, t, result);
+                    // trg: on a block that is not a container, with zero
+                    // container history behind it, is a typo'd coordinate.
+                    // The old path built an empty 54-slot "destroyed
+                    // container" session out of it (and #351 then crashed
+                    // the GUI open); a plain answer serves better, and the
+                    // sender's previous session stays live.
+                    if (!target.primary().containerPresent()
+                            && outcome.recordCount() == 0
+                            && outcome.reconstruction().slots().isEmpty()) {
+                        sender.sendMessage(Feedback.error("Not a container, and no container"
+                                + " history at " + target.label() + "."));
+                        return;
+                    }
+                    SnapshotSession session = buildContainerSession(target, t, outcome.reconstruction());
                     sessions.store(sender, session);
                     openOrList(sender, session);
                 });
@@ -332,6 +346,23 @@ public final class SnapshotService {
             World world = resolveTrgWorld(sender, parsed.worldName());
             if (world == null) {
                 return null; // error already sent
+            }
+            // getBlockAt on virgin coordinates GENERATES the chunk, on the
+            // main thread, as a side effect of what reads as a lookup - a
+            // typo'd trg: on a terrain world stalls the server and litters
+            // region files (even 30M blocks out, past the border). Neither
+            // place can hold container history, so refuse before touching
+            // the world.
+            if (!world.getWorldBorder().isInside(
+                    new org.bukkit.Location(world, parsed.x(), parsed.y(), parsed.z()))) {
+                sender.sendMessage(Feedback.error("trg: is outside the world border."));
+                return null;
+            }
+            if (!world.isChunkGenerated(parsed.x() >> 4, parsed.z() >> 4)) {
+                sender.sendMessage(Feedback.error("No container has ever existed at "
+                        + parsed.x() + "," + parsed.y() + "," + parsed.z()
+                        + " - that chunk has never been generated."));
+                return null;
             }
             block = world.getBlockAt(parsed.x(), parsed.y(), parsed.z());
         } else {
@@ -393,6 +424,26 @@ public final class SnapshotService {
             return new ResolvedContainer(buildHalf(block, container.getInventory(), state.getType().name()),
                     null, selfMutating, label);
         }
+        // Inventory-bearing tile states that do NOT implement Container in
+        // the Paper API: without these branches a full chiseled bookshelf
+        // read as "Not a container" (look-at) or, worse, "container no
+        // longer present" (trg:). Lectern interactions are not logged, so
+        // its history reconstructs from nothing, but viewing works.
+        if (state instanceof org.bukkit.block.ChiseledBookshelf bookshelf) {
+            return new ResolvedContainer(
+                    buildHalf(block, bookshelf.getInventory(), state.getType().name()),
+                    null, selfMutating, label);
+        }
+        if (state instanceof org.bukkit.block.DecoratedPot pot) {
+            return new ResolvedContainer(
+                    buildHalf(block, pot.getInventory(), state.getType().name()),
+                    null, selfMutating, label);
+        }
+        if (state instanceof org.bukkit.block.Lectern lectern) {
+            return new ResolvedContainer(
+                    buildHalf(block, lectern.getInventory(), state.getType().name()),
+                    null, selfMutating, label);
+        }
         if (state instanceof Campfire campfire) {
             int size = campfire.getSize();
             ItemStack[] contents = new ItemStack[size];
@@ -434,24 +485,91 @@ public final class SnapshotService {
     }
 
     /** OFF MAIN: query + reconstruct one or both halves. */
-    private Reconstruction reconstructTarget(ResolvedContainer target, Instant t) {
-        Reconstruction primary = reconstructHalf(target.primary(), t, target.selfMutating());
+    /** A reconstruction plus how many records fed it, so the caller can
+     *  tell "no container and no history" apart from a real empty result. */
+    record ReconOutcome(Reconstruction reconstruction, int recordCount) {
+    }
+
+    private ReconOutcome reconstructTarget(ResolvedContainer target, Instant t) {
+        ReconOutcome primary = reconstructHalf(target.primary(), t, target.selfMutating());
         if (!target.doubleChest()) {
             return primary;
         }
-        Reconstruction secondary = reconstructHalf(target.secondary(), t, target.selfMutating());
-        return mergeHalves(primary, target.primary().size(), secondary);
+        ReconOutcome secondary = reconstructHalf(target.secondary(), t, target.selfMutating());
+        return new ReconOutcome(
+                mergeHalves(primary.reconstruction(), target.primary().size(),
+                        secondary.reconstruction()),
+                primary.recordCount() + secondary.recordCount());
     }
 
-    private Reconstruction reconstructHalf(Half half, Instant t, boolean selfMutating) {
+    private ReconOutcome reconstructHalf(Half half, Instant t, boolean selfMutating) {
         QueryRequest request = buildRequest(half.location(), t);
         QueryResult queried = recordStore.query(request);
         StoredItem[] storedLive = new StoredItem[half.liveContents().length];
         for (int i = 0; i < storedLive.length; i++) {
             storedLive[i] = ItemSerialization.storedItem(i, half.liveContents()[i]);
         }
-        return SnapshotReconstructor.reconstruct(queried.records(), storedLive, half.size(), t,
+        Reconstruction result = SnapshotReconstructor.reconstruct(
+                queried.records(), storedLive, half.size(), t,
                 half.containerPresent(), selfMutating);
+        result = noteTruncation(result, queried.records().size());
+        // The rewind carries the earliest in-window record's before-state
+        // back to T. That is evidence-backed only if the container HAS
+        // history before T (the state at T is then pinned by log
+        // continuity); if the window's records are the first this container
+        // ever produced, everything before them is inference. One indexed
+        // existence probe tells the two apart.
+        if (!queried.records().isEmpty() && !anyRecordBefore(half.location(), t)) {
+            result = noteHistoryGap(result);
+        }
+        return new ReconOutcome(result, queried.records().size());
+    }
+
+    /** Whether any container-family record for this location precedes {@code t}. */
+    private boolean anyRecordBefore(BlockLocation location, Instant t) {
+        List<QueryPredicate> predicates = List.of(
+                new QueryPredicate.Eq("location.worldId", location.worldId()),
+                new QueryPredicate.Range("location.x", location.x(), location.x()),
+                new QueryPredicate.Range("location.y", location.y(), location.y()),
+                new QueryPredicate.Range("location.z", location.z(), location.z()),
+                new QueryPredicate.Range("occurred", Instant.EPOCH, t),
+                new QueryPredicate.In("event", CONTAINER_EVENTS));
+        QueryRequest probe = new QueryRequest(predicates, Sort.NEWEST_FIRST, 1,
+                EnumSet.noneOf(Flag.class), false);
+        return !recordStore.query(probe).records().isEmpty();
+    }
+
+    /**
+     * The asked instant predates this container's entire recorded history:
+     * what the rewind shows for T is the earliest record's before-state
+     * carried backwards - often true (an untouched chest really did hold
+     * it), but inference, not evidence. Package-private and pure so the
+     * wording is unit-testable.
+     */
+    static Reconstruction noteHistoryGap(Reconstruction result) {
+        List<String> notes = new ArrayList<>(result.notes());
+        notes.add("the asked instant is older than this container's recorded history;"
+                + " the state shown is inferred from the earliest record");
+        return new Reconstruction(result.slots(), SnapshotSession.Certainty.UNCERTAIN,
+                notes, result.mismatches());
+    }
+
+    /**
+     * A window that hit the {@link #MAX_CONTAINER_RECORDS} cap dropped its
+     * OLDEST records, so the rewind may not have reached T at all - the same
+     * silent-evidence-gap failure as an uncovered window, triggered by
+     * volume. Package-private and pure so the wrapping is unit-testable.
+     */
+    static Reconstruction noteTruncation(Reconstruction result, int recordCount) {
+        if (recordCount < MAX_CONTAINER_RECORDS) {
+            return result;
+        }
+        List<String> notes = new ArrayList<>(result.notes());
+        notes.add("history hit the " + MAX_CONTAINER_RECORDS + "-record query cap, so the"
+                + " oldest changes in the window were not applied; the result may not"
+                + " reach the asked instant");
+        return new Reconstruction(result.slots(), SnapshotSession.Certainty.UNCERTAIN,
+                notes, result.mismatches());
     }
 
     private static QueryRequest buildRequest(BlockLocation location, Instant t) {
@@ -527,8 +645,16 @@ public final class SnapshotService {
 
     private void openOrList(CommandSender sender, SnapshotSession session) {
         if (view != null && sender instanceof Player player) {
-            view.open(player, session);
-            return;
+            try {
+                view.open(player, session);
+                return;
+            } catch (RuntimeException ex) {
+                // A GUI that cannot be built must never eat the result: the
+                // #351 size crash left players with no window and no message.
+                // The text listing carries everything the window would have.
+                logger.warning("Spyglass snapshot GUI failed for " + session.subjectLabel()
+                        + "; falling back to the text listing: " + ex);
+            }
         }
         renderListing(sender, session);
     }
@@ -537,6 +663,15 @@ public final class SnapshotService {
 
     private void renderListing(CommandSender sender, SnapshotSession session) {
         sender.sendMessage(header(session));
+        // A player snapshot is only as fresh as its capture; the GUI's info
+        // book already shows when that was, and the text surface is the one
+        // an operator uses from console - it needs the same number.
+        if (session.kind() == SnapshotSession.Kind.PLAYER && session.capturedAt() != null) {
+            String cause = session.cause();
+            sender.sendMessage(Feedback.bonus("captured " + formatInstant(session.capturedAt())
+                    + (cause == null || cause.isBlank()
+                            ? "" : " (" + cause.replace('-', ' ').replace('_', ' ') + ")")));
+        }
         for (String note : session.notes()) {
             sender.sendMessage(Feedback.bonus("- " + note));
         }

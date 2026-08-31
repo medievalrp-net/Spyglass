@@ -118,6 +118,14 @@ public final class SnapshotReconstructor {
         int slots = Math.max(0, size);
         StoredItem[] live = normalize(liveContents, slots);
 
+        // The least precise store keeps `occurred` at whole seconds, and the
+        // SQL window's inclusive lower bound already admits every record from
+        // t's own second. Filtering here at millisecond precision would
+        // silently re-exclude those boundary records (their true sub-second
+        // timing is unrecoverable), so this filter compares at the same
+        // second granularity the query used.
+        Instant cutoff = t == null ? null : t.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+
         List<SlotOp> ops = new ArrayList<>();
         boolean legacy = false;     // any slot < 0 row (pre-#268 per-slot logging)
         boolean outOfRange = false; // a record slot beyond the current size (shape changed)
@@ -132,7 +140,7 @@ public final class SnapshotReconstructor {
             // the replay check cannot catch it (zero slot ops means candidate,
             // replay, and live are trivially identical).
             if (isTransfer(record)) {
-                if (t == null || !record.occurred().isBefore(t)) {
+                if (cutoff == null || !record.occurred().isBefore(cutoff)) {
                     transfers = true;
                 }
                 continue;
@@ -141,7 +149,7 @@ public final class SnapshotReconstructor {
             if (op == null) {
                 continue;
             }
-            if (t != null && op.occurred().isBefore(t)) {
+            if (cutoff != null && op.occurred().isBefore(cutoff)) {
                 continue;
             }
             if (op.slot() < 0) {
@@ -179,8 +187,12 @@ public final class SnapshotReconstructor {
                     mismatches.add(new Reconstruction.Mismatch(
                             op.slot(), Reconstruction.Mismatch.Kind.REPLAY_STEP,
                             label(op.before()), label(replay[op.slot()])));
-                    notes.add("slot " + op.slot() + ": a record expected " + label(op.before())
-                            + " but the chain had " + label(replay[op.slot()])
+                    notes.add("slot " + op.slot() + ": "
+                            + (label(op.before()).equals(label(replay[op.slot()]))
+                                    ? "a record and the chain both hold " + label(op.before())
+                                            + " but the stacks differ in amount or data"
+                                    : "a record expected " + label(op.before())
+                                            + " but the chain had " + label(replay[op.slot()]))
                             + " (record out of order or tampered)");
                 }
                 replay[op.slot()] = op.after();
@@ -190,8 +202,12 @@ public final class SnapshotReconstructor {
                     mismatches.add(new Reconstruction.Mismatch(
                             i, Reconstruction.Mismatch.Kind.END_STATE,
                             label(replay[i]), label(live[i])));
-                    notes.add("slot " + i + ": live " + label(live[i])
-                            + " does not match the reconstructed " + label(replay[i])
+                    notes.add("slot " + i + ": "
+                            + (label(live[i]).equals(label(replay[i]))
+                                    ? "live and reconstructed both hold " + label(live[i])
+                                            + " but the stacks differ in amount or data"
+                                    : "live " + label(live[i])
+                                            + " does not match the reconstructed " + label(replay[i]))
                             + " (change not in the log)");
                 }
             }
@@ -217,7 +233,6 @@ public final class SnapshotReconstructor {
             notes.add("hopper/dropper transfers touched this container in the window; "
                     + "they are not slot-tracked, so the reconstruction may be off");
         }
-
         boolean uncertain = legacy || outOfRange || !containerPresent || selfMutating
                 || transfers || !mismatches.isEmpty();
         SnapshotSession.Certainty certainty = uncertain
@@ -269,6 +284,11 @@ public final class SnapshotReconstructor {
         }
         return Objects.equals(a.data(), b.data());
     }
+
+    // A count-only difference cannot show the numbers: the pure reconstructor
+    // never decodes blobs (see COUNT_IN_BLOB), so when materials match the
+    // notes above say the stacks differ instead of the self-contradicting
+    // "APPLE does not match APPLE".
 
     private static String label(StoredItem item) {
         if (isEmpty(item)) {
