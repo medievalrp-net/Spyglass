@@ -24,6 +24,23 @@ class SnapshotServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
+    // ---- capture-disabled feedback --------------------------------------
+
+    @Test
+    void captureDisabledMessageNamesTheKeyAndKeepsContainerModeOpen() {
+        String out = SnapshotService.captureDisabledLines().stream()
+                .map(c -> net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                        .plainText().serialize(c))
+                .collect(java.util.stream.Collectors.joining(" | "));
+        // An operator has to be able to act on this without reading the source.
+        assertThat(out).contains("snapshot.players.enabled");
+        assertThat(out).contains("restart");
+        // Container snapshots do not depend on the setting; saying so stops a
+        // "snapshots are off" message reading as "no snapshots at all".
+        assertThat(out).containsIgnoringCase("container");
+        assertThat(out).contains("trg:");
+    }
+
     // ---- parse(): required t: -------------------------------------------
 
     @Test

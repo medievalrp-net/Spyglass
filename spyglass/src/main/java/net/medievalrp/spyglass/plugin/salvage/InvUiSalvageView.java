@@ -118,7 +118,7 @@ final class InvUiSalvageView implements SalvageView {
             content.add(new RollbackItem(player, group));
         }
         openWindow(player, STRUCTURE_ROOT, content,
-                Component.text("Rollback Salvage", NamedTextColor.GOLD));
+                Component.text("Rollback Salvage"));
     }
 
     private void openChests(Player player, UUID rollbackId) {
@@ -150,8 +150,7 @@ final class InvUiSalvageView implements SalvageView {
             content.add(new ChestItem(player, rollbackId, snap));
         }
         openWindow(player, STRUCTURE_NESTED, content,
-                Component.text(visible.size() + " container(s) - by " + visible.get(0).operatorName(),
-                        NamedTextColor.GOLD),
+                Component.text(visible.size() + " container(s) - by " + visible.get(0).operatorName()),
                 () -> openRollbacks(player));
     }
 
@@ -174,7 +173,7 @@ final class InvUiSalvageView implements SalvageView {
             }
         }
         openWindow(player, STRUCTURE_NESTED, content,
-                Component.text("Salvage " + SalvageIcons.shortId(snap.id()), NamedTextColor.GOLD),
+                Component.text("Salvage " + SalvageIcons.shortId(snap.id())),
                 () -> openChests(player, rollbackId));
     }
 
