@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import net.medievalrp.spyglass.api.rollback.Rollbackable;
 
 /**
  * Single source of truth for event-name -> record-type mapping. The plugin's
@@ -56,12 +57,19 @@ public final class EventCatalog {
         m.put("pickup", ItemPickupRecord.class);
         m.put("clone", ItemPickupRecord.class);
         // Automated container-to-container movement by a hopper / dropper /
-        // dispenser (InventoryMoveItemEvent, #226). Informational only, so it
-        // reuses the item drop/pickup record shapes - both storage backends
-        // already persist those, no codec/schema change. Both endpoints are
-        // logged so inspecting either container surfaces the flow: the source
-        // loses items (transfer-out) and the destination gains them
-        // (transfer-in).
+        // dispenser (InventoryMoveItemEvent). Slot-accurate since #354: the
+        // source loses items (transfer-withdraw) and the destination gains
+        // them (transfer-deposit), each carrying the slot's exact (before,
+        // after) state pair so a container snapshot can replay hopper traffic
+        // instead of flagging it uncertain. Reuses the container record
+        // shapes - no codec/schema change - but is deliberately NOT
+        // rollbackable (NON_ROLLBACKABLE below): an area rollback must not
+        // try to reverse thousands of hopper ticks (#226).
+        m.put("transfer-withdraw", ContainerWithdrawRecord.class);
+        m.put("transfer-deposit", ContainerDepositRecord.class);
+        // The pre-#354 lean transfer shapes: coalesced, no slot state. No
+        // longer emitted, kept so historical rows still decode; a container
+        // snapshot cannot replay them and flags the window uncertain instead.
         m.put("transfer-out", ItemDropRecord.class);
         m.put("transfer-in", ItemPickupRecord.class);
         // Bucket-placed / bucket-picked-up fluid (#228). A poured water/lava/
@@ -128,7 +136,29 @@ public final class EventCatalog {
         TYPES = Map.copyOf(m);
     }
 
+    /**
+     * Event names whose record class is technically rollbackable but which a
+     * rollback must never replay: automated hopper/dropper flow, where
+     * reversing thousands of per-tick moves inside an area rollback is
+     * exactly what #226 ruled out. Consulted by {@link #isRollbackable};
+     * the ClickHouse store's literal SQL filter mirrors this by omission.
+     */
+    private static final Set<String> NON_ROLLBACKABLE =
+            Set.of("transfer-withdraw", "transfer-deposit");
+
     private EventCatalog() {
+    }
+
+    /**
+     * Whether records under this event name participate in rollback/restore:
+     * the record class implements {@link Rollbackable} and the name is not
+     * explicitly excluded (see {@link #NON_ROLLBACKABLE}).
+     */
+    public static boolean isRollbackable(String eventName) {
+        Class<? extends EventRecord> clazz = recordClassOf(eventName);
+        return clazz != null
+                && Rollbackable.class.isAssignableFrom(clazz)
+                && !NON_ROLLBACKABLE.contains(eventName == null ? "" : eventName.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** The full name -> record class map. */

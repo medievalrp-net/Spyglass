@@ -88,7 +88,6 @@ import net.medievalrp.spyglass.plugin.listener.item.CreativeCloneListener;
 import net.medievalrp.spyglass.plugin.listener.item.HopperTransferListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemDropListener;
 import net.medievalrp.spyglass.plugin.listener.item.ItemPickupListener;
-import net.medievalrp.spyglass.plugin.listener.item.TransferDedup;
 import net.medievalrp.spyglass.plugin.listener.modern.BookshelfListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BrushListener;
 import net.medievalrp.spyglass.plugin.listener.modern.BundleTransactionListener;
@@ -395,7 +394,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         // #226: shared between the hopper-transfer listener and the purge timer
         // below. Collapses repeating automated hopper flow so a farm line does
         // not flood the store; holds no Bukkit state.
-        TransferDedup transferDedup = new TransferDedup();
 
         // Every recording listener in one list. `events()` declares the event
         // names each emits; we register with Bukkit only when at least one is
@@ -434,7 +432,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new ItemDropListener(recorder, support),
                 new ItemPickupListener(recorder, support, deferredSerializer),
                 new HopperTransferListener(recorder, support, deferredSerializer,
-                        enabledEvents, transferDedup),
+                        task -> getServer().getScheduler().runTask(this, task),
+                        enabledEvents),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support, enabledEvents, deferredSerializer),
@@ -842,7 +841,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         this.fallingBlockPurgeTask = getServer().getScheduler()
                 .runTaskTimerAsynchronously(this, () -> {
                     FallingBlockTracker.purgeExpired();
-                    transferDedup.purgeExpired();
                 }, PURGE_PERIOD_TICKS, PURGE_PERIOD_TICKS);
 
         // #168: periodic ingest analytics report (off the main thread; only
