@@ -5,6 +5,10 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.medievalrp.spyglass.api.SpyglassApi;
 import net.medievalrp.spyglass.plugin.command.render.Feedback;
 import net.medievalrp.spyglass.plugin.command.service.HelpService;
@@ -119,6 +123,10 @@ public final class SpyglassCommands {
     private static final List<String> INVENTORY_ALIASES = List.of("inventory", "inv", "salvage");
     private static final List<String> SNAPSHOT_ALIASES = List.of("snapshot", "snap");
     private static final List<String> VERSION_ALIASES = List.of("version", "ver");
+
+    /** Support Discord shown by /sg version - the invite the README publishes. */
+    private static final String SUPPORT_INVITE = "discord.gg/XkpVHcHvH";
+    private static final String SUPPORT_URL = "https://" + SUPPORT_INVITE;
     private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 
     public CommandManager<CommandSender> register() {
@@ -347,6 +355,25 @@ public final class SpyglassCommands {
         String by = authors.isEmpty() ? "" : "by " + String.join(", ", authors) + ", ";
         return List.of(
                 Feedback.success("Spyglass v" + version),
-                Feedback.bonus(by + "on Paper " + serverVersion));
+                Feedback.bonus(by + "on Paper " + serverVersion),
+                supportLine());
+    }
+
+    /**
+     * The support Discord, same invite the README publishes. Rendered as the
+     * bare host + code rather than the full URL so the line stays short in
+     * chat, with the real link on the click event; a console sender cannot
+     * click but still reads the address.
+     */
+    private static Component supportLine() {
+        return Component.text()
+                .append(Component.text("Support: ", NamedTextColor.GRAY))
+                .append(Component.text(SUPPORT_INVITE, NamedTextColor.AQUA)
+                        .decorate(TextDecoration.UNDERLINED)
+                        .clickEvent(ClickEvent.openUrl(SUPPORT_URL))
+                        .hoverEvent(HoverEvent.showText(
+                                Component.text("Click to open the support Discord",
+                                        NamedTextColor.GRAY))))
+                .asComponent();
     }
 }

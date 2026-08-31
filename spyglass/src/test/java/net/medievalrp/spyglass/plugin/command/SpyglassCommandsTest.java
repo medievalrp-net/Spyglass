@@ -10,6 +10,19 @@ import org.junit.jupiter.api.Test;
 
 class SpyglassCommandsTest {
 
+    /** Every openUrl target in a component tree, children included. */
+    private static List<String> openUrls(Component component) {
+        List<String> urls = new java.util.ArrayList<>();
+        net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
+        if (click != null && click.action() == net.kyori.adventure.text.event.ClickEvent.Action.OPEN_URL) {
+            urls.add(click.value());
+        }
+        for (Component child : component.children()) {
+            urls.addAll(openUrls(child));
+        }
+        return urls;
+    }
+
     private static String plain(List<Component> lines) {
         return lines.stream()
                 .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
@@ -23,6 +36,16 @@ class SpyglassCommandsTest {
                 .contains("Spyglass v1.0.0")
                 .contains("by MedievalRP")
                 .contains("on Paper 1.21.8");
+    }
+
+    @Test
+    void versionLinesCarryTheSupportInviteAsPlainTextAndAsALink() {
+        List<Component> lines = SpyglassCommands.versionLines("1.0.0", List.of("MedievalRP"), "1.21.8");
+        // Readable without clicking (console senders can't click at all).
+        assertThat(plain(lines)).contains("Support: discord.gg/XkpVHcHvH");
+        // And clickable for in-game senders.
+        assertThat(lines).anySatisfy(line ->
+                assertThat(openUrls(line)).contains("https://discord.gg/XkpVHcHvH"));
     }
 
     @Test
