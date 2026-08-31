@@ -761,7 +761,8 @@ public final class SpyglassPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(snapshotSessions, this);
         SnapshotTakes snapshotTakes = new SnapshotTakes(snapshotTakeLogger);
         SnapshotView snapshotView = SnapshotViews.guiOrNull(
-                this, getServer().getBukkitVersion(), snapshotTakes, getLogger());
+                this, getServer().getBukkitVersion(), snapshotTakes, snapshotSessions,
+                getLogger());
         SnapshotService snapshotService = new SnapshotService(
                 playerSnapshotStore, recordStore, recorder, config, serviceSupport,
                 snapshotSessions, snapshotTakes, snapshotView, getLogger());

@@ -35,13 +35,14 @@ public final class SnapshotViews {
      */
     @Nullable
     public static SnapshotView guiOrNull(Plugin plugin, String bukkitVersion,
-                                          SnapshotTakes takes, Logger logger) {
+                                          SnapshotTakes takes, SnapshotSessions sessions,
+                                          Logger logger) {
         if (!invUiSupported(bukkitVersion)) {
             return null;
         }
         // Referenced only here: on an unsupported server this line never runs,
         // so no InvUI class is resolved/loaded.
-        return new InvUiSnapshotView(plugin, takes, logger);
+        return new InvUiSnapshotView(plugin, takes, sessions, logger);
     }
 
     /** True if the bundled InvUI 1.49 supports this Minecraft version (major == 1). */

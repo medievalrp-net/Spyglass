@@ -71,11 +71,16 @@ final class InvUiSnapshotView implements SnapshotView {
     // therefore how PlayerSnapshotService captured them.
     private static final String[] ARMOR_LABELS = {"Boots", "Leggings", "Chestplate", "Helmet"};
 
+    private final Plugin plugin;
     private final SnapshotTakes takes;
+    private final SnapshotSessions sessions;
     private final Logger logger;
 
-    InvUiSnapshotView(Plugin plugin, SnapshotTakes takes, Logger logger) {
+    InvUiSnapshotView(Plugin plugin, SnapshotTakes takes, SnapshotSessions sessions,
+                      Logger logger) {
+        this.plugin = plugin;
         this.takes = takes;
+        this.sessions = sessions;
         this.logger = logger;
         // InvUI resolves its scheduler/listeners from the owning plugin; must be
         // set before any Window is built. The singleton accepts exactly one
@@ -102,8 +107,15 @@ final class InvUiSnapshotView implements SnapshotView {
     // ---- window builders -------------------------------------------------
 
     private void openContainer(Player viewer, SnapshotSession session) {
-        int rows = Math.max(1, session.containerRows());
-        int height = rows + 1;
+        // A chest window is capped at 6 rows. A 54-slot session (double
+        // chest, or a destroyed container's assumed size) already fills all
+        // six, so the info row that smaller sessions get would push the
+        // window to 63 cells and Bukkit refuses to build it (#351) - the
+        // player used to get nothing at all. Those sessions keep their 1:1
+        // layout and the info moves to chat instead.
+        int rows = Math.min(6, Math.max(1, session.containerRows()));
+        boolean infoRow = rows < 6;
+        int height = infoRow ? rows + 1 : rows;
         Gui gui = Gui.empty(WIDTH, height);
         fillAll(gui, height);
 
@@ -115,10 +127,27 @@ final class InvUiSnapshotView implements SnapshotView {
                 gui.setItem(slot, contentItem(viewer, session, snapshotSlot));
             }
         }
-        // Bottom row, centered: filler already covers it, overlay the info cell.
-        gui.setItem(contentCells + 4, infoItem(session));
+        if (infoRow) {
+            // Bottom row, centered: filler already covers it, overlay the info cell.
+            gui.setItem(contentCells + 4, infoItem(session));
+        }
 
         openWindow(viewer, gui, session);
+        if (!infoRow) {
+            sendInfoToChat(viewer, session);
+        }
+    }
+
+    /** The info the missing book would have carried, for 6-row sessions. */
+    private static void sendInfoToChat(Player viewer, SnapshotSession session) {
+        long agoSeconds = Math.max(0L,
+                Instant.now().getEpochSecond() - session.asOf().getEpochSecond());
+        viewer.sendMessage(net.medievalrp.spyglass.plugin.command.render.Feedback.info(
+                session.subjectLabel() + " as of " + new Duration(agoSeconds).compact() + " ago"));
+        for (String note : session.notes()) {
+            viewer.sendMessage(net.medievalrp.spyglass.plugin.command.render.Feedback.bonus(
+                    "- " + note));
+        }
     }
 
     private void openPlayer(Player viewer, SnapshotSession session) {
@@ -398,6 +427,17 @@ final class InvUiSnapshotView implements SnapshotView {
 
         @Override
         public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+            // The token path validates every take against the live session
+            // cache; this window used to skip that, so it kept handing out
+            // copies past the 15-minute TTL and after a newer snapshot had
+            // superseded it. Same gate, same wording, and the dead window
+            // closes so it cannot mislead again.
+            if (sessions.resolve(who, session.token()).isEmpty()) {
+                who.sendMessage(Component.text(
+                        "That snapshot has expired - re-run /sg snapshot.", NamedTextColor.RED));
+                org.bukkit.Bukkit.getScheduler().runTask(plugin, (Runnable) who::closeInventory);
+                return;
+            }
             takeCopy(viewer, session, slot);
         }
     }

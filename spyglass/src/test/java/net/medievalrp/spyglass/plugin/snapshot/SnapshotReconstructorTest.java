@@ -194,6 +194,31 @@ class SnapshotReconstructorTest {
         assertThat(r.slots()).isEmpty(); // slot 0 rewinds to empty (before the deposit)
     }
 
+    // --- a record slot beyond the current container size (shape changed) forces hard UNCERTAIN ---
+
+    @Test
+    void outOfRangeSlotRecordIsHardUncertainAndSkipped() {
+        StoredItem full = item("EMERALD", "emerald#64");
+        // A clean chain for slot 0, alongside a record for slot 30 - beyond
+        // this container's current SIZE (27), e.g. the block used to be a
+        // double chest (54 slots) and is now a single chest (27).
+        ContainerDepositRecord clean = deposit(1, T.plusSeconds(10), 0, null, full);
+        ContainerDepositRecord shapeChanged = deposit(2, T.plusSeconds(20), 30, null, full);
+
+        StoredItem[] live = empty();
+        live[0] = full;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(clean, shapeChanged), live, SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.UNCERTAIN);
+        assertThat(r.notes()).anyMatch(n -> n.contains("shape changed"));
+        // The out-of-range record is skipped outright (never touches
+        // `candidate`, never throws ArrayIndexOutOfBounds); the in-range
+        // slot 0 chain still reconstructs normally alongside the hard flag.
+        assertThat(r.slots()).isEmpty(); // slot 0 rewinds to empty (before the deposit)
+    }
+
     // --- an absent container reconstructs from records against empty, UNCERTAIN ---
 
     @Test
@@ -340,6 +365,128 @@ class SnapshotReconstructorTest {
         assertThat(r.notes()).isEmpty();
         assertThat(r.slots()).singleElement().satisfies(s ->
                 assertThat(s.item().data()).isEqualTo("gold#5"));
+    }
+
+    // --- no lower-bound / "genesis" awareness ---
+
+    /**
+     * Reproduced live against spyglass.db: a chest was set via console
+     * {@code setblock} (an unlogged content change - no {@code place}
+     * record; {@code CONTAINER_EVENTS} does not even include {@code place}/
+     * {@code break}, so this gap exists for a player-placed chest too, not
+     * just a console one) holding 5 gold ingots, drained seconds later by a
+     * hopper. {@code /sg snapshot t:130s} (well before the chest was ever
+     * filled) reported CERTAIN "GOLD_INGOT x5" - the earliest known record's
+     * {@code before} state, silently assumed to extend arbitrarily far into
+     * the past with no note that the query window's earliest evidence is
+     * only a fraction of the way back to {@code t}.
+     *
+     * <p>{@link SnapshotReconstructor#reconstruct} has every input it needs
+     * to flag this - it already sorts ops chronologically and knows
+     * {@code t} - but never compares {@code t} against the earliest op's
+     * {@code occurred()} to note "no records between t and here; this
+     * assumes nothing changed earlier, which cannot be confirmed". This test
+     * pins that gap with a large, unambiguous silence window (60s, no
+     * sub-second edge case involved) so it cannot be confused with the
+     * separate same-second filter bug pinned above.
+     */
+    @Test
+    void countOnlyMismatchNamesTheMaterialOnceAndSaysTheStacksDiffer() {
+        // Live holds a 64 apple stack, the replayed chain says 24: same
+        // material, different blob. The note must not read "APPLE does not
+        // match APPLE".
+        StoredItem replayed = item("APPLE", "apple#24");
+        StoredItem liveStack = item("APPLE", "apple#64");
+        ContainerDepositRecord d = deposit(1, T.plusSeconds(10), 0, null, replayed);
+
+        StoredItem[] live = empty();
+        live[0] = liveStack;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(d), live, SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.UNCERTAIN);
+        assertThat(r.notes()).anySatisfy(note -> {
+            assertThat(note).contains("both hold APPLE");
+            assertThat(note).contains("differ in amount or data");
+            assertThat(note).doesNotContain("APPLE does not match the reconstructed APPLE");
+        });
+    }
+
+    // --- second-granularity storage vs sub-second `t` boundary ---
+
+    /**
+     * The SQLite {@code records} table stores {@code occurred} truncated to
+     * whole epoch SECONDS ({@code SqliteRecordStore} schema comment: "epoch
+     * SECONDS"; confirmed live against spyglass.db), and
+     * {@code SqlitePredicateToSql}'s range translation floors the query's
+     * {@code t} bound the same way ({@code t.getEpochSecond()}) before
+     * comparing, so the SQL layer's window is inclusive of any record whose
+     * stored (floored) second is {@code >= floor(t)} - i.e. a record in the
+     * exact same second as {@code t} is always considered in-window by the
+     * query that actually ran.
+     *
+     * <p>But {@link SnapshotReconstructor#reconstruct} re-filters with its
+     * own "defensive window filter" using the FULL, un-floored {@code t}
+     * against {@code op.occurred()} - which, coming back from storage, is
+     * always exactly the start of its second (zero sub-second component).
+     * Since {@code Instant.now()} (what {@code SnapshotService.parse}
+     * subtracts a whole-second duration from) almost never lands exactly on
+     * a whole second, {@code t} almost always carries a positive fractional
+     * remainder - and {@code op.occurred()} (second-floor) then compares as
+     * strictly "before" {@code t} for ANY record in that same second,
+     * regardless of the record's true (unstored) sub-second timing.
+     *
+     * <p>Net effect: a record the SQL query legitimately included in the
+     * window gets silently dropped by this second filter whenever it lands
+     * in the same second as {@code t} - reproduced live against spyglass.db
+     * (a 5-item hopper drain, {@code t:75s} landing in the same second as
+     * the final withdraw) where the container showed CERTAIN "Nothing in
+     * it." even though the true state at that instant was ambiguous
+     * (possibly still holding the last item) - no note, no UNCERTAIN flag,
+     * just a confidently wrong answer.
+     *
+     * <p>This test pins the bug with fully synthetic (deterministic) data:
+     * the record's before-item should still show as present per the SQL
+     * window's own inclusive-floor semantics, but the current second filter
+     * throws it away. FAILS against current code - see the assertion below.
+     */
+    @Test
+    void sameSecondAsTIsIncludedPerTheSqlWindowButTheDefensiveFilterDropsIt() {
+        // A withdraw stored (post-roundtrip) at exactly the top of second N -
+        // this is what Instant.ofEpochSecond(rs.getLong("occurred")) always
+        // yields; the true sub-second timing is never recoverable.
+        Instant secondStart = Instant.ofEpochSecond(T.getEpochSecond());
+        StoredItem before = item("GOLD_INGOT", "gold#before");
+        ContainerWithdrawRecord w = new ContainerWithdrawRecord(
+                EventIds.uuidOf(1), "withdraw", secondStart, secondStart.plusSeconds(3600),
+                Origin.player(), Source.player(PLAYER, "Tester"),
+                LOCATION, "srv", "GOLD_INGOT", "CHEST", 0, 1, before, null);
+
+        // t lands 500ms into that SAME second - exactly what SnapshotService
+        // produces whenever Instant.now() isn't itself on a whole second
+        // (i.e. virtually always). The SQL query already ran with t floored
+        // to `secondStart`, so this record (occurred == secondStart) is
+        // already inside [t, now] by the query's own inclusive-lower-bound
+        // semantics - reconstruct() should not re-exclude it.
+        Instant t = secondStart.plusMillis(500);
+
+        StoredItem[] live = empty(); // slot now empty - the withdraw already happened
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(w), live, SIZE, t, true, false);
+
+        // Expected: the withdraw is in-window (same second as t, which the
+        // SQL layer already treated as in-range), so the T-state should
+        // still show the item the withdraw took out.
+        assertThat(r.slots())
+                .as("a record in the same second as t was silently dropped by the "
+                        + "defensive window filter (SnapshotReconstructor.reconstruct, "
+                        + "op.occurred().isBefore(t)), even though SqlitePredicateToSql "
+                        + "already included it at second granularity - see "
+                        + "SnapshotReconstructorTest javadoc above")
+                .singleElement()
+                .satisfies(s -> assertThat(s.item().data()).isEqualTo("gold#before"));
     }
 
     // --- helpers ---
