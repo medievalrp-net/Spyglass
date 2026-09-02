@@ -22,10 +22,12 @@ public final class ChatListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
+    private final boolean logCancelled;
 
-    public ChatListener(Recorder recorder, RecordingSupport support) {
+    public ChatListener(Recorder recorder, RecordingSupport support, boolean logCancelled) {
         this.recorder = recorder;
         this.support = support;
+        this.logCancelled = logCancelled;
     }
 
     @Override
@@ -33,8 +35,11 @@ public final class ChatListener implements RecordingListener {
         return Set.of("say");
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onAsyncChat(AsyncChatEvent event) {
+        if (event.isCancelled() && !logCancelled) {
+            return;
+        }
         Player sender = event.getPlayer();
         String message = RecordingSupport.safeText(
                 PlainTextComponentSerializer.plainText().serialize(event.message()));

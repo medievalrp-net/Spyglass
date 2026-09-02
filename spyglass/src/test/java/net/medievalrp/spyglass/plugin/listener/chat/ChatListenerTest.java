@@ -35,7 +35,7 @@ class ChatListenerTest {
     void setUp() {
         recorder = new CapturingRecorder();
         support = new RecordingSupport(new Duration(3600), "test");
-        listener = new ChatListener(recorder, support);
+        listener = new ChatListener(recorder, support, false);
     }
 
     @Test
@@ -70,6 +70,30 @@ class ChatListenerTest {
         assertThat(record.recipients())
                 .as("empty viewer set falls back to speaker so 'who heard this' stays answerable")
                 .containsExactly(ALICE);
+    }
+
+    @Test
+    void skipsCancelledChatByDefault() {
+        Player alice = mockPlayer(ALICE, "Alice");
+        AsyncChatEvent event = mockChat(alice, "muted words", List.of(alice));
+        when(event.isCancelled()).thenReturn(true);
+
+        listener.onAsyncChat(event);
+
+        assertThat(recorder.records).isEmpty();
+    }
+
+    @Test
+    void recordsCancelledChatWhenLogCancelledEnabled() {
+        ChatListener logging = new ChatListener(recorder, support, true);
+        Player alice = mockPlayer(ALICE, "Alice");
+        AsyncChatEvent event = mockChat(alice, "muted words", List.of(alice));
+        when(event.isCancelled()).thenReturn(true);
+
+        logging.onAsyncChat(event);
+
+        assertThat(recorder.records).hasSize(1);
+        assertThat(((ChatRecord) recorder.records.get(0)).message()).isEqualTo("muted words");
     }
 
     @Test
