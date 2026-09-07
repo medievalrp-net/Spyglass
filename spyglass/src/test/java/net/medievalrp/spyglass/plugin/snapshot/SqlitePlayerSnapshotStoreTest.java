@@ -142,6 +142,46 @@ class SqlitePlayerSnapshotStoreTest {
     }
 
     @Test
+    void pruneCutoffIsStrictlyLessThanKeepingTheExactBoundaryRow() {
+        // occurred == cutoff exactly: SqlitePlayerSnapshotStore.prune uses
+        // "WHERE occurred < ?" (strict), so a row stamped exactly at the
+        // cutoff must survive, not be treated as "older than or equal to".
+        UUID player = UUID.randomUUID();
+        snapshots.save(snapshot(player, "P", 5_000L, 1L, PlayerSnapshot.CAUSE_SWEEP,
+                slot(0, 1, "STONE", "boundary")));
+
+        int removed = snapshots.prune(Instant.ofEpochMilli(5_000L));
+
+        assertThat(removed).isEqualTo(0);
+        assertThat(snapshots.latestAtOrBefore(player, Instant.ofEpochMilli(5_000L))).isPresent();
+        assertThat(countItems()).isEqualTo(1L);
+    }
+
+    @Test
+    void pruneDoesNotOrphanAPayloadStillReferencedByAnotherPlayersSurvivingSnapshot() {
+        // Cross-player intern sharing (SqlitePlayerSnapshotStoreTest javadoc:
+        // "Interning is what keeps a week of 'same kit every sweep' down to
+        // one payload set"): pruning player A's old row must not GC a
+        // payload player B's surviving row still points at.
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        snapshots.save(snapshot(a, "A", 1_000L, 1L, PlayerSnapshot.CAUSE_JOIN,
+                slot(0, 1, "DIAMOND", "shared-kit")));
+        snapshots.save(snapshot(b, "B", 10_000L, 2L, PlayerSnapshot.CAUSE_SWEEP,
+                slot(0, 1, "DIAMOND", "shared-kit")));
+        assertThat(countItems()).isEqualTo(1L); // same payload, interned once
+
+        int removed = snapshots.prune(Instant.ofEpochMilli(5_000L));
+
+        assertThat(removed).isEqualTo(1); // only A's row
+        // The shared payload survives - B's row still references it.
+        assertThat(countItems()).isEqualTo(1L);
+        assertThat(snapshots.latestAtOrBefore(b, Instant.ofEpochMilli(20_000L)).orElseThrow()
+                .slots()).extracting(sl -> sl.item().data())
+                .containsExactly(base64("shared-kit"));
+    }
+
+    @Test
     void lastContentHashReturnsNewest() {
         UUID player = UUID.randomUUID();
         assertThat(snapshots.lastContentHash(player)).isEmpty();
