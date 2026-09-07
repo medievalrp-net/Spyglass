@@ -194,6 +194,31 @@ class SnapshotReconstructorTest {
         assertThat(r.slots()).isEmpty(); // slot 0 rewinds to empty (before the deposit)
     }
 
+    // --- a record slot beyond the current container size (shape changed) forces hard UNCERTAIN ---
+
+    @Test
+    void outOfRangeSlotRecordIsHardUncertainAndSkipped() {
+        StoredItem full = item("EMERALD", "emerald#64");
+        // A clean chain for slot 0, alongside a record for slot 30 - beyond
+        // this container's current SIZE (27), e.g. the block used to be a
+        // double chest (54 slots) and is now a single chest (27).
+        ContainerDepositRecord clean = deposit(1, T.plusSeconds(10), 0, null, full);
+        ContainerDepositRecord shapeChanged = deposit(2, T.plusSeconds(20), 30, null, full);
+
+        StoredItem[] live = empty();
+        live[0] = full;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(clean, shapeChanged), live, SIZE, T, true, false);
+
+        assertThat(r.certainty()).isEqualTo(Certainty.UNCERTAIN);
+        assertThat(r.notes()).anyMatch(n -> n.contains("shape changed"));
+        // The out-of-range record is skipped outright (never touches
+        // `candidate`, never throws ArrayIndexOutOfBounds); the in-range
+        // slot 0 chain still reconstructs normally alongside the hard flag.
+        assertThat(r.slots()).isEmpty(); // slot 0 rewinds to empty (before the deposit)
+    }
+
     // --- an absent container reconstructs from records against empty, UNCERTAIN ---
 
     @Test
