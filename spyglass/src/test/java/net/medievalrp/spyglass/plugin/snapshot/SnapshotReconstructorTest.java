@@ -342,6 +342,56 @@ class SnapshotReconstructorTest {
                 assertThat(s.item().data()).isEqualTo("gold#5"));
     }
 
+    // --- no lower-bound / "genesis" awareness ---
+
+    /**
+     * Reproduced live against spyglass.db: a chest was set via console
+     * {@code setblock} (an unlogged content change - no {@code place}
+     * record; {@code CONTAINER_EVENTS} does not even include {@code place}/
+     * {@code break}, so this gap exists for a player-placed chest too, not
+     * just a console one) holding 5 gold ingots, drained seconds later by a
+     * hopper. {@code /sg snapshot t:130s} (well before the chest was ever
+     * filled) reported CERTAIN "GOLD_INGOT x5" - the earliest known record's
+     * {@code before} state, silently assumed to extend arbitrarily far into
+     * the past with no note that the query window's earliest evidence is
+     * only a fraction of the way back to {@code t}.
+     *
+     * <p>{@link SnapshotReconstructor#reconstruct} has every input it needs
+     * to flag this - it already sorts ops chronologically and knows
+     * {@code t} - but never compares {@code t} against the earliest op's
+     * {@code occurred()} to note "no records between t and here; this
+     * assumes nothing changed earlier, which cannot be confirmed". This test
+     * pins that gap with a large, unambiguous silence window (60s, no
+     * sub-second edge case involved) so it cannot be confused with the
+     * separate same-second filter bug pinned above.
+     */
+    @Test
+    void tWellBeforeTheEarliestRecordStillReportsCertainWithNoGapNote() {
+        StoredItem before = item("DIAMOND", "diamond#before");
+        StoredItem after = item("DIAMOND", "diamond#after");
+        // The only record in the window sits 60s AFTER t - t itself reaches
+        // into total silence with no record anywhere near it.
+        ContainerWithdrawRecord onlyRecord =
+                withdraw(1, T.plusSeconds(60), 0, before, after);
+
+        StoredItem[] live = empty();
+        live[0] = after;
+
+        Reconstruction r = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(onlyRecord), live, SIZE, T, true, false);
+
+        // Current behavior: CERTAIN, no notes at all - the 60s of pure
+        // silence between t and the earliest actual evidence is invisible to
+        // the operator. A T-state this far outside the evidence should not
+        // be indistinguishable from a T-state the log actually covers.
+        assertThat(r.certainty())
+                .as("t is 60s before the earliest record in the window with zero "
+                        + "evidence in between, yet reconstruct() reports the same "
+                        + "CERTAIN confidence as a fully-covered window - no note "
+                        + "acknowledges the gap between t and the earliest record")
+                .isEqualTo(Certainty.UNCERTAIN);
+    }
+
     // --- second-granularity storage vs sub-second `t` boundary ---
 
     /**
