@@ -19,6 +19,8 @@ Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-let
 | `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
 | `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
 | `/sg snapshot <params>` | `snap` | `spyglass.snapshot` | View a player inventory or container as of a past instant (GUI, or a listing where there is no GUI) |
+| `/sg reload` | — | `spyglass.reload` | Reload supported live settings; reject restart-only changes |
+| `/sg version` | `ver` | `spyglass.use` | Show version and cached compatible update status |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
@@ -281,3 +283,7 @@ The full operator runbook, including the standalone CLI importer and parity vali
 //wand   (select region with WorldEdit)
 /sg restore a:break t:1h -we
 ```
+
+## Live configuration and update notifications
+
+See [live configuration and updates](docs/live-configuration-and-updates.md) for `/sg reload` settings, retention behavior, GitHub release matching, and `updates.enabled`. Operators receive compatible release notices through `spyglass.update` (default op); no jars are downloaded automatically.

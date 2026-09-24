@@ -36,7 +36,9 @@ public final class SpyglassApiImpl implements SpyglassApi {
     private final Map<String, DisplayRenderer> renderers = new LinkedHashMap<>();
     private final Map<String, RollbackEffectHandler> effectHandlers = new LinkedHashMap<>();
     private final Set<String> enabledEvents;
-    private final SpyglassLimits limits;
+    private volatile SpyglassLimits limits;
+
+    public void setLimits(SpyglassLimits limits) { this.limits = limits; }
     private final String serverName;
     private final Logger logger;
 

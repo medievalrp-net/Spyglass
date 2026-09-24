@@ -28,7 +28,9 @@ public final class CommandRedaction {
 
     static final String MASK = "***";
 
-    private final Set<String> heads;
+    public void update(Collection<String> heads) { this.heads = new CommandRedaction(heads).heads; }
+
+    private volatile Set<String> heads;
 
     public CommandRedaction(Collection<String> configuredHeads) {
         Set<String> normalized = new HashSet<>(configuredHeads.size());

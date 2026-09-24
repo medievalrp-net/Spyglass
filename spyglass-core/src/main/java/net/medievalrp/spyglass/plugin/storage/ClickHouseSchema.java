@@ -83,6 +83,14 @@ final class ClickHouseSchema {
         bootstrap.setDatabase("system");
         execute(client, "CREATE DATABASE IF NOT EXISTS " + quoteIdentifier(database), bootstrap);
         execute(client, buildEventRecordsTable(database, eventsTable));
+        // Equality bloom filters complement the existing region minmax index.
+        // ADD INDEX affects new parts; large existing tables can MATERIALIZE
+        // these during an operator-chosen maintenance window (see docs).
+        for (String coordinate : java.util.List.of("x", "y", "z")) {
+            execute(client, "ALTER TABLE " + qualifiedTable(database, eventsTable)
+                    + " ADD INDEX IF NOT EXISTS idx_exact_" + coordinate + " location_" + coordinate
+                    + " TYPE bloom_filter(0.01) GRANULARITY 1");
+        }
         // Idempotent ADD COLUMN for tables created by older Spyglass
         // versions: CH ignores ADD COLUMN IF NOT EXISTS when the column
         // is already there, but a fresh CREATE TABLE above would have

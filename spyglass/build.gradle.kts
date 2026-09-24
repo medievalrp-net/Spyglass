@@ -111,12 +111,8 @@ dependencies {
 }
 
 tasks.processResources {
-    filesMatching("plugin.yml") {
-        // Inject the version + externalized library versions into plugin.yml so
-        // the `libraries:` block tracks the root version catalog instead of
-        // drifting in a hand-edited descriptor.
-        expand(
-            "version" to project.version,
+    val pluginProperties = mapOf(
+            "version" to project.version.toString(),
             "mongoDriverVersion" to mongoDriverVersion,
             "clickhouseClientVersion" to clickhouseClientVersion,
             "sqliteJdbcVersion" to sqliteJdbcVersion,
@@ -124,7 +120,10 @@ tasks.processResources {
             "configurateVersion" to configurateVersion,
             "cloudMinecraftVersion" to cloudMinecraftVersion,
             "cloudCoreVersion" to cloudCoreVersion,
-        )
+    )
+    inputs.properties(pluginProperties)
+    filesMatching("plugin.yml") {
+        expand(pluginProperties)
     }
 }
 

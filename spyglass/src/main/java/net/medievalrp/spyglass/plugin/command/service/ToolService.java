@@ -41,7 +41,9 @@ public final class ToolService {
     public static final NamespacedKey WAND_KEY = new NamespacedKey("spyglass", "wand");
 
     private final ToolStateStore store;
-    private final Material wandMaterial;
+    public void setMaterial(Material material) { this.wandMaterial = material; }
+
+    private volatile Material wandMaterial;
     private final WandHandout handout;
     private final ServiceSupport support;
     private final Logger logger;
@@ -77,6 +79,10 @@ public final class ToolService {
         PlayerInventory inv = player.getInventory();
         int slot = firstWandSlot(inv);
         boolean inHand = isWandInHand(player);
+        if (slot == -1 && inv.firstEmpty() < 0) {
+            player.sendMessage(Feedback.error("Make room in your inventory for the Spyglass wand."));
+            return;
+        }
 
         if (active.contains(id)) {
             if (slot == -1) {
@@ -142,7 +148,7 @@ public final class ToolService {
         ItemStack[] contents = inv.getContents();
         for (int i = 0; i < contents.length; i++) {
             ItemStack stack = contents[i];
-            if (stack != null && stack.getType() == wandMaterial && WandHandout.isWandItem(stack)) {
+            if (WandHandout.isWandItem(stack)) {
                 return i;
             }
         }
@@ -151,7 +157,7 @@ public final class ToolService {
 
     private boolean isWandInHand(Player player) {
         ItemStack hand = player.getInventory().getItemInMainHand();
-        return hand != null && hand.getType() == wandMaterial && WandHandout.isWandItem(hand);
+        return WandHandout.isWandItem(hand);
     }
 
     private static void swapToMainHand(PlayerInventory inv, int slot) {
@@ -181,7 +187,7 @@ public final class ToolService {
                         player.getInventory().addItem(stack);
                         return;
                     }
-                    player.getWorld().dropItemNaturally(player.getLocation(), stack);
+                    player.sendMessage(Feedback.error("Make room in your inventory for the Spyglass wand."));
                 }
 
                 @Override

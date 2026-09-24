@@ -1329,6 +1329,7 @@ public final class MariaDbRecordStore implements RecordStore {
      * real timestamp.
      */
     public long pruneExpired() {
+        RetentionPolicy retentionPolicy = this.retentionPolicy.snapshot();
         if (readOnly) {
             return 0L;
         }
