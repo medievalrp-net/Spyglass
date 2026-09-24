@@ -4,7 +4,7 @@ import org.bukkit.entity.Player;
 
 /**
  * A way to show a {@link SnapshotSession} to an operator. Same split as
- * {@code SalvageView}: the InvUI implementation exists on 1.21.x, and where
+ * {@code SalvageView}: the InvUI implementation exists on 26.3, and where
  * there is no GUI the service prints the text listing instead, so callers
  * treat "no view" (null) as command-only.
  */

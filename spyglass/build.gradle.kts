@@ -28,7 +28,7 @@ val bstatsVersion: String by rootProject.extra
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
     withSourcesJar()
 }
@@ -80,14 +80,8 @@ dependencies {
     // requires relocation to avoid clashing with other plugins' copies. It is
     // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
     implementation("org.bstats:bstats-bukkit:$bstatsVersion")
-    // InvUI 1.49 (last multi-version line; MC 1.14-1.21.x, Java 21). Shaded +
-    // relocated into BOTH jars like bStats (library-loader can't relocate,
-    // and InvUI's reflective adapter lookup needs its package string rewritten
-    // in place). Powers the 1.21.x salvage GUI; on 26.x (no InvUI) salvage is
-    // command-only and these classes are never loaded. The aggregator bundles
-    // adapters for MC 1.14-1.21.x; trimming to the 1.21.x set to slim the lean
-    // jar is a follow-up (needs the rXX->MC map, verified in-game).
-    implementation("xyz.xenondevs.invui:invui:1.49")
+    // InvUI 2.5 targets Minecraft 26.3 / Java 25; legacy support lives on maintenance/1.21.
+    implementation("xyz.xenondevs.invui:invui:2.5.0")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -183,11 +177,10 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
     archiveClassifier.set("")
     from(sourceSets["main"].output)
     configurations = listOf(project.configurations.runtimeClasspath.get())
-    // Keep our own modules (spyglass-api / -core) AND bStats. Everything else is
+    // Keep our own modules, bStats and InvUI. Everything else is
     // declared under plugin.yml `libraries:` and resolved by Paper at runtime, so
-    // it must not be bundled here. bStats is the one exception: it can't go
-    // through `libraries:` (the loader can't relocate it), so it travels bundled
-    // and relocated in the lean jar too - it's tiny.
+    // it must not be bundled here. bStats and InvUI need private relocated
+    // packages, so they are bundled in both distributions.
     dependencies {
         exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" && it.moduleGroup != "xyz.xenondevs.invui" }
     }
@@ -201,7 +194,6 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
 tasks.withType<ShadowJar>().configureEach {
     relocate("org.bstats", "net.medievalrp.spyglass.libs.bstats")
     relocate("xyz.xenondevs.invui", "net.medievalrp.spyglass.libs.invui")
-    relocate("xyz.xenondevs.inventoryaccess", "net.medievalrp.spyglass.libs.inventoryaccess")
 }
 
 tasks.build {

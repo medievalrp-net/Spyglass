@@ -736,14 +736,14 @@ public final class SpyglassPlugin extends JavaPlugin {
                     snap.containerType(), 0, amount, salvageStored, null));
         };
         // One shared, dupe-guarded extract engine behind both the GUI and the
-        // command. On versions InvUI 1.49 supports (1.x) we build the InvUI GUI;
-        // on 26.x SalvageViews returns null and salvage is command-only (no
-        // unverified inventory-click surface). The InvUI view manages its own
+        // command. On Minecraft 26.3 we build the InvUI 2.5 GUI; other release
+        // lines retain command recovery without loading incompatible internals.
+        // The InvUI view manages its own
         // click listeners, so no registerEvents here.
         SalvageWithdrawals salvageWithdrawals = salvageStore == null ? null
                 : new SalvageWithdrawals(salvageStore, queryExecutor, salvageWithdrawLogger, getLogger());
         SalvageView salvageView = salvageStore == null ? null
-                : SalvageViews.guiOrNull(this, getServer().getBukkitVersion(), salvageStore,
+                : SalvageViews.guiOrNull(this, getServer().getMinecraftVersion(), salvageStore,
                         queryExecutor, serviceSupport::onMainThread, salvageWithdrawals,
                         config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
@@ -752,8 +752,8 @@ public final class SpyglassPlugin extends JavaPlugin {
         // /sg snapshot (#341): view a player inventory or container as of a past
         // instant and take copies out. Every take is audited onto snapshot-take
         // (reusing ItemPickupRecord + the extensions channel, the salvage-withdraw
-        // precedent). SnapshotViews.guiOrNull returns the InvUI GUI on 1.x and null
-        // on 26.x, where the service falls back to a clickable text listing - the
+        // precedent). SnapshotViews.guiOrNull returns the InvUI GUI on 26.3 and null
+        // elsewhere, where the service falls back to a clickable text listing - the
         // same split SalvageViews draws. The take permission gates both surfaces.
         SnapshotTakeLogger snapshotTakeLogger =
                 new SnapshotTakeLogger(apiImpl, support, getLogger());
@@ -761,7 +761,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(snapshotSessions, this);
         SnapshotTakes snapshotTakes = new SnapshotTakes(snapshotTakeLogger);
         SnapshotView snapshotView = SnapshotViews.guiOrNull(
-                this, getServer().getBukkitVersion(), snapshotTakes, snapshotSessions,
+                this, getServer().getMinecraftVersion(), snapshotTakes, snapshotSessions,
                 getLogger());
         SnapshotService snapshotService = new SnapshotService(
                 playerSnapshotStore, recordStore, recorder, config, serviceSupport,

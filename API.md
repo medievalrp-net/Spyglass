@@ -28,7 +28,7 @@ repositories {
 
 dependencies {
     compileOnly("net.medievalrp:spyglass-api:1.0.7")
-    compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:26.3.build.38-alpha")
 }
 ```
 
@@ -37,7 +37,7 @@ dependencies {
 ```groovy
 dependencies {
     compileOnly 'net.medievalrp:spyglass-api:1.0.7'
-    compileOnly 'io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT'
+    compileOnly 'io.papermc.paper:paper-api:26.3.build.38-alpha'
 }
 ```
 
@@ -84,7 +84,7 @@ can degrade gracefully when it's absent:
 name: YourPlugin
 main: com.example.YourPlugin
 version: 1.0.0
-api-version: '1.21'
+api-version: '26.3'
 softdepend: [Spyglass]
 ```
 

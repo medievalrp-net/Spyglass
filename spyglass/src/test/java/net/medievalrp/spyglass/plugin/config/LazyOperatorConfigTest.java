@@ -226,7 +226,8 @@ class LazyOperatorConfigTest {
                 + "  retention = \"8w\"\n"
                 + "}\n");
         String original = Files.readString(file);
-        assertThat(dataFolder.toFile().setWritable(false)).isTrue();
+        org.junit.jupiter.api.Assumptions.assumeTrue(dataFolder.toFile().setWritable(false),
+                "Filesystem must support making a directory read-only");
         try {
             SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
 

@@ -17,27 +17,25 @@ import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
-import xyz.xenondevs.inventoryaccess.component.AdventureComponentWrapper;
+import xyz.xenondevs.invui.Click;
 import xyz.xenondevs.invui.InvUI;
 import xyz.xenondevs.invui.gui.Gui;
 import xyz.xenondevs.invui.item.Item;
 import xyz.xenondevs.invui.item.ItemProvider;
 import xyz.xenondevs.invui.item.ItemWrapper;
-import xyz.xenondevs.invui.item.impl.AbstractItem;
-import xyz.xenondevs.invui.item.impl.SimpleItem;
+import xyz.xenondevs.invui.item.AbstractItem;
 import xyz.xenondevs.invui.window.Window;
 
 /**
  * InvUI-backed {@code /sg snapshot} viewer for the Minecraft versions InvUI
- * 1.49 supports (1.x). A single non-paged {@link Gui} lays out either a
+ * 2.5 supports (26.3). A single non-paged {@link Gui} lays out either a
  * captured container (its content rows, 1:1 by slot index) or a captured
  * player inventory (armor/offhand/main/hotbar, mirroring how a player reads
  * their own inventory), plus an info cell describing the capture. On versions
- * InvUI does not support (26.x) there is no GUI at all (see
+ * InvUI does not support there is no GUI at all (see
  * {@link SnapshotViews}), matching the salvage split exactly.
  *
  * <p>Unlike {@code InvUiSalvageView}, the {@link SnapshotSession} handed to
@@ -57,7 +55,7 @@ import xyz.xenondevs.invui.window.Window;
  * javadoc), so the GUI is inherently extract-only.
  *
  * <p>This class is only instantiated on supported versions (see
- * {@link SnapshotViews}), so a 26.x server never loads any InvUI class.
+ * {@link SnapshotViews}), so an unsupported server never loads any InvUI class.
  */
 final class InvUiSnapshotView implements SnapshotView {
 
@@ -191,17 +189,16 @@ final class InvUiSnapshotView implements SnapshotView {
     }
 
     private void openWindow(Player viewer, Gui gui, SnapshotSession session) {
-        Window.single()
+        Window.builder()
                 .setViewer(viewer)
-                .setTitle(new AdventureComponentWrapper(
-                        Component.text(session.subjectLabel())))
-                .setGui(gui)
+                .setTitle(Component.text(session.subjectLabel()))
+                .setUpperGui(gui)
                 .build()
                 .open();
     }
 
     private static void fillAll(Gui gui, int rows) {
-        Item filler = new SimpleItem(new ItemWrapper(fillerIcon()));
+        Item filler = Item.simple(new ItemWrapper(fillerIcon()));
         int cells = rows * WIDTH;
         for (int i = 0; i < cells; i++) {
             gui.setItem(i, filler);
@@ -222,7 +219,7 @@ final class InvUiSnapshotView implements SnapshotView {
     private Item contentItem(Player viewer, SnapshotSession session, SnapshotSlot slot) {
         ItemStack display = decodeDisplay(session, slot);
         if (display == null) {
-            return new SimpleItem(new ItemWrapper(barrierIcon(slot)));
+            return Item.simple(new ItemWrapper(barrierIcon(slot)));
         }
         return new SlotItem(viewer, session, slot, display);
     }
@@ -236,13 +233,13 @@ final class InvUiSnapshotView implements SnapshotView {
      */
     private Item armorOrOffhandItem(Player viewer, SnapshotSession session, SnapshotSlot slot, String label) {
         if (slot == null) {
-            return new SimpleItem(new ItemWrapper(labeledPlaceholder(label)));
+            return Item.simple(new ItemWrapper(labeledPlaceholder(label)));
         }
         ItemStack pristine = decodeDisplay(session, slot);
         if (pristine == null) {
             ItemStack icon = barrierIcon(slot);
             appendLore(icon, label);
-            return new SimpleItem(new ItemWrapper(icon));
+            return Item.simple(new ItemWrapper(icon));
         }
         ItemStack labeledDisplay = pristine.clone();
         appendLore(labeledDisplay, label);
@@ -306,7 +303,7 @@ final class InvUiSnapshotView implements SnapshotView {
     // ---- icons ---------------------------------------------------------
 
     private Item infoItem(SnapshotSession session) {
-        return new SimpleItem(new ItemWrapper(infoIcon(session)));
+        return Item.simple(new ItemWrapper(infoIcon(session)));
     }
 
     private static ItemStack infoIcon(SnapshotSession session) {
@@ -421,12 +418,12 @@ final class InvUiSnapshotView implements SnapshotView {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(display.clone());
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             // The token path validates every take against the live session
             // cache; this window used to skip that, so it kept handing out
             // copies past the 15-minute TTL and after a newer snapshot had

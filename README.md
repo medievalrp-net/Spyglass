@@ -1,6 +1,6 @@
 # Spyglass (Preview)
 
-Forensic logging and rollback for Paper 1.21.x. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
+Forensic logging and rollback for Paper 26.3. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
@@ -70,14 +70,20 @@ A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in
 | Worst single tick | **~100 ms** | up to ~900 ms |
 | Automatic data pruning | ✓ |  |
 | Storage engines | SQLite, MongoDB, ClickHouse, MariaDB/MySQL | SQLite, MySQL |
-| Minecraft versions | 1.21.x | 1.7+ |
+| Minecraft versions | 26.3 | 1.7+ |
 
 Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB, ClickHouse, and MariaDB/MySQL are there when you outgrow it or already run one.
 
+## Supported releases
+
+`main` targets Minecraft 26.3 with Java 25 and InvUI 2.5. Minecraft 1.21.x remains on [`maintenance/1.21`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`. InvUI 2 is version-specific: this build does not promise GUI compatibility with every 26.x release.
+
+The 2.0 line is under development; use the 1.x release assets for 1.21 servers.
+
 ## Requirements
 
-- Paper 1.21.8 or newer 1.21.x
-- Java 21
+- Paper 26.3
+- Java 25
 - A database, one of:
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
   - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`

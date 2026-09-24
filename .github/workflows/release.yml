@@ -34,9 +34,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
+          if [[ "${{ steps.ver.outputs.version }}" == *-SNAPSHOT ]] || gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release v${{ steps.ver.outputs.version }} already exists - nothing to do."
+            echo "Release v${{ steps.ver.outputs.version }} is a snapshot or already exists - nothing to publish."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -56,12 +56,12 @@ jobs:
             echo "CENTRAL_PORTAL_USERNAME not set - the Maven Central publish will be skipped."
           fi
 
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         if: steps.exists.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         if: steps.exists.outputs.exists == 'false'
@@ -89,7 +89,7 @@ jobs:
           cp "spyglass-api/build/libs/spyglass-api-${v}-sources.jar" "dist/spyglass-api-sources.jar"
           cp "spyglass-api/build/libs/spyglass-api-${v}-javadoc.jar" "dist/spyglass-api-javadoc.jar"
           {
-            echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
+            echo "**Spyglass v${v}** - forensic logging & rollback for Paper 26.3 (Java 25)."
             echo
             # Brief "what was fixed" summary, maintained per release in this file.
             if [ -f .github/release-notes.md ]; then
@@ -140,11 +140,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

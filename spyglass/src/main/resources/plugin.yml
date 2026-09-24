@@ -1,7 +1,7 @@
 name: Spyglass
 version: ${version}
 main: net.medievalrp.spyglass.plugin.SpyglassPlugin
-api-version: "1.21"
+api-version: "26.3"
 authors:
   - itdontmatta
 softdepend:

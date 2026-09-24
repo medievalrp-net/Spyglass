@@ -446,7 +446,7 @@ class ResultRendererTest {
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null
                 && click.action() == net.kyori.adventure.text.event.ClickEvent.Action.RUN_COMMAND) {
-            return click.value();
+            return ((net.kyori.adventure.text.event.ClickEvent.Payload.Text) click.payload()).value();
         }
         for (Component child : component.children()) {
             String nested = findRunCommand(child);
@@ -590,7 +590,7 @@ class ResultRendererTest {
 
         // Muting recolors the style but leaves the teleport click intact.
         assertThat(rendered.clickEvent()).isNotNull();
-        assertThat(rendered.clickEvent().value()).contains("/spyglass tele");
+        assertThat(((net.kyori.adventure.text.event.ClickEvent.Payload.Text) rendered.clickEvent().payload()).value()).contains("/spyglass tele");
         // The hover tooltip is not a child, so it stays readable (unstruck).
         Component hover = extractHover(rendered);
         assertThat(hover).isNotNull();
