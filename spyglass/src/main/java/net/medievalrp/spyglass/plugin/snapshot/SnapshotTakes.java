@@ -10,9 +10,7 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * The extract path for {@code /sg snapshot}, shared by the InvUI GUI and
- * the text-fallback take command (#341) - the same split
- * {@code SalvageWithdrawals} draws between its two surfaces.
+ * The extract path for the {@code /sg snapshot} inventory GUI.
  *
  * <p>A take is a COPY, not a withdrawal: the session's slots never change
  * ({@link SnapshotSession}'s javadoc - "sessions never write back, takes
@@ -30,7 +28,7 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Internal
 public final class SnapshotTakes {
 
-    /** Gates every take, in both the GUI and the text fallback. */
+    /** Gates every GUI take. */
     public static final String PERMISSION = "spyglass.snapshot.take";
 
     public enum Result {

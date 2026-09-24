@@ -28,15 +28,12 @@ import xyz.xenondevs.invui.item.AbstractPagedGuiBoundItem;
 import xyz.xenondevs.invui.window.Window;
 
 /**
- * InvUI-backed {@code /sg inventory} salvage browser for the Minecraft versions
- * InvUI 2.5 supports (26.3): three extract-only levels (rollbacks -> containers
- * -> items) with pagination, window management, and click-safety from InvUI
- * instead of hand-rolled Bukkit inventory handling. On versions InvUI does not
- * support, there is no GUI at all - salvage is command-only (see
- * {@link SalvageViews} and {@code SalvageService}).
+ * InvUI-backed rollback salvage browser: three extract-only levels
+ * (rollbacks -> containers -> items) with pagination and click safety.
+ * Each distribution bundles the InvUI release matching its Minecraft target.
  *
  * <p>The extract path goes through the shared {@link SalvageWithdrawals}
- * (dupe-guarded, shared with the command path), re-reads filter in-flight slots
+ * (dupe-guarded), re-reads filter in-flight slots
  * ({@link InFlightTracker}), store reads run off the main thread and the window
  * opens back on it, and every take is logged. InvUI content slots are
  * click-cancelled by default, so the GUI is inherently extract-only (no inserts,
@@ -84,8 +81,7 @@ final class InvUiSalvageView implements SalvageView {
         this.rollbackListLimit = rollbackListLimit;
         this.logger = logger;
         this.withdrawals = withdrawals;
-        // Shared with the command path so a GUI take and a command take on the
-        // same snapshot see each other's in-flight slots.
+        // GUI views of the same snapshot share in-flight slots.
         this.inFlight = withdrawals.inFlight();
         // InvUI resolves its scheduler/listeners from the owning plugin; must be
         // set before any Window is built.

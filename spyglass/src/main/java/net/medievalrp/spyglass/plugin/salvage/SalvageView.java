@@ -6,10 +6,8 @@ import org.bukkit.entity.Player;
  * The interactive {@code /sg inventory} salvage GUI for a player: three
  * paginated, extract-only levels (rollbacks -> containers -> items).
  *
- * <p>Only the InvUI-backed {@link InvUiSalvageView} implements this, and only on
- * Minecraft versions InvUI 2.5 supports (26.3); {@link SalvageViews} returns
- * {@code null} elsewhere. On versions without a GUI, and for console/RCON,
- * salvage is served through the command path instead (see {@code SalvageService}).
+ * <p>Each supported distribution provides its matching InvUI implementation.
+ * Missing GUIs report an error; there is no command-based recovery alternative.
  */
 public interface SalvageView {
 

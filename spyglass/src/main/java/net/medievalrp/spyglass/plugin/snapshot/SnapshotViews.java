@@ -12,14 +12,11 @@ public final class SnapshotViews {
 
     /**
      * The InvUI GUI view for this server, or {@code null} on versions InvUI
-     * does not support (the caller then serves {@code /sg snapshot} through
-     * the text-fallback listing only).
+     * does not support (the caller reports that the GUI is unavailable).
      *
      * @param minecraftVersion {@code Bukkit.getMinecraftVersion()}, e.g.
      *                      {@code "26.3"}
-     * @param takes         the shared take engine (permission, whole-stack fit
-     *                      rule, audit) - the same instance the text-fallback
-     *                      command uses, so the two surfaces cannot drift
+     * @param takes         the GUI take engine (permission, whole-stack fit rule, audit)
      */
     @Nullable
     public static SnapshotView guiOrNull(Plugin plugin, String minecraftVersion,

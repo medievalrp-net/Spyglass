@@ -742,8 +742,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageCtx, "salvage-withdraw", taken.getType().name(),
                     snap.containerType(), 0, amount, salvageStored, null));
         };
-        // One shared, dupe-guarded extract engine behind both the GUI and the
-        // command. Each supported distribution builds its matching InvUI GUI;
+        // A dupe-guarded extract engine behind the inventory GUI. Each supported distribution builds its matching InvUI GUI;
         // the Minecraft target check above rejects incompatible servers.
         // The InvUI view manages its own
         // click listeners, so no registerEvents here.
@@ -754,13 +753,13 @@ public final class SpyglassPlugin extends JavaPlugin {
                         queryExecutor, serviceSupport::onMainThread, salvageWithdrawals,
                         config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
-                salvageStore, salvageView, salvageWithdrawals, config.limits().searchResult(), serviceSupport);
+                salvageStore, salvageView, getLogger());
 
         // /sg snapshot (#341): view a player inventory or container as of a past
         // instant and take copies out. Every take is audited onto snapshot-take
         // (reusing ItemPickupRecord + the extensions channel, the salvage-withdraw
         // precedent). Every supported build supplies the matching InvUI GUI.
-        // The take permission gates both the GUI and explicit command paths.
+        // The take permission is checked on each GUI interaction.
         SnapshotTakeLogger snapshotTakeLogger =
                 new SnapshotTakeLogger(apiImpl, support, getLogger());
         SnapshotSessions snapshotSessions = new SnapshotSessions();
@@ -771,7 +770,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 getLogger());
         SnapshotService snapshotService = new SnapshotService(
                 playerSnapshotStore, recordStore, recorder, config, serviceSupport,
-                snapshotSessions, snapshotTakes, snapshotView, getLogger());
+                snapshotSessions, snapshotView, getLogger());
         // #168: /spyglass stats. Null ingestStats (analytics off) => the command
         // explains how to enable it.
         StatsService statsService = new StatsService(ingestStats, recorder::spillSnapshot);

@@ -1,7 +1,7 @@
 name: Release
 on:
   push:
-    branches: [main]
+    branches: [main, maintenance/26.1.2, maintenance/26.2, maintenance/26.3]
   workflow_dispatch:
     inputs:
       minecraft:
@@ -31,6 +31,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Maintenance branches publish only their own Minecraft release channel.
+          case "$GITHUB_REF_NAME" in
+            maintenance/26.1.2) branch_mc=26.1.2 ;;
+            maintenance/26.2) branch_mc=26.2 ;;
+            maintenance/26.3) branch_mc=26.3 ;;
+            *) branch_mc=all ;;
+          esac
+          if [[ "$branch_mc" != all ]]; then
+            if [[ "$REQUESTED_MC" != all && "$REQUESTED_MC" != "$branch_mc" ]]; then
+              echo "This branch only publishes Minecraft $branch_mc."; exit 1;
+            fi
+            REQUESTED_MC="$branch_mc"
+          fi
           base=$(sed -n 's/^version=//p' gradle.properties | tr -d '\r[:space:]')
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]] || exit 1
           tag="v${base}-mc${MC}"

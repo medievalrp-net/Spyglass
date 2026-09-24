@@ -1,6 +1,7 @@
 # Minecraft-specific builds and releases
 
-One source branch produces three distributions. Java 25 is required for all of them.
+The shared build system produces three distributions, with a maintenance branch
+for each Minecraft target. Java 25 is required for all of them.
 
 | Minecraft | Paper compile API | Bundled InvUI | Release tag example |
 | --- | --- | --- | --- |
@@ -12,6 +13,22 @@ These pins follow [InvUI's compatibility table](https://github.com/NichtStudioCo
 26.1 means the supported patched release **26.1.2**; 26.1 and 26.1.1 are not claimed supported.
 Minecraft 1.21.x remains on `maintenance/1.21` with its existing 1.x build system.
 
+## Branches
+
+- `maintenance/26.1.2` defaults to Minecraft 26.1.2 / InvUI 2.1.1.
+- `maintenance/26.2` defaults to Minecraft 26.2 / InvUI 2.3.2.
+- `maintenance/26.3` defaults to Minecraft 26.3 / InvUI 2.5.0.
+
+Each maintenance branch sets `minecraftTarget` in `gradle.properties`, so a plain
+`./gradlew build` produces its matching distribution. InvUI fixes can be committed
+independently on that branch. Cherry-pick shared fixes to the other maintained
+branches as appropriate. Explicit `-PminecraftTarget` overrides remain available
+for cross-version validation. All three branches are initially local only.
+
+Release pushes and manual dispatches on a maintenance branch publish only that
+branch's target. Selecting a different target explicitly is rejected. Main's
+release workflow can still publish all targets. CI checks the matching target on maintenance branches and all three on main.
+
 ## Build
 
 ```powershell
@@ -20,7 +37,8 @@ Minecraft 1.21.x remains on `maintenance/1.21` with its existing 1.x build syste
 ./gradlew.bat build '-PminecraftTarget=26.3'
 ```
 
-The default is 26.3. Unknown targets fail configuration. Each module writes to
+The shared development branch defaults to 26.3; maintenance branches use their
+configured target. Unknown targets fail configuration. Each module writes to
 `build/mc<target>/`, so successive builds preserve the other targets' binaries
 and reports. For example, the current lean build is
 `spyglass/build/mc26.2/libs/Spyglass-2.0.0-mc26.2-SNAPSHOT.jar`; the fallback adds
@@ -60,8 +78,9 @@ No workflow or release has been pushed or published as part of this local setup.
 Every matching distribution uses an InvUI inventory window for `/sg inventory`
 (aliases `/sg inv`, `/sg salvage`), container snapshots and player snapshots.
 `/sg rollback storage` is not a registered command. Normal feedback, errors and
-empty-result messages can still appear in chat. All supported builds enable the inventory browser. An unexpected snapshot GUI
-exception still logs a warning and provides the existing emergency text listing.
+empty-result messages can still appear in chat. All supported builds use the inventory browser exclusively. Console/RCON receives
+an in-game-only error. An unavailable or failing GUI reports an error without
+listing or recovering items. The text recovery commands have been removed.
 
 Player inventory history requires `snapshot.players.enabled=true`; it remains off
 by default because periodic capture consumes storage. Container snapshots do not
@@ -69,7 +88,7 @@ require that setting. Permissions and available history still apply.
 
 ## Validation
 
-Each target passed Gradle `build`: 1,062 tests discovered, 969 passed, 93 skipped,
+After removing text recovery, each target passed Gradle `build`: 1,068 tests discovered, 975 passed, 93 skipped,
 zero failures. The skips are 92 Docker-dependent tests plus the Windows-only
 read-only-directory assumption. Both lean and shaded artifact metadata were checked
 for the target API version, embedded target and relocated InvUI classes. Release
@@ -97,3 +116,8 @@ every click mode, every backend, FAWE or every event type. Test servers are isol
 from production. The runnable probe remains `regression/bot/_26.3-gui.mjs` and now
 supports the same checks on all three targets; configure it as described in the
 [port report](minecraft-26.3.md#repeating-the-gui-probe).
+
+After removing chat alternatives, the shaded GUI probe passed again on all three
+targets, including container/player snapshots and rollback salvage recovery.
+Console commands were verified to return in-game-only errors. New regression
+tests cover missing views and thrown GUI errors without text listing or store access.

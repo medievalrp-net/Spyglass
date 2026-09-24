@@ -27,7 +27,7 @@ public final class HelpService {
             new Entry("events", "", "List every event type currently being recorded."),
             // Page 2: queue/admin/migration.
             new Entry("rbqueue", "", "List, cancel, or resume queued rollback jobs."),
-            new Entry("inventory", "[id]", "Recover items a rollback destroyed (GUI where available)."),
+            new Entry("inventory", "", "Open the rollback salvage inventory GUI (in-game only)."),
             new Entry("stats", "", "Show ingest analytics (when enabled in config)."),
             new Entry("import", "<file | mysql <source>>", "Import a CoreProtect database: a SQLite file from plugins/Spyglass/import/, or a live MySQL source from import.conf."),
             new Entry("migrate", "<backend>", "Copy all records into another configured storage backend."),

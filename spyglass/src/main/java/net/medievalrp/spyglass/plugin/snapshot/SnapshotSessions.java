@@ -15,8 +15,7 @@ import org.jetbrains.annotations.ApiStatus;
 /**
  * Per-sender TTL cache of the last {@code /sg snapshot} a sender resolved
  * (#341), the {@link net.medievalrp.spyglass.plugin.command.PageCache}
- * idiom applied to snapshots: the GUI and the text-fallback take command
- * must act on exactly the state the operator was shown, not a fresh
+ * idiom applied to snapshots: GUI clicks must act on exactly the state the operator was shown, not a fresh
  * re-read that could have moved on since (a later deposit, another
  * operator's take, a second snapshot the same sender ran in the
  * meantime). A sender holds exactly one live session; resolving a new

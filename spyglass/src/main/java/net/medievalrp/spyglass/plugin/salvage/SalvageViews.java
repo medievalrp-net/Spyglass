@@ -13,7 +13,7 @@ public final class SalvageViews {
 
     /**
      * The InvUI GUI view for this server, or {@code null} on versions InvUI does
-     * not support (the caller then serves salvage through the command path only).
+     * not support (the caller reports that the GUI is unavailable).
      *
      * @param minecraftVersion {@code Bukkit.getMinecraftVersion()}, e.g.
      *                      {@code "26.3"}

@@ -13,8 +13,8 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 /**
- * The extract path for salvage, shared by the InvUI GUI ({@link InvUiSalvageView})
- * and the command path ({@code SalvageService}). Taking items out of a captured
+ * The extract path for the InvUI salvage GUI ({@link InvUiSalvageView}).
+ * Taking items out of a captured
  * container is the correctness-critical part (dupe prevention), so it lives in
  * one place with its own tests rather than being duplicated per surface.
  *
@@ -45,7 +45,7 @@ public final class SalvageWithdrawals {
     record Outcome(Status status, SalvageSnapshot updated) {
     }
 
-    /** Summary of a whole-snapshot {@link #withdrawAll} (the command path). */
+    /** Summary of a whole-snapshot {@link #withdrawAll}. */
     public record BulkResult(int stacksTaken, int itemsTaken, boolean emptied, boolean inventoryFull) {
     }
 
@@ -134,7 +134,7 @@ public final class SalvageWithdrawals {
 
     /**
      * Take every remaining item of {@code snap} into the player's inventory
-     * (command path). Must run on the main thread; issues one store write.
+     * (bulk operation). Must run on the main thread; issues one store write.
      * Re-reads the snapshot first for the same stale-view reason as
      * {@link #withdraw} (#291).
      */

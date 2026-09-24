@@ -48,9 +48,7 @@ import xyz.xenondevs.invui.window.Window;
  * viewer's inventory (never depletes the session, since the session is a
  * read of the past, not a live container). The take itself - the permission
  * re-check, the whole-stack-or-refuse fit rule, and the audit record - is
- * {@link SnapshotTakes#take}, the exact engine the text-fallback
- * {@code /sg snapshot take <token> <slot>} command calls, so the two surfaces
- * cannot drift apart (the {@code SalvageWithdrawals} precedent). InvUI content
+ * {@link SnapshotTakes#take}. InvUI content
  * slots are click-cancelled by default (see {@code InvUiSalvageView}'s
  * javadoc), so the GUI is inherently extract-only.
  *
@@ -282,8 +280,7 @@ final class InvUiSnapshotView implements SnapshotView {
      * Delegate a click to the shared take engine and translate the result
      * into feedback. Slots stay populated after a take (this reads a past
      * instant, not a live container) - the session never depletes and needs
-     * no in-flight tracker, unlike the salvage withdraw path. Wording matches
-     * the text-fallback path in {@code SnapshotService}.
+     * no in-flight tracker, unlike the salvage withdraw path.
      */
     private void takeCopy(Player viewer, SnapshotSession session, SnapshotSlot slot) {
         SnapshotTakes.Result result = takes.take(viewer, session, slot.slot());

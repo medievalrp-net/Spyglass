@@ -223,18 +223,11 @@ public final class SpyglassCommands {
                 // of a rollback-destroyed container is a distinct capability from
                 // running a rollback, so an operator can grant recovery without
                 // granting rollback (and vice versa). See plugin.yml (#199).
-                // No args: open the GUI (InvUI, supported versions) or print the
-                // listing (26.x / console).
+                // Open the in-game inventory GUI.
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.salvage")
                         .handler(ctx -> salvage.execute(ctx.sender())));
-                // /sg inventory <id>: recover a container's items via command
-                // (players only). The only recovery path on versions without the
-                // GUI, and always available for the clickable [Recover] listing.
-                manager.command(manager.commandBuilder(root).literal(name)
-                        .required("id", StringParser.stringParser())
-                        .permission("spyglass.salvage")
-                        .handler(ctx -> salvage.withdraw(ctx.sender(), ctx.get("id"))));
+
             }
 
             for (String name : SNAPSHOT_ALIASES) {
@@ -248,18 +241,7 @@ public final class SpyglassCommands {
                                 suggestions.snapshotParamsProvider())
                         .permission("spyglass.snapshot")
                         .handler(ctx -> snapshot.execute(ctx.sender(), ctx.get("params"))));
-                // /sg snapshot take <token> <slot>: the text-fallback take path
-                // (the GUI clicks reach the same SnapshotService.take). Gated on
-                // spyglass.snapshot.take, which the GUI re-checks per click. The
-                // literal "take" child is matched before the greedy params above,
-                // the same literal-before-variable routing /sg import mysql relies
-                // on. Hidden from help - it exists for the listing's [take] links.
-                manager.command(manager.commandBuilder(root).literal(name).literal("take")
-                        .required("token", StringParser.stringParser())
-                        .required("slot", IntegerParser.integerParser())
-                        .permission("spyglass.snapshot.take")
-                        .handler(ctx -> snapshot.take(ctx.sender(),
-                                ctx.get("token"), ctx.get("slot"))));
+
             }
 
             // /spyglass tele <world> <x> <y> <z> — wired to search-result click

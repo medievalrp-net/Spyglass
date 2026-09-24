@@ -76,7 +76,7 @@ Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQL
 
 ## Supported releases
 
-`main` produces separate Java 25 builds for Minecraft 26.1.2, 26.2 and 26.3, each bundling its matching InvUI version. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`. InvUI 2 is version-specific: install the artifact labeled for your exact server version.
+`main` produces separate Java 25 builds for Minecraft 26.1.2, 26.2 and 26.3, each bundling its matching InvUI version. Each version also has a `maintenance/26.x` branch with its own default target. See [versioned builds and releases](docs/versioned-builds.md) for exact branch names. Minecraft 1.21.x remains on [`maintenance/1.21`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`. InvUI 2 is version-specific: install the artifact labeled for your exact server version.
 
 The 2.0 line is under development; use the 1.x release assets for 1.21 servers.
 
