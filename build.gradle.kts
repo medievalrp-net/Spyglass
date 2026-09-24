@@ -41,7 +41,21 @@ dependencies {
     nmcpAggregation(project(":spyglass-api"))
 }
 
-val paperApiVersion = "26.3.build.38-alpha"
+// InvUI 2 supports one Minecraft release per dependency version.
+val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse("26.3")
+val targets = mapOf(
+    "26.1.2" to ("26.1.2.build.74-stable" to "2.1.1"),
+    "26.2" to ("26.2.build.129-stable" to "2.3.2"),
+    "26.3" to ("26.3.build.38-alpha" to "2.5.0"),
+)
+val target = targets[minecraftTarget]
+    ?: error("Unsupported minecraftTarget '$minecraftTarget'; choose ${targets.keys}")
+val paperApiVersion = target.first
+extra["minecraftTarget"] = minecraftTarget
+extra["invUiVersion"] = target.second
+val baseVersion = providers.gradleProperty("version").get()
+val targetVersion = baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
+    if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""
 val velocityApiVersion = "3.4.0-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
 val clickhouseClientVersion = "0.9.8"
@@ -82,7 +96,8 @@ fun dockerIsAvailable(): Boolean = try {
 
 allprojects {
     group = providers.gradleProperty("group").get()
-    version = providers.gradleProperty("version").get()
+    version = targetVersion
+    layout.buildDirectory.set(layout.projectDirectory.dir("build/mc$minecraftTarget"))
 
     repositories {
         mavenCentral()

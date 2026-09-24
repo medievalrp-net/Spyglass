@@ -79,7 +79,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>This class does not open a GUI itself; it hands a resolved
  * {@link SnapshotSession} to the injected {@link SnapshotView} when one is
  * present and the sender is a player, and falls back to a text listing
- * otherwise (26.x, console/RCON, or no GUI wired) - the same split
+ * otherwise (console/RCON or no GUI wired) - the same split
  * {@code SalvageService} draws for {@code /sg inventory}.
  *
  * <p>Every store/query call and every {@link Block#getState()} /

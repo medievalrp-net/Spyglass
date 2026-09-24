@@ -1,3 +1,9 @@
+> Modern 2.x releases use Minecraft-specific versions and tags. See
+> [versioned builds](docs/versioned-builds.md) for the current release workflow.
+> Pass `-PminecraftTarget=26.1.2`, `26.2`, or `26.3` to every build or
+> publication command below; omission defaults to 26.3. Maven versions include
+> the `-mc<target>` suffix, preventing artifacts for different servers from colliding.
+
 # Publishing spyglass-api to Maven Central
 
 Only `spyglass-api` is published (Apache-2.0). The GPL modules

@@ -1,158 +1,98 @@
 name: Release
-
-# Cuts a GitHub release whenever `version` in gradle.properties names a tag that
-# doesn't exist yet. Bump the version and push to main to ship; pushes that
-# don't change the version no-op. Also runnable on demand via "Run workflow".
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
-
+  workflow_dispatch:
+    inputs:
+      minecraft:
+        description: Minecraft release to publish
+        type: choice
+        default: all
+        options: [all, '26.1.2', '26.2', '26.3']
 permissions:
   contents: write
-
 concurrency:
   group: release
   cancel-in-progress: false
-
 jobs:
   release:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      release_exists: ${{ steps.exists.outputs.exists }}
-      has_central: ${{ steps.guard.outputs.has_central }}
+    strategy:
+      fail-fast: false
+      matrix:
+        minecraft: ['26.1.2', '26.2', '26.3']
+    env:
+      MC: ${{ matrix.minecraft }}
+      REQUESTED_MC: ${{ inputs.minecraft || 'all' }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Read project version
-        id: ver
-        run: echo "version=$(grep '^version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Check whether this release already exists
-        id: exists
+      - name: Select release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "${{ steps.ver.outputs.version }}" == *-SNAPSHOT ]] || gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release v${{ steps.ver.outputs.version }} is a snapshot or already exists - nothing to publish."
+          base=$(sed -n 's/^version=//p' gradle.properties | tr -d '\r[:space:]')
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]] || exit 1
+          tag="v${base}-mc${MC}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$base" == *-SNAPSHOT ]] || [[ "$REQUESTED_MC" != all && "$REQUESTED_MC" != "$MC" ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "$tag" --json isDraft --jq '.isDraft' > existing-release; then
+            # Resume a draft whose upload was interrupted; never replace a published release.
+            echo "publish=$(cat existing-release)" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-
-      # Gate the Maven Central publish on the credentials existing, so releases
-      # keep working before the one-time Central setup is done (see PUBLISHING.md).
-      # secrets can't be read in a job-level `if`, so surface presence as an output.
-      - name: Detect Central Portal credentials
-        id: guard
-        env:
-          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
-        run: |
-          if [ -n "$CENTRAL_PORTAL_USERNAME" ]; then
-            echo "has_central=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_central=false" >> "$GITHUB_OUTPUT"
-            echo "CENTRAL_PORTAL_USERNAME not set - the Maven Central publish will be skipped."
-          fi
-
-      - name: Set up JDK 25
-        if: steps.exists.outputs.exists == 'false'
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
+        if: steps.release.outputs.publish == 'true'
         with:
           distribution: temurin
           java-version: '25'
-
-      - name: Set up Gradle
-        if: steps.exists.outputs.exists == 'false'
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build (tests + both jars)
-        if: steps.exists.outputs.exists == 'false'
-        run: ./gradlew build --no-daemon --stacktrace
-
-      - name: Stage release assets
-        if: steps.exists.outputs.exists == 'false'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.release.outputs.publish == 'true'
+      - name: Build and test matching dependencies
+        if: steps.release.outputs.publish == 'true'
+        run: ./gradlew build -PminecraftTarget="$MC" --no-daemon --stacktrace
+      - name: Stage labeled assets
+        if: steps.release.outputs.publish == 'true'
+        run: python3 scripts/stage-release.py "$MC"
+      - name: Create or resume draft at this exact commit
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          v="${{ steps.ver.outputs.version }}"
-          mkdir -p dist
-          # Stable, version-less asset names so the SpigotMC "external download"
-          # link can point at /releases/latest/download/<name> permanently.
-          cp "spyglass/build/libs/Spyglass-${v}.jar"        "dist/Spyglass.jar"
-          cp "spyglass/build/libs/Spyglass-${v}-shaded.jar" "dist/Spyglass-shaded.jar"
-          cp "spyglass-velocity/build/libs/Spyglass-Velocity-${v}.jar" "dist/Spyglass-Velocity.jar"
-          # spyglass-api ships here too, as a fallback channel to Maven Central.
-          # Central is the supported route, but when a publish stalls (see
-          # PUBLISHING.md) this is the difference between an integrator being
-          # mildly inconvenienced and being blocked with no artifact at all.
-          cp "spyglass-api/build/libs/spyglass-api-${v}.jar"         "dist/spyglass-api.jar"
-          cp "spyglass-api/build/libs/spyglass-api-${v}-sources.jar" "dist/spyglass-api-sources.jar"
-          cp "spyglass-api/build/libs/spyglass-api-${v}-javadoc.jar" "dist/spyglass-api-javadoc.jar"
-          {
-            echo "**Spyglass v${v}** - forensic logging & rollback for Paper 26.3 (Java 25)."
-            echo
-            # Brief "what was fixed" summary, maintained per release in this file.
-            if [ -f .github/release-notes.md ]; then
-              echo "### What's fixed"
-              echo
-              cat .github/release-notes.md
-              echo
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+              echo "Tag already exists without a release; verify its commit before publishing."; exit 1;
             fi
-            echo "### Downloads"
-            echo "- **\`Spyglass.jar\`** (recommended) - lean build. Paper's library loader"
-            echo "  downloads its database driver, command framework, and config libs from"
-            echo "  Maven Central on first start (needs outbound internet once; cached under"
-            echo "  \`<server>/libraries/\`)."
-            echo "- **\`Spyglass-shaded.jar\`** - fat fallback with every dependency bundled."
-            echo "  Use it if your host blocks outbound network at boot, or you hit a"
-            echo "  library-loader issue. Identical behavior, larger file."
-            echo "- **\`Spyglass-Velocity.jar\`** - optional Velocity proxy companion for"
-            echo "  cross-server search. Read-only: never writes records, never rolls back."
-            echo "  Install on the proxy only if you run a Velocity network; a standalone"
-            echo "  Paper server doesn't need it."
-            echo
-            echo "### For plugin developers"
-            echo "- **\`spyglass-api.jar\`** (plus \`-sources\`/\`-javadoc\`) - the Apache-2.0"
-            echo "  API, for compiling against Spyglass. Prefer Maven Central:"
-            echo "  \`net.medievalrp:spyglass-api:${v}\`. These jars are a fallback for when"
-            echo "  Central hasn't caught up yet. Server owners don't need this file."
-          } > dist/NOTES.md
-
-      - name: Create release
-        if: steps.exists.outputs.exists == 'false'
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+              --title "Spyglass ${TAG#v} (Minecraft $MC)" --notes-file dist/NOTES.md
+          fi
+          # A draft may be resumed only from the commit that originally created it.
+          [[ "$(gh release view "$TAG" --json targetCommitish --jq '.targetCommitish')" == "$GITHUB_SHA" ]] || {
+            echo "Draft belongs to a different commit; inspect it before retrying."; exit 1;
+          }
+          gh release upload "$TAG" dist/*.jar dist/SHA256SUMS --clobber
+      - name: Publish release
+        if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release create "v${{ steps.ver.outputs.version }}" \
-            dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
-            dist/spyglass-api.jar dist/spyglass-api-sources.jar dist/spyglass-api-javadoc.jar \
-            --title "Spyglass ${{ steps.ver.outputs.version }}" \
-            --notes-file dist/NOTES.md
-
-  # Publishes spyglass-api (Apache-2.0) to Maven Central, aligned with the
-  # GitHub release above. Runs only when a new release was just cut and the
-  # Central credentials are configured; otherwise it is skipped, not failed.
-  # One-time setup (account, namespace, signing key, secrets) is in PUBLISHING.md.
-  publish-maven-central:
-    needs: release
-    if: needs.release.outputs.release_exists == 'false' && needs.release.outputs.has_central == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '25'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Publish spyglass-api to Maven Central
+          latest=false
+          if [[ "$MC" == 26.3 ]]; then latest=true; fi
+          gh release edit "$TAG" --draft=false --latest="$latest"
+      - name: Publish target-specific API to Central
+        if: steps.release.outputs.publish == 'true'
         env:
           CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
           CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: ./gradlew publishAggregationToCentralPortal --no-daemon --stacktrace
+        run: |
+          if [[ -n "$CENTRAL_PORTAL_USERNAME" ]]; then
+            ./gradlew publishAggregationToCentralPortal -PminecraftTarget="$MC" --no-daemon --stacktrace
+          else
+            echo "Central credentials absent; API jars remain available in the GitHub release."
+          fi

@@ -1,4 +1,4 @@
-// Isolated 26.3 server probe. Requires WorldEdit; older bot transport via ViaBackwards.
+// Isolated Minecraft 26.x server probe. Requires WorldEdit; older bot transport via ViaBackwards.
 // All movement is server teleportation because the bridge rejects bot movement packets.
 import mineflayer from "mineflayer";
 import { rcon, sleep, sgOp, blockIs } from "./cases/lib.js";
@@ -37,11 +37,11 @@ const windowAfter = async (action) => {
   console.log("WINDOW", w.title);
   return w;
 };
-const count = async () => {
+const count = async (item = "diamond") => {
   const data = await rcon(`data get entity ${name} Inventory`);
   console.log("INVENTORY", data);
   return [...data.matchAll(/\{[^{}]*\}/g)]
-    .filter((m) => m[0].includes('id: "minecraft:diamond"'))
+    .filter((m) => m[0].includes(`id: "minecraft:${item}"`))
     .reduce(
       (sum, m) => sum + Number(m[0].match(/count:\s*(\d+)/)?.[1] || 0),
       0,
@@ -121,6 +121,25 @@ try {
   ck((await count()) === 7, "reopening empty salvage gives no duplicates");
   await sgOp(bot, "undo", "");
   ck(await blockIs(65, 80, 65, "chest"), "undo restores chest");
+  // Requires snapshot.players.enabled=true and interval=1s on this test server.
+  await rcon(`clear ${name}`);
+  await rcon(`give ${name} emerald 3`);
+  await sleep(4000);
+  w = await windowAfter(() => bot.chat(`/sg snapshot p:${name} t:1s`));
+  const emeraldSlot = w.slots
+    .slice(0, w.inventoryStart)
+    .findIndex((item) => item?.name === "emerald");
+  ck(
+    emeraldSlot >= 0 && w.slots[emeraldSlot].count === 3,
+    "player snapshot renders three emeralds",
+  );
+  await bot.clickWindow(emeraldSlot, 0, 0);
+  await sleep(1500);
+  ck(
+    (await count("emerald")) === 6,
+    "player snapshot click copies three emeralds",
+  );
+  bot.closeWindow(bot.currentWindow);
   console.log("GUI PROBE PASS");
   bot.quit();
   process.exit(0);

@@ -217,6 +217,13 @@ public final class SpyglassPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        if (!MinecraftTarget.supports(getServer().getMinecraftVersion())) {
+            getLogger().severe("This Spyglass build requires Minecraft " + MinecraftTarget.version()
+                    + "; server is " + getServer().getMinecraftVersion()
+                    + ". Install the matching Minecraft release of Spyglass.");
+            setEnabled(false);
+            return;
+        }
         try {
             config = SpyglassConfig.load(this);
         } catch (Exception ex) {
@@ -736,8 +743,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                     snap.containerType(), 0, amount, salvageStored, null));
         };
         // One shared, dupe-guarded extract engine behind both the GUI and the
-        // command. On Minecraft 26.3 we build the InvUI 2.5 GUI; other release
-        // lines retain command recovery without loading incompatible internals.
+        // command. Each supported distribution builds its matching InvUI GUI;
+        // the Minecraft target check above rejects incompatible servers.
         // The InvUI view manages its own
         // click listeners, so no registerEvents here.
         SalvageWithdrawals salvageWithdrawals = salvageStore == null ? null
@@ -752,9 +759,8 @@ public final class SpyglassPlugin extends JavaPlugin {
         // /sg snapshot (#341): view a player inventory or container as of a past
         // instant and take copies out. Every take is audited onto snapshot-take
         // (reusing ItemPickupRecord + the extensions channel, the salvage-withdraw
-        // precedent). SnapshotViews.guiOrNull returns the InvUI GUI on 26.3 and null
-        // elsewhere, where the service falls back to a clickable text listing - the
-        // same split SalvageViews draws. The take permission gates both surfaces.
+        // precedent). Every supported build supplies the matching InvUI GUI.
+        // The take permission gates both the GUI and explicit command paths.
         SnapshotTakeLogger snapshotTakeLogger =
                 new SnapshotTakeLogger(apiImpl, support, getLogger());
         SnapshotSessions snapshotSessions = new SnapshotSessions();

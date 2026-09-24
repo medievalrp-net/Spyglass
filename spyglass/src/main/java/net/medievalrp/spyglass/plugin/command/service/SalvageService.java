@@ -19,11 +19,10 @@ import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Backs {@code /sg inventory}. On Minecraft versions with the InvUI GUI a player
- * gets the chest-icon browser; everywhere else (26.x and the console/RCON) it is
+ * Backs {@code /sg inventory}. Each supported build gives players the InvUI
+ * chest-icon browser; non-player senders and callers without a GUI receive
  * a text listing plus {@code /sg inventory <id>} to recover a container's items.
- * The command path has no inventory-click surface, so it is safe to serve on
- * versions whose GUI dupe-safety we cannot verify.
+ * The explicit command path shares the GUI's guarded withdrawal engine.
  */
 public final class SalvageService {
 
@@ -55,7 +54,7 @@ public final class SalvageService {
             view.open(player);
             return;
         }
-        // No GUI (26.x) or a non-player sender: text listing. store.list() is a
+        // No GUI supplied or a non-player sender: text listing. store.list() is a
         // blocking DB query, so read off-thread and print back on the main thread.
         boolean recoverable = sender instanceof Player;
         support.onAsyncThread(() -> {

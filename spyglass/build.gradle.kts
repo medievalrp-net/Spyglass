@@ -10,6 +10,8 @@ plugins {
 }
 
 val paperApiVersion: String by rootProject.extra
+val minecraftTarget: String by rootProject.extra
+val invUiVersion: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
 val sqliteJdbcVersion: String by rootProject.extra
@@ -80,8 +82,8 @@ dependencies {
     // requires relocation to avoid clashing with other plugins' copies. It is
     // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
     implementation("org.bstats:bstats-bukkit:$bstatsVersion")
-    // InvUI 2.5 targets Minecraft 26.3 / Java 25; legacy support lives on maintenance/1.21.
-    implementation("xyz.xenondevs.invui:invui:2.5.0")
+    // Each artifact bundles the InvUI release pinned for its Minecraft target.
+    implementation("xyz.xenondevs.invui:invui:$invUiVersion")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -105,12 +107,18 @@ dependencies {
 }
 
 tasks.processResources {
+    inputs.property("minecraftTarget", minecraftTarget)
+    inputs.property("invUiVersion", invUiVersion)
+    filesMatching("spyglass-target.properties") {
+        expand("minecraftTarget" to minecraftTarget, "invUiVersion" to invUiVersion)
+    }
     filesMatching("plugin.yml") {
         // Inject the version + externalized library versions into plugin.yml so
         // the `libraries:` block tracks the root version catalog instead of
         // drifting in a hand-edited descriptor.
         expand(
             "version" to project.version,
+            "minecraftTarget" to minecraftTarget,
             "mongoDriverVersion" to mongoDriverVersion,
             "clickhouseClientVersion" to clickhouseClientVersion,
             "sqliteJdbcVersion" to sqliteJdbcVersion,

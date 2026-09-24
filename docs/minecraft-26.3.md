@@ -1,13 +1,13 @@
 # Minecraft 26.3 port
 
-The 2.0 development line targets Paper 26.3 / Java 25. Minecraft 1.21.x is maintained separately on `maintenance/1.21`, starting at the v1.0.12 release (`4da291b`). No published history was rewritten.
+This records the initial Paper 26.3 / Java 25 port. The 2.0 line now produces [separate builds for each supported Minecraft version](versioned-builds.md). Minecraft 1.21.x is maintained separately on `maintenance/1.21`, starting at the v1.0.12 release (`4da291b`). No published history was rewritten.
 
 ## Dependencies and compatibility
 
 - Paper API: `26.3.build.38-alpha`.
 - Cloud Minecraft: `2.0.1`. The old beta.16 item parser searched signatures removed from CraftItemStack and disabled the entire plugin at startup; 2.0.1 supports `asBukkitMirror`.
 - InvUI: `2.5.0`, bundled and relocated in both distributions. Its click, item-provider, window and pagination APIs replace the InvUI 1.x APIs.
-- The GUI gate reads `Server.getMinecraftVersion()`, not the changing Bukkit artifact-version format. Only the validated `26.3` release line loads InvUI internals. Other future versions retain the command/text fallback; they are not claimed supported.
+- The GUI gate reads `Server.getMinecraftVersion()`, not the changing Bukkit artifact-version format. Each artifact only loads on its embedded Minecraft target; mismatched versions are rejected before configuration or InvUI initialization.
 - WorldEdit compile API: 7.4.5. Live WorldEdit testing used the 26.3-compatible 7.4.6-beta-01 plugin. FAWE remains an optional compile-only API; no 26.3 FAWE runtime was validated.
 - Java 25 toolchains, JaCoCo 0.8.14 and Adventure 5-compatible test assertions.
 
@@ -38,7 +38,7 @@ No production service was changed. The isolated test server was stopped after ve
 
 ## Repeating the GUI probe
 
-Use a disposable Paper 26.3 server with SQLite, the candidate Spyglass jar, WorldEdit 7.4.6-beta-01, ViaVersion and ViaBackwards 5.12.0, offline mode, whitelist disabled, and loopback-only game/RCON ports. The probe changes blocks near 64,80,64, creates an operator bot, and exercises item recovery. Do not run it against production.
+Use a disposable Paper 26.3 server with SQLite, the candidate Spyglass jar, WorldEdit 7.4.6-beta-01, ViaVersion and ViaBackwards 5.12.0, offline mode, whitelist disabled, and loopback-only game/RCON ports. Enable `snapshot.players.enabled=true` and set its interval to `1s` in this disposable server's config; the probe now checks player snapshots too. The probe changes blocks near 64,80,64, creates an operator bot, and exercises item recovery. Do not run it against production.
 
 Install the regression bot dependencies with `npm install --prefix regression/bot`. Set `SG_PORT`, `SG_RCON_PORT`, `SG_RCON_PASS`, and optionally `SG_HOST` (defaults to loopback), then run:
 

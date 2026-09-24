@@ -4,7 +4,7 @@ import java.util.logging.Logger;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 
-/** Selects the InvUI 2.5 GUI on its supported Minecraft 26.3 release line. */
+/** Selects the bundled InvUI GUI on its pinned Minecraft release. */
 public final class SnapshotViews {
 
     private SnapshotViews() {
@@ -35,6 +35,6 @@ public final class SnapshotViews {
 
     /** InvUI 2 is version-specific; do not load its internals on another release line. */
     public static boolean invUiSupported(String minecraftVersion) {
-        return minecraftVersion != null && minecraftVersion.matches("26\\.3(?:-.*)?");
+        return net.medievalrp.spyglass.plugin.MinecraftTarget.supports(minecraftVersion);
     }
 }
