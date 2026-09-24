@@ -9,6 +9,12 @@ softdepend:
   - FastAsyncWorldEdit
   - CraftBook
 permissions:
+  spyglass.reload:
+    description: Reload live Spyglass configuration settings.
+    default: op
+  spyglass.update:
+    description: Receive compatible release notifications.
+    default: op
   spyglass.use:
     default: op
   spyglass.search:

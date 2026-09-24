@@ -8,7 +8,7 @@ A standalone CLI imports existing CoreProtect databases into Spyglass — see [`
 
 Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
-**Docs:** [Commands & query reference](COMMANDS.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
+**Docs:** [Commands & query reference](COMMANDS.md) · [Live config & updates](docs/live-configuration-and-updates.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
 
 ## Sponsors
 
@@ -100,6 +100,8 @@ Root command is `/spyglass`, aliased to `/sg`. The full reference - every comman
 /sg rollback p:griefer t:6h r:100             # revert a griefer's last 6h nearby
 /sg undo                                       # reverse your last rollback
 /sg tool                                       # toggle the inspector wand
+/sg reload                                     # reload supported live config settings
+/sg version                                    # version and compatible update status
 /sg import database.db                         # import a CoreProtect history
 /sg migrate clickhouse                         # move all records to another backend
 ```

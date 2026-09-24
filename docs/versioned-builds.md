@@ -10,17 +10,19 @@ One shared modern codebase produces three distributions. Java 25 is required for
 
 These pins follow [InvUI's compatibility table](https://github.com/NichtStudioCode/InvUI#version-compatibility).
 26.1 means the supported patched release **26.1.2**; 26.1 and 26.1.1 are not claimed supported.
-Minecraft 1.21.x remains on `maintenance/1.21` with its existing 1.x build system.
+Minecraft 1.21.x remains on `maintenance/1.21.11` with its existing 1.x build system.
 
 ## Branches
 
 `main` is the shared modern development line for Minecraft 26.1.2, 26.2 and 26.3.
-`maintenance/1.21` retains the legacy InvUI 1.x implementation and separate releases.
+`maintenance/1.21.11` retains the legacy InvUI 1.x implementation and separate releases.
 There are no modern per-Minecraft maintenance branches. Dependency versions are
 selected by the Gradle target, not by different source branches.
 
 The modern work is currently local on `codex/minecraft-26.3`, pending integration
 into `main`; the original divergent local `main` checkout has been preserved.
+The requested legacy name is local `maintenance/1.21.11`; the older
+`maintenance/1.21` reference remains unchanged pending publication.
 
 ## Build
 

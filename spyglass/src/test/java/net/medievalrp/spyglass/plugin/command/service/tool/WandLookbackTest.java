@@ -46,8 +46,9 @@ class WandLookbackTest {
                 Material.GLOWSTONE, Duration.parse("3w")));
 
         SearchService search = mock(SearchService.class);
-        WandInteractListener listener = new WandInteractListener(
-                mock(ToolService.class), search, config);
+        ToolService tool = mock(ToolService.class);
+        when(tool.isActive(any())).thenReturn(true);
+        WandInteractListener listener = new WandInteractListener(tool, search, config);
 
         World world = mock(World.class);
         when(world.getUID()).thenReturn(UUID.randomUUID());
@@ -58,6 +59,7 @@ class WandLookbackTest {
         Location location = new Location(world, 1, 64, 2);
 
         Player player = mock(Player.class);
+        when(player.hasPermission("spyglass.tool")).thenReturn(true);
         List<Component> messages = new ArrayList<>();
         doAnswer(invocation -> {
             messages.add(invocation.getArgument(0));

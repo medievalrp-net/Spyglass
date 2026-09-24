@@ -210,7 +210,7 @@ public final class SpyglassPlugin extends JavaPlugin {
      * nothing in flight is lost (see onDisable).
      */
     private DeferredSerializer deferredSerializer;
-    private SpyglassConfig config;
+    private volatile SpyglassConfig config;
     private Metrics metrics;
     private WorldEditSubscriber worldEditSubscriber;
     private WorldEditLifecycleListener worldEditLifecycle;
@@ -396,6 +396,8 @@ public final class SpyglassPlugin extends JavaPlugin {
         // record id (#44): instance bits keep sequences collision-free
         // when multiple backends share one store.
         net.medievalrp.spyglass.api.util.EventIds.bindInstance(config.server().name().hashCode());
+        CommandRedaction commandRedaction = new CommandRedaction(config.commandRedact());
+        recorder.setIntakeFilter(record -> net.medievalrp.spyglass.plugin.config.LiveConfig.recordsEnabled(config, record));
         RecordingSupport support = new RecordingSupport(config.storage().retention(), config.server().name());
         DelayedInteractionTracker delayedTracker = new DelayedInteractionTracker(this);
         // #226: shared between the hopper-transfer listener and the purge timer
@@ -405,7 +407,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         // Every recording listener in one list. `events()` declares the event
         // names each emits; we register with Bukkit only when at least one is
         // enabled in config.
-        List<RecordingListener> listeners = List.of(
+        List<RecordingListener> listeners = new java.util.ArrayList<>(List.of(
                 new BlockBreakListener(recorder, support, deferredSerializer),
                 new MultiBlockBreakListener(recorder, support),
                 new DependantBreakListener(recorder, support),
@@ -427,7 +429,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new ContainerDropListener(recorder, support),
                 new ChatListener(recorder, support),
                 new CommandListener(recorder, support,
-                        new CommandRedaction(config.commandRedact())),
+                        commandRedaction),
                 new JoinListener(recorder, support),
                 new QuitListener(recorder, support),
                 new LeavesDecayListener(recorder, support),
@@ -459,7 +461,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new CrafterListener(recorder, support, deferredSerializer),
                 new SculkListener(recorder, support),
                 new BrushListener(recorder, support, delayedTracker),
-                new VaultListener(recorder, support, delayedTracker));
+                new VaultListener(recorder, support, delayedTracker)));
+        if (CraftBookSignListener.isCraftBookEnabled()) listeners.add(new CraftBookSignListener(recorder, support));
         for (RecordingListener listener : listeners) {
             if (listener.events().stream().anyMatch(enabledEvents::contains)) {
                 getServer().getPluginManager().registerEvents(listener, this);
@@ -469,11 +472,6 @@ public final class SpyglassPlugin extends JavaPlugin {
         // on the server — a vanilla deployment doesn't need PlayerInteract
         // fired against every sign-right-click for a feature no one's
         // using.
-        if (CraftBookSignListener.isCraftBookEnabled() && enabledEvents.contains("useSign")) {
-            getServer().getPluginManager().registerEvents(
-                    new CraftBookSignListener(recorder, support), this);
-            getLogger().info("Spyglass: CraftBook detected, useSign logging enabled.");
-        }
 
         SpyglassLimits apiLimits = new SpyglassLimits(
                 config.limits().maxRadius(),
@@ -649,8 +647,8 @@ public final class SpyglassPlugin extends JavaPlugin {
                         rollbackQueue, resumeStore, rollbackService, serviceSupport);
         ToolService toolService = new ToolService(
                 toolStateStore, config.tool().material(), serviceSupport, getLogger());
-        getServer().getPluginManager().registerEvents(
-                new WandInteractListener(toolService, searchService, config), this);
+        WandInteractListener wandListener = new WandInteractListener(toolService, searchService, config);
+        getServer().getPluginManager().registerEvents(wandListener, this);
         TeleportService teleportService = new TeleportService();
 
         // CoreProtect import (Task 9): a separate credentials file
@@ -795,6 +793,49 @@ public final class SpyglassPlugin extends JavaPlugin {
                 importDir,
                 migrateService,
                 config.commands().sAlias());
+        commands.setReloadHandler(sender -> {
+            try {
+                net.medievalrp.spyglass.plugin.config.LiveConfig.validateFile(getDataFolder().toPath().resolve("config.conf"));
+                SpyglassConfig next = SpyglassConfig.load(this);
+                var restart = net.medievalrp.spyglass.plugin.config.LiveConfig.restartRequired(config, next);
+                if (!restart.isEmpty()) {
+                    sender.sendMessage("Spyglass: restart required for " + String.join(", ", restart)
+                            + "; no live settings were changed.");
+                    return;
+                }
+                for (RecordingListener listener : listeners) {
+                    boolean was = listener.events().stream().anyMatch(enabledEvents::contains);
+                    boolean now = listener.events().stream().anyMatch(next::enabled);
+                    if (was && !now) org.bukkit.event.HandlerList.unregisterAll(listener);
+                    if (!was && now) getServer().getPluginManager().registerEvents(listener, this);
+                }
+                next.events().forEach((name, settings) -> {
+                    if (settings.enabled()) enabledEvents.add(name); else enabledEvents.remove(name);
+                });
+                config.events().keySet().stream().filter(name -> !next.events().containsKey(name))
+                        .forEach(enabledEvents::remove);
+                retentionPolicy.updateFrom(next.retentionPolicy());
+                support.setRetention(next.storage().retention());
+                apiImpl.setLimits(new SpyglassLimits(next.limits().maxRadius(), next.defaults().radius(),
+                        next.defaults().time(), next.storage().retention()));
+                commandRedaction.update(next.commandRedact());
+                toolService.setMaterial(next.tool().material());
+                wandListener.setConfig(next);
+                renderer.setConfig(next);
+                config = next;
+                sender.sendMessage("Spyglass configuration reloaded. Event toggles, retention, redaction and wand settings are active.");
+            } catch (Exception failure) {
+                getLogger().warning("Spyglass reload failed: " + failure.getMessage());
+                sender.sendMessage("Spyglass could not reload config.conf; check the console.");
+            }
+        });
+        var updateNotifier = new net.medievalrp.spyglass.plugin.update.UpdateNotifier(this);
+        commands.setUpdateStatus(updateNotifier::status);
+        try {
+            updateNotifier.start();
+        } catch (java.io.IOException failure) {
+            getLogger().warning("Could not configure update checks: " + failure.getMessage());
+        }
         commands.register();
 
         if (config.worldedit().enabled() && isWorldEditInstalled()) {

@@ -129,10 +129,19 @@ public final class SpyglassCommands {
     private static final String SUPPORT_URL = "https://" + SUPPORT_INVITE;
     private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 
+    private java.util.function.Consumer<CommandSender> reloadHandler = sender -> {};
+    private java.util.function.Supplier<String> updateStatus = () -> "";
+
+    public void setReloadHandler(java.util.function.Consumer<CommandSender> handler) { reloadHandler = handler; }
+    public void setUpdateStatus(java.util.function.Supplier<String> status) { updateStatus = status; }
+
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
                 plugin, ExecutionCoordinator.simpleCoordinator());
         for (String root : rootAliases) {
+            manager.command(manager.commandBuilder(root).literal("reload")
+                    .permission("spyglass.reload")
+                    .handler(ctx -> reloadHandler.accept(ctx.sender())));
             manager.command(manager.commandBuilder(root)
                     .permission("spyglass.use")
                     .handler(ctx -> help.send(ctx.sender())));
@@ -324,6 +333,8 @@ public final class SpyglassCommands {
     }
 
     private void sendVersion(CommandSender sender) {
+        String status = updateStatus.get();
+        if (!status.isBlank()) sender.sendMessage(Feedback.bonus(status));
         for (Component line : versionLines(plugin.getPluginMeta().getVersion(),
                 plugin.getPluginMeta().getAuthors(),
                 plugin.getServer().getMinecraftVersion())) {

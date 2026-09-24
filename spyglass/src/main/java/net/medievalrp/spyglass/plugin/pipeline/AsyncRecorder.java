@@ -77,6 +77,12 @@ import org.jetbrains.annotations.ApiStatus;
 @ApiStatus.Internal
 public final class AsyncRecorder implements Recorder {
 
+    private volatile java.util.function.Predicate<EventRecord> intakeFilter = record -> true;
+
+    public void setIntakeFilter(java.util.function.Predicate<EventRecord> filter) {
+        intakeFilter = java.util.Objects.requireNonNull(filter);
+    }
+
     private final LinkedBlockingDeque<EventRecord> queue = new LinkedBlockingDeque<>();
     private final long warnThreshold;
     // Hard queue ceiling that off-main producers backpressure against;
@@ -94,6 +100,7 @@ public final class AsyncRecorder implements Recorder {
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final CountDownLatch stopped = new CountDownLatch(1);
     private final AtomicLong drained = new AtomicLong();
+    private final AtomicLong accepted = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong lastWarnedDepth = new AtomicLong();
     // Backpressure gate: off-main producers park on spaceMonitor when the
@@ -179,6 +186,7 @@ public final class AsyncRecorder implements Recorder {
         this.queueMax = queueMax;
         this.store = store;
         this.spill = spill;
+        accepted.set(spill.pendingRecordCount());
         this.primaryThread = primaryThread;
         this.logger = logger;
         // Dedicated platform thread, not a virtual thread. The drain is a
@@ -272,12 +280,14 @@ public final class AsyncRecorder implements Recorder {
 
     @Override
     public void record(EventRecord record) {
+        if (!intakeFilter.test(record)) return;
         // Backpressure an off-main firehose (FAWE worker threads reach the
         // pipeline here) when the queue is at the ceiling; the main thread
         // and an unbounded queue both fall straight through. offer() on a
         // LinkedBlockingDeque only returns false on OutOfMemoryError, so once
         // the gate guarantees room the record always lands.
         awaitCapacityIfBlockable();
+        accepted.incrementAndGet();
         queue.offer(record);
         // Analytics intake count (#168): null unless analytics.enabled.
         IngestStats stats = ingestStats;
@@ -294,9 +304,11 @@ public final class AsyncRecorder implements Recorder {
 
     @Override
     public void recordAll(List<EventRecord> records) {
+        records = records.stream().filter(intakeFilter).toList();
         if (records.isEmpty()) {
             return;
         }
+        accepted.addAndGet(records.size());
         // Analytics intake count (#168): tally every record in the bulk batch
         // (WorldEdit/FAWE/rollback-audit) before it queues or spills, so the
         // analytics view shows bulk-edit load too. Null unless analytics.enabled.
@@ -457,14 +469,9 @@ public final class AsyncRecorder implements Recorder {
 
     @Override
     public boolean flush(Duration timeout) {
-        // Snapshot semantics: capture the high-water mark at call time
-        // and wait until the drain catches up to it. New records added
-        // after this point may or may not also be drained — they don't
-        // gate the call. Reading {@link #drained} and {@code queue.size()}
-        // in this order can undercount the mark by at most one batch (a
-        // record moves from queue to drained between reads) which
-        // doesn't affect correctness; the drain catches it on the next
-        // cycle either way.
+        // Count admitted records, including the batch currently inside store.save.
+        // Queue size alone misses that in-flight batch and can falsely report
+        // read-your-writes readiness before the database commits it.
         long deadlineNanos = System.nanoTime()
                 + TimeUnit.SECONDS.toNanos(Math.max(0L, timeout.seconds()));
         // Drain the deferred-serialization stage first (#98): records still
@@ -480,7 +487,7 @@ public final class AsyncRecorder implements Recorder {
         // Include spilled overflow in the mark: a rollback issued right after a
         // paste must wait for records sitting in the disk spill too, not just
         // the in-RAM queue, or it would read before they reach the store.
-        long highWaterMark = drained.get() + queue.size() + spill.pendingRecordCount();
+        long highWaterMark = accepted.get();
         while (drained.get() < highWaterMark) {
             if (System.nanoTime() >= deadlineNanos) {
                 return false;

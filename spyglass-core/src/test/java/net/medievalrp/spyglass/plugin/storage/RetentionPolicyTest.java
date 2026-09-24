@@ -8,6 +8,19 @@ import org.junit.jupiter.api.Test;
 
 /** #181: per-event retention resolution and the keep-forever horizon. */
 class RetentionPolicyTest {
+    @org.junit.jupiter.api.Test
+    void liveReloadReplacesDefaultAndOverridesTogether() {
+        RetentionPolicy policy = new RetentionPolicy(100, java.util.Map.of("break", 50L));
+        RetentionPolicy inFlightPrune = policy.snapshot();
+        policy.updateFrom(new RetentionPolicy(200, java.util.Map.of("join", 25L)));
+        org.assertj.core.api.Assertions.assertThat(inFlightPrune.secondsFor("break")).isEqualTo(50);
+        org.assertj.core.api.Assertions.assertThat(inFlightPrune.defaultSeconds()).isEqualTo(100);
+        org.assertj.core.api.Assertions.assertThat(policy.secondsFor("break")).isEqualTo(200);
+        org.assertj.core.api.Assertions.assertThat(policy.secondsFor("join")).isEqualTo(25);
+        org.assertj.core.api.Assertions.assertThat(policy.minSeconds()).isEqualTo(25);
+        org.assertj.core.api.Assertions.assertThat(policy.maxSeconds()).isEqualTo(200);
+    }
+
 
     private static final Instant T = Instant.parse("2026-01-01T00:00:00Z");
 

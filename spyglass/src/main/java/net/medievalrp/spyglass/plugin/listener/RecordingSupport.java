@@ -13,7 +13,9 @@ import org.bukkit.entity.Player;
 
 public final class RecordingSupport {
 
-    private final Duration retention;
+    public void setRetention(Duration retention) { this.retention = retention; }
+
+    private volatile Duration retention;
     private final String serverName;
 
     public RecordingSupport(Duration retention, String serverName) {

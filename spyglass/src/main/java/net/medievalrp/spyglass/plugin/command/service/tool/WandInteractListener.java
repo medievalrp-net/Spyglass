@@ -17,7 +17,9 @@ import net.medievalrp.spyglass.plugin.command.service.ToolService;
 import net.medievalrp.spyglass.plugin.config.SpyglassConfig;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import org.bukkit.Location;
-import org.bukkit.Material;
+import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.event.block.BlockDispenseEvent;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -37,8 +39,8 @@ public final class WandInteractListener implements Listener {
 
     private final ToolService tool;
     private final SearchService search;
-    private final SpyglassConfig config;
-    private final Duration lookbackWindow;
+    private volatile SpyglassConfig config;
+
 
     public WandInteractListener(ToolService tool, SearchService search, SpyglassConfig config) {
         this.tool = tool;
@@ -46,34 +48,30 @@ public final class WandInteractListener implements Listener {
         this.config = config;
         // tool.lookback, default 26w. The old hardcoded 7d silently hid
         // older history and read as "Spyglass cannot roll this back" (#271).
-        this.lookbackWindow = config.tool().lookback();
+
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND) {
-            return;
-        }
         Player player = event.getPlayer();
-        if (!tool.isActive(player.getUniqueId())) {
-            return;
-        }
         if (!isHoldingWand(event.getItem())) {
             return;
         }
+        event.setCancelled(true);
+        event.setUseItemInHand(Event.Result.DENY);
         Block block = event.getClickedBlock();
         if (block == null) {
             return;
         }
         if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
             denyAndSync(event, player, block);
-            queryAt(player, block.getLocation());
+            if (event.getHand() == EquipmentSlot.HAND) queryAt(player, block.getLocation());
             return;
         }
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
             Block target = block.getRelative(event.getBlockFace());
             denyAndSync(event, player, block, target);
-            queryAt(player, target.getLocation());
+            if (event.getHand() == EquipmentSlot.HAND) queryAt(player, target.getLocation());
         }
     }
 
@@ -92,9 +90,6 @@ public final class WandInteractListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
-        if (!tool.isActive(player.getUniqueId())) {
-            return;
-        }
         if (!isHoldingWand(player.getInventory().getItemInMainHand())) {
             return;
         }
@@ -107,9 +102,6 @@ public final class WandInteractListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onPlace(BlockPlaceEvent event) {
         Player player = event.getPlayer();
-        if (!tool.isActive(player.getUniqueId())) {
-            return;
-        }
         if (!isHoldingWand(event.getItemInHand())) {
             return;
         }
@@ -123,13 +115,95 @@ public final class WandInteractListener implements Listener {
     }
 
     private boolean isHoldingWand(ItemStack stack) {
-        if (stack == null || stack.getType() != tool.wandMaterial() || stack.getType() == Material.AIR) {
-            return false;
-        }
         return net.medievalrp.spyglass.plugin.command.service.ToolService.WandHandout.isWandItem(stack);
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEntityInteract(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        ItemStack item = event.getHand() == EquipmentSlot.OFF_HAND
+                ? event.getPlayer().getInventory().getItemInOffHand()
+                : event.getPlayer().getInventory().getItemInMainHand();
+        if (isHoldingWand(item)) event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onCook(org.bukkit.event.block.BlockCookEvent event) {
+        if (isHoldingWand(event.getSource())) event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onDrop(org.bukkit.event.player.PlayerDropItemEvent event) {
+        if (isHoldingWand(event.getItemDrop().getItemStack())) event.setCancelled(true);
+    }
+
+    // Death/container drops must not feed a wand to item-consuming mobs (such
+    // as sulfur cubes, whose stored block does not retain the item's PDC).
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onItemSpawn(org.bukkit.event.entity.ItemSpawnEvent event) {
+        if (isHoldingWand(event.getEntity().getItemStack())) event.setCancelled(true);
+    }
+
+    // Conversion stations must never consume a tagged wand as an ordinary item.
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onMove(org.bukkit.event.inventory.InventoryMoveItemEvent event) {
+        if (isHoldingWand(event.getItem())) event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onClick(org.bukkit.event.inventory.InventoryClickEvent event) {
+        if (!processing(event.getView().getTopInventory().getType())) return;
+        ItemStack hotbar = event.getHotbarButton() >= 0
+                ? event.getWhoClicked().getInventory().getItem(event.getHotbarButton()) : null;
+        ItemStack offhand = event.getClick() == org.bukkit.event.inventory.ClickType.SWAP_OFFHAND
+                ? event.getWhoClicked().getInventory().getItemInOffHand() : null;
+        if (isHoldingWand(event.getCursor()) || isHoldingWand(event.getCurrentItem())
+                || isHoldingWand(hotbar) || isHoldingWand(offhand)) event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
+        if (processing(event.getView().getTopInventory().getType()) && isHoldingWand(event.getOldCursor())
+                && event.getRawSlots().stream().anyMatch(slot -> slot < event.getView().getTopInventory().getSize())) {
+            event.setCancelled(true);
+        }
+    }
+
+    private static boolean processing(org.bukkit.event.inventory.InventoryType type) {
+        return switch (type) {
+            case ANVIL, WORKBENCH, CRAFTING, CRAFTER, FURNACE, BLAST_FURNACE, SMOKER,
+                    GRINDSTONE, SMITHING, STONECUTTER, LOOM, ENCHANTING, BREWING, BEACON, CARTOGRAPHY -> true;
+            default -> false;
+        };
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onAnvil(PrepareAnvilEvent event) {
+        if (isHoldingWand(event.getInventory().getItem(0))
+                || isHoldingWand(event.getInventory().getItem(1))) {
+            event.setResult(null);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onCraft(PrepareItemCraftEvent event) {
+        for (ItemStack ingredient : event.getInventory().getMatrix()) {
+            if (isHoldingWand(ingredient)) {
+                event.getInventory().setResult(null);
+                return;
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onDispense(BlockDispenseEvent event) {
+        if (isHoldingWand(event.getItem())) event.setCancelled(true);
+    }
+
+    public void setConfig(SpyglassConfig config) { this.config = config; }
+
     private void queryAt(Player player, Location location) {
+        Duration lookbackWindow = config.tool().lookback();
+        if (!tool.isActive(player.getUniqueId()) || !player.hasPermission("spyglass.tool")) return;
         BlockLocation anchor = BlockLocations.fromLocation(location);
         String target = location.getBlock().getType().name();
         player.sendMessage(Feedback.inspectHeader(target, anchor, lookbackWindow));

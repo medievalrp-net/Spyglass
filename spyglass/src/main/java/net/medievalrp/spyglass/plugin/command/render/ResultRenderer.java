@@ -43,7 +43,9 @@ import org.jetbrains.annotations.ApiStatus;
 public final class ResultRenderer {
 
     private final SpyglassApi api;
-    private final SpyglassConfig config;
+    public void setConfig(SpyglassConfig config) { this.config = config; }
+
+    private volatile SpyglassConfig config;
 
     public ResultRenderer(SpyglassApi api, SpyglassConfig config) {
         this.api = api;
