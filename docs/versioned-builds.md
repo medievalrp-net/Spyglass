@@ -1,13 +1,12 @@
 # Minecraft-specific builds and releases
 
-The shared build system produces three distributions, with a maintenance branch
-for each Minecraft target. Java 25 is required for all of them.
+One shared modern codebase produces three distributions. Java 25 is required for all of them.
 
-| Minecraft | Paper compile API | Bundled InvUI | Release tag example |
+| Minecraft | Paper compile API | Bundled InvUI | Artifact version example |
 | --- | --- | --- | --- |
-| 26.1.2 | 26.1.2.build.74-stable | 2.1.1 | v2.0.0-mc26.1.2 |
-| 26.2 | 26.2.build.129-stable | 2.3.2 | v2.0.0-mc26.2 |
-| 26.3 | 26.3.build.38-alpha | 2.5.0 | v2.0.0-mc26.3 |
+| 26.1.2 | 26.1.2.build.74-stable | 2.1.1 | 2.0.0-mc26.1.2 |
+| 26.2 | 26.2.build.129-stable | 2.3.2 | 2.0.0-mc26.2 |
+| 26.3 | 26.3.build.38-alpha | 2.5.0 | 2.0.0-mc26.3 |
 
 These pins follow [InvUI's compatibility table](https://github.com/NichtStudioCode/InvUI#version-compatibility).
 26.1 means the supported patched release **26.1.2**; 26.1 and 26.1.1 are not claimed supported.
@@ -15,19 +14,13 @@ Minecraft 1.21.x remains on `maintenance/1.21` with its existing 1.x build syste
 
 ## Branches
 
-- `maintenance/26.1.2` defaults to Minecraft 26.1.2 / InvUI 2.1.1.
-- `maintenance/26.2` defaults to Minecraft 26.2 / InvUI 2.3.2.
-- `maintenance/26.3` defaults to Minecraft 26.3 / InvUI 2.5.0.
+`main` is the shared modern development line for Minecraft 26.1.2, 26.2 and 26.3.
+`maintenance/1.21` retains the legacy InvUI 1.x implementation and separate releases.
+There are no modern per-Minecraft maintenance branches. Dependency versions are
+selected by the Gradle target, not by different source branches.
 
-Each maintenance branch sets `minecraftTarget` in `gradle.properties`, so a plain
-`./gradlew build` produces its matching distribution. InvUI fixes can be committed
-independently on that branch. Cherry-pick shared fixes to the other maintained
-branches as appropriate. Explicit `-PminecraftTarget` overrides remain available
-for cross-version validation. All three branches are initially local only.
-
-Release pushes and manual dispatches on a maintenance branch publish only that
-branch's target. Selecting a different target explicitly is rejected. Main's
-release workflow can still publish all targets. CI checks the matching target on maintenance branches and all three on main.
+The modern work is currently local on `codex/minecraft-26.3`, pending integration
+into `main`; the original divergent local `main` checkout has been preserved.
 
 ## Build
 
@@ -37,8 +30,7 @@ release workflow can still publish all targets. CI checks the matching target on
 ./gradlew.bat build '-PminecraftTarget=26.3'
 ```
 
-The shared development branch defaults to 26.3; maintenance branches use their
-configured target. Unknown targets fail configuration. Each module writes to
+The default target is 26.3. Unknown targets fail configuration. Each module writes to
 `build/mc<target>/`, so successive builds preserve the other targets' binaries
 and reports. For example, the current lean build is
 `spyglass/build/mc26.2/libs/Spyglass-2.0.0-mc26.2-SNAPSHOT.jar`; the fallback adds
@@ -53,23 +45,23 @@ coordinate: for example `net.medievalrp:spyglass-api:2.0.0-mc26.2`.
 
 ## Releases
 
-The Verify workflow builds and tests all three targets independently. The Release
-workflow on `main` creates one release per target after a stable version bump in
-`gradle.properties`. `-SNAPSHOT` builds are never published. Manual dispatch can
-select one target or all three. Each job tests before staging assets and creates
-its release at the workflow's exact commit. Published releases are never overwritten.
+The Verify workflow builds and tests all three modern targets. On a stable version
+bump pushed to `main`, or manual dispatch, the Release workflow builds all three
+from the same checkout. Only after every build and test succeeds does it stage
+all assets and publish **one release**, tagged `v<version>` (for example `v2.0.0`).
+Snapshot versions are skipped. Published releases are never overwritten; a draft
+can be resumed only from its original commit.
 
-Each release has explicitly versioned lean, shaded, Velocity and API jars, plus
-SHA256SUMS. The release assets are staged by `python scripts/stage-release.py 26.2`;
-this command requires an empty `dist` directory and never publishes anything.
-Configured Central credentials publish each target's unique API coordinates.
+The release contains all three targets' lean, shaded, Velocity and developer API
+jars (18 jars total), one SHA256SUMS file, and notes recording the source commit.
+`python scripts/stage-release.py` validates and stages the complete set into an
+empty `dist` directory without publishing anything. Missing assets or mismatched
+embedded plugin versions/targets fail staging. Central publication retains the
+separate target-specific Maven coordinates.
 
-GitHub has one repository-wide Latest release. Only the 26.3 release is marked
-Latest; 26.1.2 and 26.2 remain available through their specific tags. Pin download
-links to a release tag and labeled artifact. Old `/releases/latest/download/Spyglass.jar`
-links do not select a Minecraft version and are no longer used for modern releases.
-A future update of the default target must update both the Gradle default and the
-workflow's Latest selection and matrices.
+This combined modern release receives GitHub's Latest label. Minecraft 1.21 remains
+on its separate legacy release line. Pin downloads to the desired release and
+Minecraft-labeled artifact; `Spyglass.jar` is not a modern release asset name.
 
 No workflow or release has been pushed or published as part of this local setup.
 
@@ -121,3 +113,8 @@ After removing chat alternatives, the shaded GUI probe passed again on all three
 targets, including container/player snapshots and rollback salvage recovery.
 Console commands were verified to return in-game-only errors. New regression
 tests cover missing views and thrown GUI errors without text listing or store access.
+
+Combined-release packaging also passes four regression tests: the complete 18-jar
+bundle and checksums, missing-asset rejection before staging, wrong-target rejection,
+and protection against overwriting a staging directory. The combined workflow passes
+actionlint, and staging the real local artifacts produced all 18 verified checksums.

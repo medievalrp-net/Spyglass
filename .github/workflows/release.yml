@@ -1,14 +1,8 @@
 name: Release
 on:
   push:
-    branches: [main, maintenance/26.1.2, maintenance/26.2, maintenance/26.3]
-  workflow_dispatch:
-    inputs:
-      minecraft:
-        description: Minecraft release to publish
-        type: choice
-        default: all
-        options: [all, '26.1.2', '26.2', '26.3']
+    branches: [main]
+  workflow_dispatch: {}
 permissions:
   contents: write
 concurrency:
@@ -17,13 +11,6 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        minecraft: ['26.1.2', '26.2', '26.3']
-    env:
-      MC: ${{ matrix.minecraft }}
-      REQUESTED_MC: ${{ inputs.minecraft || 'all' }}
     steps:
       - uses: actions/checkout@v4
       - name: Select release
@@ -31,24 +18,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Maintenance branches publish only their own Minecraft release channel.
-          case "$GITHUB_REF_NAME" in
-            maintenance/26.1.2) branch_mc=26.1.2 ;;
-            maintenance/26.2) branch_mc=26.2 ;;
-            maintenance/26.3) branch_mc=26.3 ;;
-            *) branch_mc=all ;;
-          esac
-          if [[ "$branch_mc" != all ]]; then
-            if [[ "$REQUESTED_MC" != all && "$REQUESTED_MC" != "$branch_mc" ]]; then
-              echo "This branch only publishes Minecraft $branch_mc."; exit 1;
-            fi
-            REQUESTED_MC="$branch_mc"
-          fi
           base=$(sed -n 's/^version=//p' gradle.properties | tr -d '\r[:space:]')
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]] || exit 1
-          tag="v${base}-mc${MC}"
+          tag="v${base}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [[ "$base" == *-SNAPSHOT ]] || [[ "$REQUESTED_MC" != all && "$REQUESTED_MC" != "$MC" ]]; then
+          if [[ "$base" == *-SNAPSHOT ]]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
           elif gh release view "$tag" --json isDraft --jq '.isDraft' > existing-release; then
             # Resume a draft whose upload was interrupted; never replace a published release.
@@ -63,12 +37,17 @@ jobs:
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
         if: steps.release.outputs.publish == 'true'
+      - name: Test combined release packaging
+        run: python3 -m unittest discover -s scripts/tests
       - name: Build and test matching dependencies
         if: steps.release.outputs.publish == 'true'
-        run: ./gradlew build -PminecraftTarget="$MC" --no-daemon --stacktrace
+        run: |
+          for mc in 26.1.2 26.2 26.3; do
+            ./gradlew build -PminecraftTarget="$mc" --no-daemon --stacktrace
+          done
       - name: Stage labeled assets
         if: steps.release.outputs.publish == 'true'
-        run: python3 scripts/stage-release.py "$MC"
+        run: python3 scripts/stage-release.py
       - name: Create or resume draft at this exact commit
         if: steps.release.outputs.publish == 'true'
         env:
@@ -80,7 +59,7 @@ jobs:
               echo "Tag already exists without a release; verify its commit before publishing."; exit 1;
             fi
             gh release create "$TAG" --draft --target "$GITHUB_SHA" \
-              --title "Spyglass ${TAG#v} (Minecraft $MC)" --notes-file dist/NOTES.md
+              --title "Spyglass ${TAG#v}" --notes-file dist/NOTES.md
           fi
           # A draft may be resumed only from the commit that originally created it.
           [[ "$(gh release view "$TAG" --json targetCommitish --jq '.targetCommitish')" == "$GITHUB_SHA" ]] || {
@@ -93,9 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
-          latest=false
-          if [[ "$MC" == 26.3 ]]; then latest=true; fi
-          gh release edit "$TAG" --draft=false --latest="$latest"
+          gh release edit "$TAG" --draft=false --latest
       - name: Publish target-specific API to Central
         if: steps.release.outputs.publish == 'true'
         env:
@@ -105,7 +82,9 @@ jobs:
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
           if [[ -n "$CENTRAL_PORTAL_USERNAME" ]]; then
-            ./gradlew publishAggregationToCentralPortal -PminecraftTarget="$MC" --no-daemon --stacktrace
+            for mc in 26.1.2 26.2 26.3; do
+              ./gradlew publishAggregationToCentralPortal -PminecraftTarget="$mc" --no-daemon --stacktrace
+            done
           else
             echo "Central credentials absent; API jars remain available in the GitHub release."
           fi

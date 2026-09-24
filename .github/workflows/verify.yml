@@ -1,34 +1,18 @@
 name: Verify
 on:
   pull_request:
-    branches: [main, maintenance/26.1.2, maintenance/26.2, maintenance/26.3]
+    branches: [main]
   push:
-    branches: [main, maintenance/26.1.2, maintenance/26.2, maintenance/26.3]
+    branches: [main]
 permissions:
   contents: read
 jobs:
-  targets:
-    runs-on: ubuntu-latest
-    outputs:
-      minecraft: ${{ steps.select.outputs.minecraft }}
-    steps:
-      - name: Select branch target
-        id: select
-        run: |
-          case "${GITHUB_BASE_REF:-$GITHUB_REF_NAME}" in
-            maintenance/26.1.2) targets='["26.1.2"]' ;;
-            maintenance/26.2) targets='["26.2"]' ;;
-            maintenance/26.3) targets='["26.3"]' ;;
-            *) targets='["26.1.2","26.2","26.3"]' ;;
-          esac
-          echo "minecraft=$targets" >> "$GITHUB_OUTPUT"
   build:
-    needs: targets
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ${{ fromJSON(needs.targets.outputs.minecraft) }}
+        minecraft: ['26.1.2', '26.2', '26.3']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -36,6 +20,8 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Test combined release packaging
+        run: python3 -m unittest discover -s scripts/tests
       - name: Build and test
         run: ./gradlew build -PminecraftTarget=${{ matrix.minecraft }} --no-daemon
       - uses: actions/upload-artifact@v4

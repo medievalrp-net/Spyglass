@@ -1,4 +1,4 @@
-> Modern 2.x releases use Minecraft-specific versions and tags. See
+> Modern 2.x releases use one shared tag and Minecraft-specific artifact versions. See
 > [versioned builds](docs/versioned-builds.md) for the current release workflow.
 > Pass `-PminecraftTarget=26.1.2`, `26.2`, or `26.3` to every build or
 > publication command below; omission defaults to 26.3. Maven versions include

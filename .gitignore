@@ -34,3 +34,6 @@ coreprotect-test/
 
 # Local release staging
 /dist/
+
+# Python release-packaging test cache
+__pycache__/
