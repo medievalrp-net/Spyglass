@@ -100,6 +100,25 @@ public final class FallingBlockCascade {
         }
     }
 
+    /** WorldEdit can apply support physics synchronously, so capture before writing its support. */
+    public static java.util.Map<BlockLocation, BlockSnapshot> captureSulfurDependents(World world, int x, int y, int z) {
+        var snapshots = new java.util.LinkedHashMap<BlockLocation, BlockSnapshot>();
+        for (Block dependent : BlockDependents.collectDependents(world.getBlockAt(x, y, z))) {
+            if (dependent.getType().name().equals("SULFUR_SPIKE"))
+                snapshots.put(BlockLocations.fromBlock(dependent), BlockSnapshots.capture(dependent.getState()));
+        }
+        return snapshots;
+    }
+
+    public static void emitSulfurDependents(Recorder recorder, RecordingSupport support, Player player,
+            java.util.Map<BlockLocation, BlockSnapshot> snapshots, java.util.Set<Long> seen) {
+        snapshots.forEach((location, original) -> {
+            if (seen != null && !seen.add(packCell(location.x(), location.y(), location.z()))) return;
+            recorder.record(BlockBreakRecord.of(support.playerContext(player, location),
+                    "break", original.material().name(), original, BlockSnapshots.air()));
+        });
+    }
+
     /**
      * Pack {@code (x, y, z)} into a collision-free long key for the
      * per-session dedup set: 26 bits each for x/z (covers the world
@@ -114,7 +133,7 @@ public final class FallingBlockCascade {
      * negative y sign-extended into the x field - both of which silently
      * dropped cascade break records for tall / low gravity columns.
      */
-    static long packCell(int x, int y, int z) {
+    public static long packCell(int x, int y, int z) {
         return ((long) x & 0x3FF_FFFFL) << 38
                 | ((long) z & 0x3FF_FFFFL) << 12
                 | ((long) y & 0xFFFL);

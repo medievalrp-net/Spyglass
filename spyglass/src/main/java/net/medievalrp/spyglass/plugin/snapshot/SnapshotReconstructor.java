@@ -230,7 +230,7 @@ public final class SnapshotReconstructor {
                     + "its contents cannot be verified from records");
         }
         if (transfers) {
-            notes.add("hopper/dropper transfers touched this container in the window; "
+            notes.add("unresolved automated transfers touched this container in the window; "
                     + "they are not slot-tracked, so the reconstruction may be off");
         }
         boolean uncertain = legacy || outOfRange || !containerPresent || selfMutating
@@ -255,7 +255,7 @@ public final class SnapshotReconstructor {
      *  record classes. */
     private static boolean isTransfer(EventRecord record) {
         String event = record.event();
-        return "transfer-in".equals(event) || "transfer-out".equals(event);
+        return "transfer-in".equals(event) || "transfer-out".equals(event) || "transfer-uncertain".equals(event);
     }
 
     private static StoredItem[] normalize(StoredItem[] live, int slots) {

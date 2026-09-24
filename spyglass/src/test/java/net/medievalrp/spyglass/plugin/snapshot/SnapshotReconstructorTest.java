@@ -326,10 +326,21 @@ class SnapshotReconstructorTest {
 
         assertThat(r.certainty()).isEqualTo(Certainty.UNCERTAIN);
         assertThat(r.notes()).anySatisfy(note ->
-                assertThat(note).contains("hopper/dropper transfers"));
+                assertThat(note).contains("unresolved automated transfers"));
         // No slot ops ride in, so the reconstruction itself is untouched.
         assertThat(r.slots()).isEmpty();
         assertThat(r.mismatches()).isEmpty();
+    }
+
+    @Test
+    void ambiguousGolemTransferForcesUncertain() {
+        var transfer = transferOut(1, T.plusSeconds(5));
+        var marker = new net.medievalrp.spyglass.api.event.CustomRecord(transfer.id(), "transfer-uncertain",
+                transfer.occurred(), transfer.expiresAt(), transfer.origin(), transfer.source(), transfer.location(),
+                transfer.server(), "CHEST", "concurrent transfer", java.util.Map.of());
+        Reconstruction result = SnapshotReconstructor.reconstruct(
+                List.<EventRecord>of(marker), empty(), SIZE, T, true, false);
+        assertThat(result.certainty()).isEqualTo(Certainty.UNCERTAIN);
     }
 
     @Test

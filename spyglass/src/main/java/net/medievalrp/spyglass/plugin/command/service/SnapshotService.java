@@ -121,7 +121,7 @@ public final class SnapshotService {
             List.of("deposit", "withdraw", "shulker-deposit", "shulker-withdraw", "crafter",
                     "bookshelf-insert", "bookshelf-remove", "pot-insert", "pot-remove",
                     "transfer-deposit", "transfer-withdraw",
-                    "transfer-in", "transfer-out");
+                    "transfer-in", "transfer-out", "transfer-uncertain");
 
     private static final Pattern COORDS =
             Pattern.compile("^(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})$");

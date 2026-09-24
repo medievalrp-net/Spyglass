@@ -26,6 +26,7 @@ import net.medievalrp.spyglass.api.event.BlockSnapshot;
 import net.medievalrp.spyglass.api.event.ContainerDepositRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityLifecycleRecord;
 import net.medievalrp.spyglass.api.event.EventCatalog;
 import net.medievalrp.spyglass.api.event.EventRecord;
 import net.medievalrp.spyglass.api.event.StoredItem;
@@ -465,6 +466,17 @@ public final class MongoRecordStore implements RecordStore {
             sink.complex(rollback
                     ? new RollbackEffect.ContainerSlotWrite(location, slot, after, before, containerType)
                     : new RollbackEffect.ContainerSlotWrite(location, slot, before, after, containerType), occurred, id);
+            return;
+        }
+
+        if (clazz == EntityLifecycleRecord.class) {
+            String type = doc.containsKey(RecordFields.ENTITY_TYPE) ? doc.getString(RecordFields.ENTITY_TYPE).getValue() : null;
+            String nbt = doc.containsKey(RecordFields.ENTITY_NBT) && doc.get(RecordFields.ENTITY_NBT).isString()
+                    ? doc.getString(RecordFields.ENTITY_NBT).getValue() : null;
+            UUID entityId = doc.containsKey(RecordFields.ENTITY_ID) && doc.get(RecordFields.ENTITY_ID).isBinary()
+                    ? readUuid(doc, RecordFields.ENTITY_ID) : null;
+            RollbackEffect effect = EntityLifecycleRecord.effect(rollback, event, readLocation(doc), type, entityId, nbt);
+            if (effect == null) sink.skip(occurred, id); else sink.complex(effect, occurred, id);
             return;
         }
 

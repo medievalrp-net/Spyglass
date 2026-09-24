@@ -502,6 +502,7 @@ public final class ResultRenderer {
             // Damage / damage-cause / projectile detail moves to the
             // hover so the inline form matches "<src> hit TARGET TIME"
             // — not "<src> hit TARGET for 1.0 TIME".
+            case net.medievalrp.spyglass.api.event.EntityLifecycleRecord decoration -> upperOrEmpty(decoration.target());
             case EntityDeathRecord death -> upperOrEmpty(death.target());
             case EntityHitRecord hit -> upperOrEmpty(hit.target());
             case EntityMountRecord mount ->

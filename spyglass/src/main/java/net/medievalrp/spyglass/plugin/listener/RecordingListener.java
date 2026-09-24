@@ -21,4 +21,8 @@ import org.jetbrains.annotations.ApiStatus;
 public interface RecordingListener extends Listener {
 
     Set<String> events();
+
+    default void register(org.bukkit.plugin.Plugin plugin) {
+        plugin.getServer().getPluginManager().registerEvents(this, plugin);
+    }
 }
