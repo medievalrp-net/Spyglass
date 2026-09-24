@@ -436,6 +436,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new HopperTransferListener(recorder, support, deferredSerializer,
                         task -> getServer().getScheduler().runTask(this, task),
                         enabledEvents),
+                new net.medievalrp.spyglass.plugin.listener.item.CopperGolemTransferListener(recorder, support),
                 new CreativeCloneListener(recorder, support),
                 new TeleportListener(recorder, support),
                 new EntityDeathListener(recorder, support, enabledEvents, deferredSerializer),
@@ -458,7 +459,7 @@ public final class SpyglassPlugin extends JavaPlugin {
         if (CraftBookSignListener.isCraftBookEnabled()) listeners.add(new CraftBookSignListener(recorder, support));
         for (RecordingListener listener : listeners) {
             if (listener.events().stream().anyMatch(enabledEvents::contains)) {
-                getServer().getPluginManager().registerEvents(listener, this);
+                listener.register(this);
             }
         }
         // CraftBook sign-use is only registered when CraftBook is live
@@ -802,7 +803,7 @@ public final class SpyglassPlugin extends JavaPlugin {
                     boolean was = listener.events().stream().anyMatch(enabledEvents::contains);
                     boolean now = listener.events().stream().anyMatch(next::enabled);
                     if (was && !now) org.bukkit.event.HandlerList.unregisterAll(listener);
-                    if (!was && now) getServer().getPluginManager().registerEvents(listener, this);
+                    if (!was && now) listener.register(this);
                 }
                 next.events().forEach((name, settings) -> {
                     if (settings.enabled()) enabledEvents.add(name); else enabledEvents.remove(name);

@@ -65,6 +65,7 @@ public final class EventCatalog {
         // shapes - no codec/schema change - but is deliberately NOT
         // rollbackable (NON_ROLLBACKABLE below): an area rollback must not
         // try to reverse thousands of hopper ticks (#226).
+        m.put("transfer-uncertain", CustomRecord.class);
         m.put("transfer-withdraw", ContainerWithdrawRecord.class);
         m.put("transfer-deposit", ContainerDepositRecord.class);
         // The pre-#354 lean transfer shapes: coalesced, no slot state. No
