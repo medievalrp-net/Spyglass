@@ -1,18 +1,18 @@
 name: Release
 
 # Cuts a GitHub release whenever `version` in gradle.properties names a tag that
-# doesn't exist yet. Bump the version and push to main to ship; pushes that
+# doesn't exist yet. Bump the version and push to maintenance/1.21.11 to ship; pushes that
 # don't change the version no-op. Also runnable on demand via "Run workflow".
 on:
   push:
-    branches: [main]
+    branches: [maintenance/1.21.11]
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
 concurrency:
-  group: release
+  group: release-legacy
   cancel-in-progress: false
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
+          if [[ "${{ steps.ver.outputs.version }}" == *-SNAPSHOT ]] || gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v${{ steps.ver.outputs.version }} already exists - nothing to do."
           else
@@ -117,6 +117,7 @@ jobs:
             echo "  \`net.medievalrp:spyglass-api:${v}\`. These jars are a fallback for when"
             echo "  Central hasn't caught up yet. Server owners don't need this file."
           } > dist/NOTES.md
+          (cd dist && sha256sum *.jar > SHA256SUMS)
 
       - name: Create release
         if: steps.exists.outputs.exists == 'false'
@@ -125,8 +126,9 @@ jobs:
         run: |
           gh release create "v${{ steps.ver.outputs.version }}" \
             dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
-            dist/spyglass-api.jar dist/spyglass-api-sources.jar dist/spyglass-api-javadoc.jar \
-            --title "Spyglass ${{ steps.ver.outputs.version }}" \
+            dist/spyglass-api.jar dist/spyglass-api-sources.jar dist/spyglass-api-javadoc.jar dist/SHA256SUMS \
+            --target "$GITHUB_SHA" --latest=false \
+            --title "Spyglass ${{ steps.ver.outputs.version }} - Minecraft 1.21.11" \
             --notes-file dist/NOTES.md
 
   # Publishes spyglass-api (Apache-2.0) to Maven Central, aligned with the
