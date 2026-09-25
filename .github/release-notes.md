@@ -1,3 +1,6 @@
+Rebuilt for #371. Existing installations of this version should download the jar again.
+
+- Fix #371: `/sg tool` or throwing away the wand deactivates inspection and removes all tagged tools. Ordinary items are preserved.
 - Inventory GUIs for snapshots and rollback storage.
 - Fixes wand protection, location indexes and live config reload.
 - Adds logging for age locks, sulfur cubes/spikes, copper golems, cushions and straw beds on applicable versions.

@@ -21,15 +21,8 @@ import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * Wand toggle service. Mirrors v1's three-state cycle so repeated
- * {@code /spyglass tool} calls follow the same UX muscle memory:
- * <ol>
- *   <li>Inactive → activate + give/move the wand, say "Activated".</li>
- *   <li>Active but wand missing from inventory → add it, say "Added".</li>
- *   <li>Active with wand in inventory but not in main hand → swap to hand,
- *       say "Moved".</li>
- *   <li>Active with wand already in main hand → deactivate, say "Deactivated".</li>
- * </ol>
+ * Inspection toggle: activate and supply the wand, or deactivate and remove
+ * all tagged tools regardless of which inventory slot is selected.
  *
  * <p>Unlike v1, wand identity is checked via a PersistentDataContainer marker
  * (see {@link #WAND_KEY}) so a regular glowstone block sitting in the player's
@@ -76,28 +69,15 @@ public final class ToolService {
             return;
         }
         UUID id = player.getUniqueId();
+        if (active.contains(id)) {
+            deactivate(player);
+            return;
+        }
         PlayerInventory inv = player.getInventory();
         int slot = firstWandSlot(inv);
         boolean inHand = isWandInHand(player);
         if (slot == -1 && inv.firstEmpty() < 0) {
             player.sendMessage(Feedback.error("Make room in your inventory for the Spyglass wand."));
-            return;
-        }
-
-        if (active.contains(id)) {
-            if (slot == -1) {
-                handout.give(player, wandMaterial);
-                player.sendMessage(Feedback.toolOk("Added the Spyglass data tool to your inventory."));
-                return;
-            }
-            if (!inHand) {
-                swapToMainHand(inv, slot);
-                player.sendMessage(Feedback.toolOk("Moved the data tool to your hand."));
-                return;
-            }
-            active.remove(id);
-            persistAsync(() -> store.disable(id), "disable");
-            player.sendMessage(Feedback.toolOk("Deactivated the Spyglass Data Tool"));
             return;
         }
 
@@ -118,6 +98,14 @@ public final class ToolService {
                 .append(Component.text("Activated the Spyglass Data Tool ", NamedTextColor.GREEN))
                 .append(Component.text("(" + wandMaterial.name() + ")", NamedTextColor.GRAY))
                 .asComponent());
+    }
+
+    public void deactivate(Player player) {
+        UUID id = player.getUniqueId();
+        active.remove(id);
+        handout.take(player, wandMaterial);
+        persistAsync(() -> store.disable(id), "disable");
+        player.sendMessage(Feedback.toolOk("Deactivated the Spyglass Data Tool"));
     }
 
     // Tool state is persisted off the main thread. The in-memory `active`
@@ -195,12 +183,12 @@ public final class ToolService {
                     ItemStack[] contents = player.getInventory().getContents();
                     for (int i = 0; i < contents.length; i++) {
                         ItemStack stack = contents[i];
-                        if (stack == null || stack.getType() != material) {
-                            continue;
-                        }
                         if (isWandItem(stack)) {
                             player.getInventory().setItem(i, null);
                         }
+                    }
+                    if (isWandItem(player.getItemOnCursor())) {
+                        player.setItemOnCursor(null);
                     }
                 }
             };
