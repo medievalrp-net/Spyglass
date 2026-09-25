@@ -4,9 +4,9 @@ One shared modern codebase produces three distributions. Java 25 is required for
 
 | Minecraft | Paper compile API | Bundled InvUI | Artifact version example |
 | --- | --- | --- | --- |
-| 26.1.2 | 26.1.2.build.74-stable | 2.1.1 | 2.0.0-mc26.1.2 |
-| 26.2 | 26.2.build.129-stable | 2.3.2 | 2.0.0-mc26.2 |
-| 26.3 | 26.3.build.38-alpha | 2.5.0 | 2.0.0-mc26.3 |
+| 26.1.2 | 26.1.2.build.74-stable | 2.1.1 | 1.1.0-mc26.1.2 |
+| 26.2 | 26.2.build.129-stable | 2.3.2 | 1.1.0-mc26.2 |
+| 26.3 | 26.3.build.38-alpha | 2.5.0 | 1.1.0-mc26.3 |
 
 These pins follow [InvUI's compatibility table](https://github.com/NichtStudioCode/InvUI#version-compatibility).
 26.1 means the supported patched release **26.1.2**; 26.1 and 26.1.1 are not claimed supported.
@@ -19,10 +19,6 @@ Minecraft 1.21.x remains on `maintenance/1.21.11` with its existing 1.x build sy
 There are no modern per-Minecraft maintenance branches. Dependency versions are
 selected by the Gradle target, not by different source branches.
 
-The modern work is currently local on `codex/minecraft-26.3`, pending integration
-into `main`; the original divergent local `main` checkout has been preserved.
-The requested legacy name is local `maintenance/1.21.11`; the older
-`maintenance/1.21` reference remains unchanged pending publication.
 
 ## Build
 
@@ -35,7 +31,7 @@ The requested legacy name is local `maintenance/1.21.11`; the older
 The default target is 26.3. Unknown targets fail configuration. Each module writes to
 `build/mc<target>/`, so successive builds preserve the other targets' binaries
 and reports. For example, the current lean build is
-`spyglass/build/mc26.2/libs/Spyglass-2.0.0-mc26.2-SNAPSHOT.jar`; the fallback adds
+`spyglass/build/mc26.2/libs/Spyglass-1.1.0-mc26.2.jar`; the fallback adds
 `-shaded` before `.jar`. Both bundle the matching relocated InvUI dependency.
 The embedded target, plugin API version, dependency pins and artifact version
 come from the selected Gradle target. Startup rejects any other Minecraft version
@@ -43,14 +39,14 @@ before loading configuration or InvUI. Future patch releases need explicit valid
 
 All modules, including the Velocity companion and developer API, carry the target
 suffix. This avoids publishing different Paper-dependent builds under one Maven
-coordinate: for example `net.medievalrp:spyglass-api:2.0.0-mc26.2`.
+coordinate: for example `net.medievalrp:spyglass-api:1.1.0-mc26.2`.
 
 ## Releases
 
 The Verify workflow builds and tests all three modern targets. On a stable version
 bump pushed to `main`, or manual dispatch, the Release workflow builds all three
 from the same checkout. Only after every build and test succeeds does it stage
-all assets and publish **one release**, tagged `v<version>` (for example `v2.0.0`).
+all assets and publish **one release**, tagged `v<version>` (for example `v1.1.0`).
 Snapshot versions are skipped. Published releases are never overwritten; a draft
 can be resumed only from its original commit.
 

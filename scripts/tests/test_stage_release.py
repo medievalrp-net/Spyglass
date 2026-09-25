@@ -17,7 +17,7 @@ class StageReleaseTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         self.script = self.root / "scripts/stage-release.py"
         self.script.write_bytes(SCRIPT.read_bytes())
-        (self.root / "gradle.properties").write_text("version=2.0.0\n")
+        (self.root / "gradle.properties").write_text("version=1.1.0\n")
         for mc in TARGETS:
             for module, name, suffix in [
                 ("spyglass", "Spyglass", ""), ("spyglass", "Spyglass", "-shaded"),
@@ -25,11 +25,11 @@ class StageReleaseTest(unittest.TestCase):
                 ("spyglass-api", "spyglass-api", ""),
                 ("spyglass-api", "spyglass-api", "-sources"),
                 ("spyglass-api", "spyglass-api", "-javadoc")]:
-                path = self.root / module / f"build/mc{mc}/libs/{name}-2.0.0-mc{mc}{suffix}.jar"
+                path = self.root / module / f"build/mc{mc}/libs/{name}-1.1.0-mc{mc}{suffix}.jar"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(path, "w") as jar:
                     jar.writestr("spyglass-target.properties", f"minecraft={mc}\n")
-                    jar.writestr("plugin.yml", f"version: 2.0.0-mc{mc}\n")
+                    jar.writestr("plugin.yml", f"version: 1.1.0-mc{mc}\n")
 
     def stage(self):
         with patch("subprocess.check_output", return_value="a" * 40):
@@ -57,7 +57,7 @@ class StageReleaseTest(unittest.TestCase):
         path = next((self.root / "spyglass/build/mc26.2/libs").glob("*.jar"))
         with zipfile.ZipFile(path, "w") as jar:
             jar.writestr("spyglass-target.properties", "minecraft=26.3\n")
-            jar.writestr("plugin.yml", "version: 2.0.0-mc26.2\n")
+            jar.writestr("plugin.yml", "version: 1.1.0-mc26.2\n")
         with self.assertRaisesRegex(SystemExit, "Wrong embedded target"):
             self.stage()
         self.assertFalse((self.root / "dist").exists())

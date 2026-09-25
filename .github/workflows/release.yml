@@ -54,12 +54,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
+          title="${TAG#v}"
+          title="${title%.0}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
               echo "Tag already exists without a release; verify its commit before publishing."; exit 1;
             fi
             gh release create "$TAG" --draft --target "$GITHUB_SHA" \
-              --title "Spyglass ${TAG#v}" --notes-file dist/NOTES.md
+              --title "Spyglass $title" --notes-file dist/NOTES.md
           fi
           # A draft may be resumed only from the commit that originally created it.
           [[ "$(gh release view "$TAG" --json targetCommitish --jq '.targetCommitish')" == "$GITHUB_SHA" ]] || {

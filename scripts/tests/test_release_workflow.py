@@ -43,9 +43,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
                         STUB_STATE=str(self.root / "state").replace("\\", "/"),
                         GITHUB_OUTPUT=str(self.root / "output").replace("\\", "/"),
                         GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="test/spyglass",
-                        TAG="v2.0.0", GH_TOKEN="fake-test-token")
+                        TAG="v1.1.0", GH_TOKEN="fake-test-token")
         (self.root / "state").write_text("missing")
-        (self.root / "gradle.properties").write_text("version=2.0.0\n")
+        (self.root / "gradle.properties").write_text("version=1.1.0\n")
 
     def run_step(self, name, expected=0):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -61,7 +61,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         return path.read_text() if path.exists() else ""
 
     def test_snapshot_skips_publication_without_gh_calls(self):
-        (self.root / "gradle.properties").write_text("version=2.0.0-SNAPSHOT\n")
+        (self.root / "gradle.properties").write_text("version=1.1.0-SNAPSHOT\n")
         self.run_step("Select release")
         self.assertIn("publish=false", (self.root / "output").read_text())
         self.assertEqual(self.calls(), "")
@@ -73,7 +73,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_new_release_uploads_all_assets_to_one_tag(self):
         self.run_step("Select release")
-        self.assertIn("tag=v2.0.0", (self.root / "output").read_text())
+        self.assertIn("tag=v1.1.0", (self.root / "output").read_text())
         self.assertIn("publish=true", (self.root / "output").read_text())
         dist = self.root / "dist"
         dist.mkdir()
@@ -87,7 +87,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("--target " + "a" * 40, calls)
         upload = next(line for line in calls.splitlines() if line.startswith("release upload"))
         self.assertEqual(upload.count(".jar"), 18)
-        self.assertIn("release edit v2.0.0 --draft=false --latest", calls)
+        self.assertIn("release edit v1.1.0 --draft=false --latest", calls)
 
     def test_wrong_commit_draft_cannot_upload_or_publish(self):
         (self.root / "state").write_text("wrong")

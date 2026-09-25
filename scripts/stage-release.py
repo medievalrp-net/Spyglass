@@ -58,7 +58,7 @@ for mc, version in versions.items():
               f"- `spyglass-api-{version}*.jar`: developer API, sources and Javadoc.",
               f"- Maven: `net.medievalrp:spyglass-api:{version}` (when Central is configured).\n"]
 notes += ["Checksums: `SHA256SUMS`.",
-          "Minecraft 1.21.x remains a separate legacy release on `maintenance/1.21`."]
+          "Minecraft 1.21.x remains a separate legacy release on `maintenance/1.21.11`."]
 release_notes = root / ".github/release-notes.md"
 if release_notes.exists():
     notes += ["\n## Changes\n", release_notes.read_text(encoding="utf-8")]
