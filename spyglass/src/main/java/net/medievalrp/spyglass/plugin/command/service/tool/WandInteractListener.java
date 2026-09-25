@@ -131,9 +131,12 @@ public final class WandInteractListener implements Listener {
         if (isHoldingWand(event.getSource())) event.setCancelled(true);
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDrop(org.bukkit.event.player.PlayerDropItemEvent event) {
-        if (isHoldingWand(event.getItemDrop().getItemStack())) event.setCancelled(true);
+        if (event.isCancelled() || !isHoldingWand(event.getItemDrop().getItemStack())) return;
+        // Do not cancel: Bukkit would put the tool back in the player's hand.
+        event.getItemDrop().remove();
+        tool.deactivate(event.getPlayer());
     }
 
     // Death/container drops must not feed a wand to item-consuming mobs (such
@@ -151,6 +154,12 @@ public final class WandInteractListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onClick(org.bukkit.event.inventory.InventoryClickEvent event) {
+        // Inventory-window throws must reach PlayerDropItemEvent, just like Q in-world.
+        var action = event.getAction();
+        if (action == org.bukkit.event.inventory.InventoryAction.DROP_ALL_CURSOR
+                || action == org.bukkit.event.inventory.InventoryAction.DROP_ONE_CURSOR
+                || action == org.bukkit.event.inventory.InventoryAction.DROP_ALL_SLOT
+                || action == org.bukkit.event.inventory.InventoryAction.DROP_ONE_SLOT) return;
         if (!processing(event.getView().getTopInventory().getType())) return;
         ItemStack hotbar = event.getHotbarButton() >= 0
                 ? event.getWhoClicked().getInventory().getItem(event.getHotbarButton()) : null;
