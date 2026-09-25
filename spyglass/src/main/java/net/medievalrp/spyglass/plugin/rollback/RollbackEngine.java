@@ -381,10 +381,11 @@ public final class RollbackEngine {
     // (original dead entity id -> resurrected id) map an undo replay
     // carries so EntityRemove can find the fresh copy a rollback
     // spawned (#294). Set per job; the queue serializes jobs.
-    private volatile java.util.Map<UUID, UUID> entityAliases = java.util.Map.of();
+    private volatile java.util.Map<UUID, UUID> entityAliases = new java.util.concurrent.ConcurrentHashMap<>();
 
     public void entityAliases(java.util.Map<UUID, UUID> aliases) {
-        this.entityAliases = aliases == null ? java.util.Map.of() : java.util.Map.copyOf(aliases);
+        this.entityAliases = aliases == null ? new java.util.concurrent.ConcurrentHashMap<>()
+                : new java.util.concurrent.ConcurrentHashMap<>(aliases);
     }
 
     private boolean isProtectedLive(World world, int x, int y, int z) {
@@ -2106,6 +2107,21 @@ public final class RollbackEngine {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported(
                     "Hostile mobs are not resurrected."));
         }
+        if ("cushion".equalsIgnoreCase(effect.entityType()) && effect.originalEntityId() != null) {
+            UUID original = UUID.fromString(effect.originalEntityId());
+            UUID alias = entityAliases.get(original);
+            if (Bukkit.getEntity(original) != null || (alias != null && Bukkit.getEntity(alias) != null)) {
+                return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Cushion already exists."));
+            }
+            var key = new org.bukkit.NamespacedKey("spyglass", "restored-entity-id");
+            for (Entity existing : world.get().getNearbyEntities(location, 2, 2, 2)) {
+                if (effect.originalEntityId().equals(existing.getPersistentDataContainer().get(key,
+                        org.bukkit.persistence.PersistentDataType.STRING))) {
+                    entityAliases.put(original, existing.getUniqueId());
+                    return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Cushion already restored."));
+                }
+            }
+        }
         // Full-NBT resurrection when a snapshot exists. In practice it
         // rarely does: Paper's serializeEntity rejects dying entities,
         // so death records ship with null NBT — hence the
@@ -2115,15 +2131,29 @@ public final class RollbackEngine {
                 byte[] bytes = Base64.getDecoder().decode(effect.serializedEntity());
                 Entity entity = Bukkit.getUnsafe().deserializeEntity(bytes, world.get(), true, false);
                 if (entity != null) {
-                    entity.teleport(location);
+                    if (!"cushion".equalsIgnoreCase(effect.entityType())) entity.teleport(location);
+                    else {
+                        // deserializeEntity creates a detached entity; it must explicitly enter the world.
+                        if (effect.originalEntityId() != null) entity.getPersistentDataContainer().set(
+                                new org.bukkit.NamespacedKey("spyglass", "restored-entity-id"),
+                                org.bukkit.persistence.PersistentDataType.STRING, effect.originalEntityId());
+                        if (!entity.spawnAt(entity.getLocation(), org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.CUSTOM)) {
+                            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Cushion spawn was rejected."));
+                        }
+                        if (effect.originalEntityId() != null) entityAliases.put(UUID.fromString(effect.originalEntityId()), entity.getUniqueId());
+                    }
                     RollbackEffect inverse = new RollbackEffect.EntityRemove(
                             effect.location(), effect.entityType(), entity.getUniqueId().toString());
                     return new RollbackResult.Applied(effect, inverse);
                 }
             } catch (Throwable thrown) {
+                if ("cushion".equalsIgnoreCase(effect.entityType())) LOGGER.log(Level.WARNING, "Cannot restore cushion snapshot", thrown);
                 // Version-brittle NBT (documented on EntityDeathRecord);
                 // fall through to the by-type spawn.
             }
+        }
+        if ("cushion".equalsIgnoreCase(effect.entityType())) {
+            return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Cushion snapshot could not be restored."));
         }
         return spawnByType(effect, world.get(), location);
     }
@@ -2196,11 +2226,35 @@ public final class RollbackEngine {
                 entity = Bukkit.getEntity(resurrected);
             }
         }
+        if (entity == null && "cushion".equalsIgnoreCase(effect.entityType())) {
+            var world = BlockLocations.resolveWorld(effect.location());
+            if (world.isPresent()) {
+                var center = new Location(world.get(), effect.location().x() + .5, effect.location().y(), effect.location().z() + .5);
+                for (Entity candidate : world.get().getNearbyEntities(center, 2, 2, 2)) {
+                    if (effect.entityId().equals(candidate.getPersistentDataContainer().get(
+                            new org.bukkit.NamespacedKey("spyglass", "restored-entity-id"), org.bukkit.persistence.PersistentDataType.STRING))) {
+                        entity = candidate;
+                        break;
+                    }
+                }
+            }
+        }
         if (entity == null) {
             return new RollbackResult.Skipped(effect, new RollbackReason.NotSupported("Entity not found."));
         }
+        String originalId = effect.entityId();
+        String snapshot = null;
+        if ("cushion".equalsIgnoreCase(effect.entityType())) {
+            String canonical = entity.getPersistentDataContainer().get(new org.bukkit.NamespacedKey("spyglass", "restored-entity-id"),
+                    org.bukkit.persistence.PersistentDataType.STRING);
+            if (canonical != null) originalId = canonical;
+            try { snapshot = Base64.getEncoder().encodeToString(Bukkit.getUnsafe().serializeEntity(entity)); }
+            catch (RuntimeException ex) {
+                return new RollbackResult.Skipped(effect, new RollbackReason.Error("Cannot preserve cushion for undo: " + ex.getMessage()));
+            }
+        }
         entity.remove();
-        RollbackEffect inverse = new RollbackEffect.EntitySpawn(effect.location(), effect.entityType(), null);
+        RollbackEffect inverse = new RollbackEffect.EntitySpawn(effect.location(), effect.entityType(), snapshot, originalId);
         return new RollbackResult.Applied(effect, inverse);
     }
 

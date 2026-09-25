@@ -20,6 +20,7 @@ public sealed interface EventRecord permits
         ItemPickupRecord,
         TeleportRecord,
         EntityDeathRecord,
+        EntityLifecycleRecord,
         EntityHitRecord,
         EntityMountRecord,
         EntityNameRecord,

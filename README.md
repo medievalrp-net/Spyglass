@@ -1,6 +1,6 @@
 # Spyglass (Preview)
 
-Forensic logging and rollback for Paper 1.21.x. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
+Forensic logging and rollback for Paper 26.1.2, 26.2 and 26.3. Spyglass records block, container, chat, command, combat, and movement events, lets you query them with a `key:value` language, and rolls any of them back by block, player, cause, or in bulk while the server holds 20 TPS.
 
 > **Preview.** Spyglass is built for medium and large servers. The embedded SQLite backend runs it with no external database, so a small server can use it too, though CoreProtect or Prism stay lighter-weight there.
 
@@ -8,7 +8,7 @@ A standalone CLI imports existing CoreProtect databases into Spyglass — see [`
 
 Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
-**Docs:** [Commands & query reference](COMMANDS.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
+**Docs:** [Commands & query reference](COMMANDS.md) · [Live config & updates](docs/live-configuration-and-updates.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
 
 ## Sponsors
 
@@ -70,14 +70,20 @@ A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in
 | Worst single tick | **~100 ms** | up to ~900 ms |
 | Automatic data pruning | ✓ |  |
 | Storage engines | SQLite, MongoDB, ClickHouse, MariaDB/MySQL | SQLite, MySQL |
-| Minecraft versions | 1.21.x | 1.7+ |
+| Minecraft versions | 26.1.2 / 26.2 / 26.3 | 1.7+ |
 
 Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB, ClickHouse, and MariaDB/MySQL are there when you outgrow it or already run one.
 
+## Supported releases
+
+`main` produces separate Java 25 builds for Minecraft 26.1.2, 26.2 and 26.3, each bundling its matching InvUI version. All three builds ship in one release from the same source commit. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21.11`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21.11), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`. InvUI 2 is version-specific: install the artifact labeled for your exact server version.
+
+Use the 1.1 release assets for modern Minecraft targets and the 1.0.13 maintenance release for Minecraft 1.21.11.
+
 ## Requirements
 
-- Paper 1.21.8 or newer 1.21.x
-- Java 21
+- Paper 26.1.2, 26.2 or 26.3 (matching build required)
+- Java 25
 - A database, one of:
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
   - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
@@ -94,6 +100,8 @@ Root command is `/spyglass`, aliased to `/sg`. The full reference - every comman
 /sg rollback p:griefer t:6h r:100             # revert a griefer's last 6h nearby
 /sg undo                                       # reverse your last rollback
 /sg tool                                       # toggle the inspector wand
+/sg reload                                     # reload supported live config settings
+/sg version                                    # version and compatible update status
 /sg import database.db                         # import a CoreProtect history
 /sg migrate clickhouse                         # move all records to another backend
 ```

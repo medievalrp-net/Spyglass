@@ -20,6 +20,20 @@ import org.junit.jupiter.api.Test;
  * shape. No Mongo / ClickHouse container required.
  */
 class BsonBlobsTest {
+    @Test
+    void cushionLifecycleRoundTripsWithStateAndRollbackIdentity() {
+        var now = java.time.Instant.parse("2026-09-24T00:00:00Z");
+        var context = net.medievalrp.spyglass.api.event.RecordContext.fresh(now, now.plusSeconds(3600),
+                net.medievalrp.spyglass.api.event.Origin.player(),
+                net.medievalrp.spyglass.api.event.Source.player(java.util.UUID.randomUUID(), "tester"),
+                new net.medievalrp.spyglass.api.util.BlockLocation(java.util.UUID.randomUUID(), "world", 1, 80, 2), "test");
+        for (String event : List.of("cushion-place", "cushion-break")) {
+            var record = net.medievalrp.spyglass.api.event.EntityLifecycleRecord.of(context, event,
+                    "RED_CUSHION", "cushion", java.util.UUID.randomUUID(), "complete-serialized-state");
+            assertThat(BsonBlobs.decodeRecordBytes(BsonBlobs.encodeRecordBytes(record))).isEqualTo(record);
+        }
+    }
+
 
     @Test
     void storedItemWithNullDataRoundTripsKeepingProjections() {

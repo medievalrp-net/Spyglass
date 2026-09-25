@@ -15,7 +15,7 @@ class SpyglassCommandsTest {
         List<String> urls = new java.util.ArrayList<>();
         net.kyori.adventure.text.event.ClickEvent click = component.clickEvent();
         if (click != null && click.action() == net.kyori.adventure.text.event.ClickEvent.Action.OPEN_URL) {
-            urls.add(click.value());
+            urls.add(((net.kyori.adventure.text.event.ClickEvent.Payload.Text) click.payload()).value());
         }
         for (Component child : component.children()) {
             urls.addAll(openUrls(child));

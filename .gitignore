@@ -31,3 +31,9 @@ docs/superpowers/
 workspace/
 # CoreProtect importer test fixtures (large DBs, world data)
 coreprotect-test/
+
+# Local release staging
+/dist/
+
+# Python release-packaging test cache
+__pycache__/

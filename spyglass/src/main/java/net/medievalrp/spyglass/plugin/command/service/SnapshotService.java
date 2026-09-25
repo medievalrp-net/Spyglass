@@ -13,9 +13,6 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.event.ClickEvent;
-import net.kyori.adventure.text.event.HoverEvent;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.medievalrp.spyglass.api.event.StoredItem;
 import net.medievalrp.spyglass.api.param.ParamParseException;
 import net.medievalrp.spyglass.api.query.Flag;
@@ -35,7 +32,6 @@ import net.medievalrp.spyglass.plugin.snapshot.SnapshotReconstructor;
 import net.medievalrp.spyglass.plugin.snapshot.SnapshotSession;
 import net.medievalrp.spyglass.plugin.snapshot.SnapshotSessions;
 import net.medievalrp.spyglass.plugin.snapshot.SnapshotSlot;
-import net.medievalrp.spyglass.plugin.snapshot.SnapshotTakes;
 import net.medievalrp.spyglass.plugin.snapshot.SnapshotView;
 import net.medievalrp.spyglass.plugin.storage.RecordStore;
 import net.medievalrp.spyglass.plugin.util.BlockLocations;
@@ -78,8 +74,8 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>This class does not open a GUI itself; it hands a resolved
  * {@link SnapshotSession} to the injected {@link SnapshotView} when one is
- * present and the sender is a player, and falls back to a text listing
- * otherwise (26.x, console/RCON, or no GUI wired) - the same split
+ * present and the sender is a player. Unavailable or failing GUIs report an
+ * error without exposing a text inventory - the same behavior
  * {@code SalvageService} draws for {@code /sg inventory}.
  *
  * <p>Every store/query call and every {@link Block#getState()} /
@@ -125,7 +121,7 @@ public final class SnapshotService {
             List.of("deposit", "withdraw", "shulker-deposit", "shulker-withdraw", "crafter",
                     "bookshelf-insert", "bookshelf-remove", "pot-insert", "pot-remove",
                     "transfer-deposit", "transfer-withdraw",
-                    "transfer-in", "transfer-out");
+                    "transfer-in", "transfer-out", "transfer-uncertain");
 
     private static final Pattern COORDS =
             Pattern.compile("^(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})\\s*,\\s*(-?\\d{1,8})$");
@@ -140,7 +136,6 @@ public final class SnapshotService {
     private final boolean playerCaptureEnabled;
     private final ServiceSupport support;
     private final SnapshotSessions sessions;
-    private final SnapshotTakes takes;
     @Nullable
     private final SnapshotView view;
     private final Logger logger;
@@ -151,7 +146,6 @@ public final class SnapshotService {
                            SpyglassConfig config,
                            ServiceSupport support,
                            SnapshotSessions sessions,
-                           SnapshotTakes takes,
                            @Nullable SnapshotView view,
                            Logger logger) {
         this.playerStore = playerStore;
@@ -164,7 +158,6 @@ public final class SnapshotService {
         this.playerCaptureEnabled = config.snapshot().players().enabled();
         this.support = support;
         this.sessions = sessions;
-        this.takes = takes;
         this.view = view;
         this.logger = logger;
     }
@@ -172,6 +165,14 @@ public final class SnapshotService {
     // ---- /sg snapshot <params> ------------------------------------------
 
     public void execute(CommandSender sender, String rawParams) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(Feedback.error("Open snapshots in-game as a player."));
+            return;
+        }
+        if (view == null) {
+            sender.sendMessage(Feedback.error("The snapshot GUI is unavailable. Contact an administrator."));
+            return;
+        }
         ParsedQuery parsed;
         try {
             parsed = parse(rawParams, Instant.now());
@@ -184,38 +185,6 @@ public final class SnapshotService {
         } else {
             executeContainerMode(sender, parsed);
         }
-    }
-
-    // ---- /sg snapshot take <token> <slot> --------------------------------
-
-    public void take(CommandSender sender, String rawToken, int slot) {
-        if (!(sender instanceof Player player)) {
-            sender.sendMessage(Feedback.error("Take items in-game as a player."));
-            return;
-        }
-        UUID token;
-        try {
-            token = UUID.fromString(rawToken.trim());
-        } catch (IllegalArgumentException ex) {
-            player.sendMessage(Feedback.error("That snapshot has expired - re-run /sg snapshot."));
-            return;
-        }
-        Optional<SnapshotSession> session = sessions.resolve(player, token);
-        if (session.isEmpty()) {
-            player.sendMessage(Feedback.error("That snapshot has expired - re-run /sg snapshot."));
-            return;
-        }
-        SnapshotTakes.Result result = takes.take(player, session.get(), slot);
-        player.sendMessage(describeTake(result));
-    }
-
-    private static Component describeTake(SnapshotTakes.Result result) {
-        return switch (result) {
-            case TAKEN -> Feedback.success("Took a copy.");
-            case INVENTORY_FULL -> Feedback.warn("That whole stack won't fit in your inventory - nothing taken.");
-            case NO_PERMISSION -> Feedback.error("You don't have permission to take from snapshots.");
-            case SLOT_EMPTY -> Feedback.error("Nothing to take in that slot.");
-        };
     }
 
     // ---- player mode ------------------------------------------------------
@@ -272,7 +241,7 @@ public final class SnapshotService {
                             SnapshotSession.Certainty.CERTAIN, notes, PLAYER_CONTAINER_ROWS,
                             snapshot.slots());
                     sessions.store(sender, session);
-                    openOrList(sender, session);
+                    openGui(sender, session);
                 });
             } catch (RuntimeException ex) {
                 logger.warning("Spyglass snapshot player lookup failed for " + name + ": " + ex.getMessage());
@@ -327,7 +296,7 @@ public final class SnapshotService {
                     }
                     SnapshotSession session = buildContainerSession(target, t, outcome.reconstruction());
                     sessions.store(sender, session);
-                    openOrList(sender, session);
+                    openGui(sender, session);
                 });
             } catch (RuntimeException ex) {
                 logger.warning("Spyglass snapshot container reconstruction failed at "
@@ -643,45 +612,21 @@ public final class SnapshotService {
 
     // ---- opening the result ---------------------------------------------
 
-    private void openOrList(CommandSender sender, SnapshotSession session) {
-        if (view != null && sender instanceof Player player) {
-            try {
-                view.open(player, session);
-                return;
-            } catch (RuntimeException ex) {
-                // A GUI that cannot be built must never eat the result: the
-                // #351 size crash left players with no window and no message.
-                // The text listing carries everything the window would have.
-                logger.warning("Spyglass snapshot GUI failed for " + session.subjectLabel()
-                        + "; falling back to the text listing: " + ex);
-            }
-        }
-        renderListing(sender, session);
-    }
-
-    // ---- text listing ----------------------------------------------------
-
-    private void renderListing(CommandSender sender, SnapshotSession session) {
-        sender.sendMessage(header(session));
-        // A player snapshot is only as fresh as its capture; the GUI's info
-        // book already shows when that was, and the text surface is the one
-        // an operator uses from console - it needs the same number.
-        if (session.kind() == SnapshotSession.Kind.PLAYER && session.capturedAt() != null) {
-            String cause = session.cause();
-            sender.sendMessage(Feedback.bonus("captured " + formatInstant(session.capturedAt())
-                    + (cause == null || cause.isBlank()
-                            ? "" : " (" + cause.replace('-', ' ').replace('_', ' ') + ")")));
-        }
-        for (String note : session.notes()) {
-            sender.sendMessage(Feedback.bonus("- " + note));
-        }
-        if (session.slots().isEmpty()) {
-            sender.sendMessage(Feedback.bonus("Nothing in it."));
+    void openGui(CommandSender sender, SnapshotSession session) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(Feedback.error("Open snapshots in-game as a player."));
             return;
         }
-        boolean canTake = sender.hasPermission(SnapshotTakes.PERMISSION);
-        for (SnapshotSlot slot : session.slots()) {
-            sender.sendMessage(slotLine(session, slot, canTake));
+        if (view == null) {
+            sender.sendMessage(Feedback.error("The snapshot GUI is unavailable. Contact an administrator."));
+            return;
+        }
+        try {
+            view.open(player, session);
+        } catch (RuntimeException ex) {
+            logger.log(java.util.logging.Level.WARNING, "Spyglass snapshot GUI failed for "
+                    + session.subjectLabel(), ex);
+            sender.sendMessage(Feedback.error("Could not open the snapshot GUI. Contact an administrator."));
         }
     }
 
@@ -699,44 +644,6 @@ public final class SnapshotService {
                         + " to start recording them."),
                 Feedback.bonus("Container snapshots need no setting: look at a container,"
                         + " or use trg:x,y,z."));
-    }
-
-    private static Component header(SnapshotSession session) {
-        long elapsedSeconds = Math.max(0L,
-                Instant.now().getEpochSecond() - session.asOf().getEpochSecond());
-        String ago = new Duration(elapsedSeconds).compact();
-        // No "(uncertain)" marker: the notes rendered under this header say
-        // what could not be accounted for, in words. A clean reconstruction
-        // has no notes and needs no label.
-        return Feedback.info(session.subjectLabel() + " as of " + ago + " ago");
-    }
-
-    private static Component slotLine(SnapshotSession session, SnapshotSlot slot, boolean canTake) {
-        StoredItem item = slot.item();
-        int count = displayCount(session, slot);
-        var builder = Component.text()
-                .append(Component.text("[" + slot.slot() + "] ", NamedTextColor.GRAY))
-                .append(Component.text(item.material() + " x" + count, NamedTextColor.AQUA));
-        if (item.name() != null && !item.name().isBlank()) {
-            builder.hoverEvent(HoverEvent.showText(Component.text(item.name(), NamedTextColor.GRAY)));
-        }
-        if (canTake) {
-            builder.append(Component.text(" [take]", NamedTextColor.GREEN)
-                    .clickEvent(ClickEvent.runCommand(
-                            "/spyglass snapshot take " + session.token() + " " + slot.slot()))
-                    .hoverEvent(HoverEvent.showText(Component.text("Take a copy", NamedTextColor.GRAY))));
-        }
-        return builder.asComponent();
-    }
-
-    private static int displayCount(SnapshotSession session, SnapshotSlot slot) {
-        if (session.kind() == SnapshotSession.Kind.PLAYER) {
-            return slot.count();
-        }
-        // Container-mode slots leave the real amount inside the blob
-        // (SnapshotReconstructor.COUNT_IN_BLOB) - decode to read it.
-        ItemStack decoded = ItemSerialization.decode(slot.item().data());
-        return decoded == null ? 0 : decoded.getAmount();
     }
 
     private static String formatInstant(Instant instant) {

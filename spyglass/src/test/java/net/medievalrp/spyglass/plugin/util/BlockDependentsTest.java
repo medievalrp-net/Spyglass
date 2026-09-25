@@ -143,12 +143,46 @@ class BlockDependentsTest {
         assertThat(result).containsExactly(ladder, torch);
     }
 
+    @Test
+    void sulfurSpikesFollowTheirSupportDirection() {
+        Material sulfur = Material.getMaterial("SULFUR_SPIKE");
+        org.junit.jupiter.api.Assumptions.assumeTrue(sulfur != null);
+        for (BlockFace direction : new BlockFace[] {BlockFace.UP, BlockFace.DOWN}) {
+            World world = mock(World.class);
+            when(world.getUID()).thenReturn(java.util.UUID.randomUUID());
+            when(world.getName()).thenReturn("world");
+            when(world.getMinHeight()).thenReturn(-64);
+            when(world.getMaxHeight()).thenReturn(320);
+            when(world.getType(anyInt(), anyInt(), anyInt())).thenReturn(Material.STONE);
+            when(world.getType(0, 64 + direction.getModY(), 0)).thenReturn(sulfur);
+            Block host = brokenAt(world, 0, 64, 0);
+            Block first = brokenAt(world, 0, 64 + direction.getModY(), 0);
+            Block second = brokenAt(world, 0, 64 + 2 * direction.getModY(), 0);
+            Block end = mock(Block.class);
+            when(end.getType()).thenReturn(Material.AIR);
+            when(host.getRelative(direction)).thenReturn(first);
+            when(first.getRelative(direction)).thenReturn(second);
+            when(second.getRelative(direction)).thenReturn(end);
+            for (Block segment : List.of(first, second)) {
+                when(segment.getType()).thenReturn(sulfur);
+                var data = mock(org.bukkit.block.data.BlockData.class);
+                when(data.getAsString()).thenReturn("minecraft:sulfur_spike[vertical_direction="
+                        + direction.name().toLowerCase() + ",thickness=tip,waterlogged=false]");
+                when(segment.getBlockData()).thenReturn(data);
+            }
+            assertThat(BlockDependents.collectDependents(host)).containsExactly(first, second);
+            assertThat(BlockDependents.isAttachedTo(first, direction.getOppositeFace())).isFalse();
+            assertThat(BlockDependents.collectDependentsBeyond(List.of(host, first))).containsExactly(second);
+        }
+    }
+
     private static Block brokenAt(World world, int x, int y, int z) {
         Block broken = mock(Block.class);
         when(broken.getWorld()).thenReturn(world);
         when(broken.getX()).thenReturn(x);
         when(broken.getY()).thenReturn(y);
         when(broken.getZ()).thenReturn(z);
+        when(broken.getLocation()).thenReturn(new org.bukkit.Location(world, x, y, z));
         return broken;
     }
 }

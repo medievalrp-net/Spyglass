@@ -35,6 +35,7 @@ import net.medievalrp.spyglass.api.event.ContainerInteractRecord;
 import net.medievalrp.spyglass.api.event.ContainerWithdrawRecord;
 import net.medievalrp.spyglass.api.event.CustomRecord;
 import net.medievalrp.spyglass.api.event.EntityDeathRecord;
+import net.medievalrp.spyglass.api.event.EntityLifecycleRecord;
 import net.medievalrp.spyglass.api.event.EntityHitRecord;
 import net.medievalrp.spyglass.api.event.EntityMountRecord;
 import net.medievalrp.spyglass.api.event.EntityNameRecord;
@@ -158,14 +159,14 @@ public final class ClickHouseRecordStore implements RecordStore {
      */
     private static final String ROLLBACKABLE_EVENT_FILTER =
             "event IN ("
-                    + "'break','place','decay','form','grow','ignite','brush','vault',"
+                    + "'break','place','decay','form','grow','ignite','brush','vault','straw-bed-consume',"
                     + "'deposit','withdraw',"
                     + "'entity-deposit','entity-withdraw',"
                     + "'bookshelf-insert','bookshelf-remove',"
                     + "'pot-insert','pot-remove',"
                     + "'shulker-deposit','shulker-withdraw',"
                     + "'bundle-insert','bundle-extract',"
-                    + "'crafter','death')";
+                    + "'crafter','death','cushion-place','cushion-break')";
 
     private static final List<String> ROLLBACK_COLUMNS = List.of(
             "id", "event", "occurred", "expires_at",
@@ -526,7 +527,11 @@ public final class ClickHouseRecordStore implements RecordStore {
         Byte dismount = null;
         String oldName = null;
         String newName = null;
-        if (record instanceof EntityDeathRecord d) {
+        if (record instanceof EntityLifecycleRecord d) {
+            entityType = d.entityType();
+            entityId = d.entityId();
+            entityNbt = d.entityNbt();
+        } else if (record instanceof EntityDeathRecord d) {
             entityType = d.entityType();
             entityId = d.entityId();
             killerType = d.killerType();
@@ -808,6 +813,12 @@ public final class ClickHouseRecordStore implements RecordStore {
                     : new RollbackEffect.ContainerSlotWrite(location, slot, before, after, containerType), occurred, id);
             return;
         }
+        if (clazz == EntityLifecycleRecord.class) {
+            RollbackEffect effect = EntityLifecycleRecord.effect(rollback, event, readLocation(row),
+                    row.getString("entity_type"), row.getUUID("entity_id"), row.getString("entity_nbt"));
+            if (effect == null) sink.skip(occurred, id); else sink.complex(effect, occurred, id);
+            return;
+        }
         if (clazz == EntityDeathRecord.class) {
             // Lockstep with EntityDeathRecord.resurrectable() (#284): only a
             // player kill produces an effect in either direction; environment
@@ -1038,6 +1049,10 @@ public final class ClickHouseRecordStore implements RecordStore {
                     origin, source, location, server, target,
                     from, to,
                     row.getString("teleport_cause"));
+        }
+        if (clazz == EntityLifecycleRecord.class) {
+            return new EntityLifecycleRecord(id, event, occurred, expiresAt, origin, source, location,
+                    server, target, row.getString("entity_type"), row.getUUID("entity_id"), row.getString("entity_nbt"));
         }
         if (clazz == EntityDeathRecord.class) {
             return new EntityDeathRecord(id, event, occurred, expiresAt,

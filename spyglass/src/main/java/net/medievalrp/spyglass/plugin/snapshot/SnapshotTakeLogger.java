@@ -18,8 +18,7 @@ import org.jetbrains.annotations.ApiStatus;
  * Records an operator taking a copy of an item out of a {@code /sg snapshot}
  * view (a past-instant player inventory or container), so every take is
  * auditable ({@code a:snapshot-take}). Same shape as {@code
- * SalvageWithdrawLogger}: the GUI and the text-fallback {@code take} command
- * both call {@link #log} after the copy already landed in the taker's
+ * SalvageWithdrawLogger}: the GUI calls {@link #log} after the copy already landed in the taker's
  * inventory - this only builds the audit record, it never touches inventory
  * contents itself.
  *

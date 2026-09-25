@@ -43,7 +43,9 @@ import org.jetbrains.annotations.ApiStatus;
 public final class ResultRenderer {
 
     private final SpyglassApi api;
-    private final SpyglassConfig config;
+    public void setConfig(SpyglassConfig config) { this.config = config; }
+
+    private volatile SpyglassConfig config;
 
     public ResultRenderer(SpyglassApi api, SpyglassConfig config) {
         this.api = api;
@@ -500,6 +502,7 @@ public final class ResultRenderer {
             // Damage / damage-cause / projectile detail moves to the
             // hover so the inline form matches "<src> hit TARGET TIME"
             // — not "<src> hit TARGET for 1.0 TIME".
+            case net.medievalrp.spyglass.api.event.EntityLifecycleRecord decoration -> upperOrEmpty(decoration.target());
             case EntityDeathRecord death -> upperOrEmpty(death.target());
             case EntityHitRecord hit -> upperOrEmpty(hit.target());
             case EntityMountRecord mount ->

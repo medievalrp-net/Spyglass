@@ -6,8 +6,7 @@ import java.util.UUID;
 
 /**
  * A resolved snapshot ready to show: what {@code /sg snapshot} computed, held
- * per-sender in a TTL cache so GUI clicks and the text-fallback
- * {@code /sg snapshot take <token> <slot>} act on exactly the state the
+ * per-sender in a TTL cache so GUI clicks act on exactly the state the
  * operator was shown. Sessions never write back; takes clone out of them.
  *
  * <p>Container sessions come from the reconstructor (certainty is the

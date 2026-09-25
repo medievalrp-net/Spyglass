@@ -16,9 +16,10 @@ Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-let
 | `/sg restore <query>` | `rs`, `rst` | `spyglass.rollback` | Re-apply previously-rolled-back events |
 | `/sg undo` | `u` | `spyglass.rollback` | Undo your most recent rollback or restore |
 | `/sg rbqueue [...]` | `queue`, `rbq` | `spyglass.rollback` | List, cancel, or resume rollback jobs |
-| `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Recover items a rollback destroyed (GUI, or a listing where there is no GUI) |
-| `/sg inventory <id>` | `inv`, `salvage` | `spyglass.salvage` | Recover a container's items by id, via command |
+| `/sg inventory` | `inv`, `salvage` | `spyglass.salvage` | Open rollback salvage in an inventory GUI (in-game only) |
 | `/sg snapshot <params>` | `snap` | `spyglass.snapshot` | View a player inventory or container as of a past instant (GUI, or a listing where there is no GUI) |
+| `/sg reload` | — | `spyglass.reload` | Reload supported live settings; reject restart-only changes |
+| `/sg version` | `ver` | `spyglass.use` | Show version and cached compatible update status |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
@@ -35,7 +36,7 @@ All default to `op`.
 | `spyglass.rollback` | rollback, restore, undo, rbqueue |
 | `spyglass.salvage` | `/sg inventory` container salvage (recover items a rollback destroyed). Independent of `spyglass.rollback` |
 | `spyglass.snapshot` | `/sg snapshot` - view a player inventory or container as of a past instant |
-| `spyglass.snapshot.take` | Take a copy of an item out of a snapshot view (GUI click or text-fallback `take`). Independent of `spyglass.snapshot` - view-only access is a legitimate grant |
+| `spyglass.snapshot.take` | Take a copy of an item out of a snapshot view (GUI click). Independent of `spyglass.snapshot` - view-only access is a legitimate grant |
 | `spyglass.tool` | inspection wand |
 | `spyglass.tele` | teleport (used by clickable result rows) |
 | `spyglass.worldedit` | allows the `-we` flag to use your WorldEdit selection as the search region |
@@ -175,9 +176,9 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 When a force-overwrite rollback destroys a container that had items in it - a chest someone filled after the grief, restored back to stone - those items are **not lost**. The rollback captures the destroyed inventory first and files it under `/sg inventory`, gated behind its own `spyglass.salvage` node (granted independently of `spyglass.rollback`).
 
-On Minecraft 1.21.x, `/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. A container disappears from the GUI once emptied.
+On Minecraft 26.3, `/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. A container disappears from the GUI once emptied.
 
-On servers without the GUI (Minecraft 26.x) and from the console or RCON, `/sg inventory` prints a text listing instead. Each captured container shows an id; recover it with `/sg inventory <id>` (in-game players only), or click the `[Recover]` prompt next to a listing line. The command withdraws that container's items straight into your inventory server-side, with no inventory-drag surface. Either way, every withdrawal is logged as a `salvage-withdraw` event (find them with `/sg search a:salvage-withdraw`).
+Rollback salvage is inventory-only and requires an in-game player. Console/RCON receives an in-game-only error. There is no text listing or `/sg inventory <id>` recovery command. Missing or failing GUIs report an error without recovering items. Every GUI withdrawal is logged as a `salvage-withdraw` event (`/sg search a:salvage-withdraw`).
 
 Only containers the rollback *actually* destroys are salvaged - a chest in the rolled region that the rollback leaves untouched is never captured, so items are never duplicated. Salvage snapshots are kept for 30 days.
 
@@ -197,9 +198,9 @@ Once on, it reads the subject's newest captured inventory at or before `t:`. Pla
 
 **Container mode** (no `p:`) needs no setting and stores nothing: it reconstructs the container from the deposit/withdraw log, reverse-applying every recorded change back to `t:`, then forward-replaying to check the result matches the container's current contents. A reconstruction that reproduces the live container exactly says nothing further. One the log can't fully account for - a legacy pre-slot-logging row, a self-mutating block (furnace, brewing stand, campfire), the container's shape having changed, or a change the log never captured - lists what it could not explain, in the view itself. A double chest reconstructs both halves and merges them into one 54-slot view.
 
-On Minecraft 1.21.x, the result opens in a GUI - extract-only, click a slot to take a copy. Elsewhere (26.x, console/RCON), it prints a text listing with a `[take]` link per occupied slot running `/sg snapshot take <token> <slot>`; the token expires after 15 minutes, so re-run `/sg snapshot` if you see "snapshot expired".
+On each supported Minecraft build, the result opens in an extract-only inventory GUI. Click a slot to take a copy. Snapshots require an in-game player; console/RCON receives an error. There are no text listings, clickable chat recovery links or `/sg snapshot take` commands. If the GUI cannot open, the plugin reports an error instead.
 
-A take is a **copy**: the live inventory or container is never touched, and a destination inventory that cannot fit the whole stack refuses the take rather than placing part of it or dropping the rest on the ground. `spyglass.snapshot.take` gates every take, in both the GUI and the text fallback; grant `spyglass.snapshot` without it for view-only access. Every take is logged as a `snapshot-take` event (`/sg search a:snapshot-take`).
+A take is a **copy**: the live inventory or container is never touched, and a destination inventory that cannot fit the whole stack refuses the take rather than placing part of it or dropping the rest on the ground. `spyglass.snapshot.take` gates every take, through the GUI; grant `spyglass.snapshot` without it for view-only access. Every take is logged as a `snapshot-take` event (`/sg search a:snapshot-take`).
 
 ## Importing and migrating
 
@@ -281,3 +282,7 @@ The full operator runbook, including the standalone CLI importer and parity vali
 //wand   (select region with WorldEdit)
 /sg restore a:break t:1h -we
 ```
+
+## Live configuration and update notifications
+
+See [live configuration and updates](docs/live-configuration-and-updates.md) for `/sg reload` settings, retention behavior, GitHub release matching, and `updates.enabled`. Operators receive compatible release notices through `spyglass.update` (default op); no jars are downloaded automatically.

@@ -12,7 +12,7 @@ val jetbrainsAnnotationsVersion: String by rootProject.extra
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
     withSourcesJar()
 }

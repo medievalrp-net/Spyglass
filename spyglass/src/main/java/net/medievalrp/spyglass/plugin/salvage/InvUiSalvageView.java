@@ -14,37 +14,33 @@ import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
-import xyz.xenondevs.inventoryaccess.component.AdventureComponentWrapper;
+import xyz.xenondevs.invui.Click;
 import xyz.xenondevs.invui.InvUI;
 import xyz.xenondevs.invui.gui.PagedGui;
-import xyz.xenondevs.invui.gui.structure.Markers;
+import xyz.xenondevs.invui.gui.Markers;
 import xyz.xenondevs.invui.item.Item;
 import xyz.xenondevs.invui.item.ItemProvider;
 import xyz.xenondevs.invui.item.ItemWrapper;
-import xyz.xenondevs.invui.item.impl.AbstractItem;
-import xyz.xenondevs.invui.item.impl.controlitem.PageItem;
+import xyz.xenondevs.invui.item.AbstractItem;
+import xyz.xenondevs.invui.item.AbstractPagedGuiBoundItem;
 import xyz.xenondevs.invui.window.Window;
 
 /**
- * InvUI-backed {@code /sg inventory} salvage browser for the Minecraft versions
- * InvUI 1.49 supports (1.x): three extract-only levels (rollbacks -> containers
- * -> items) with pagination, window management, and click-safety from InvUI
- * instead of hand-rolled Bukkit inventory handling. On versions InvUI does not
- * support (26.x), there is no GUI at all - salvage is command-only (see
- * {@link SalvageViews} and {@code SalvageService}).
+ * InvUI-backed rollback salvage browser: three extract-only levels
+ * (rollbacks -> containers -> items) with pagination and click safety.
+ * Each distribution bundles the InvUI release matching its Minecraft target.
  *
  * <p>The extract path goes through the shared {@link SalvageWithdrawals}
- * (dupe-guarded, shared with the command path), re-reads filter in-flight slots
+ * (dupe-guarded), re-reads filter in-flight slots
  * ({@link InFlightTracker}), store reads run off the main thread and the window
  * opens back on it, and every take is logged. InvUI content slots are
  * click-cancelled by default, so the GUI is inherently extract-only (no inserts,
  * shift-clicks, number-key swaps, drags, or hopper pulls move items).
  *
  * <p>This class is only instantiated on supported versions (see
- * {@link SalvageViews}), so a 26.x server never loads any InvUI class.
+ * {@link SalvageViews}), so an unsupported server never loads any InvUI class.
  */
 final class InvUiSalvageView implements SalvageView {
 
@@ -85,8 +81,7 @@ final class InvUiSalvageView implements SalvageView {
         this.rollbackListLimit = rollbackListLimit;
         this.logger = logger;
         this.withdrawals = withdrawals;
-        // Shared with the command path so a GUI take and a command take on the
-        // same snapshot see each other's in-flight slots.
+        // GUI views of the same snapshot share in-flight slots.
         this.inFlight = withdrawals.inFlight();
         // InvUI resolves its scheduler/listeners from the owning plugin; must be
         // set before any Window is built.
@@ -185,7 +180,7 @@ final class InvUiSalvageView implements SalvageView {
 
     private void openWindow(Player player, String[] structure, List<Item> content, Component title,
                             Runnable back) {
-        PagedGui.Builder<Item> builder = PagedGui.items()
+        PagedGui.Builder<Item> builder = PagedGui.itemsBuilder()
                 .setStructure(structure)
                 .addIngredient('x', Markers.CONTENT_LIST_SLOT_HORIZONTAL)
                 .addIngredient('#', filler())
@@ -196,10 +191,10 @@ final class InvUiSalvageView implements SalvageView {
         if (back != null) {
             builder.addIngredient('b', new BackItem(back));
         }
-        Window.single()
+        Window.builder()
                 .setViewer(player)
-                .setTitle(new AdventureComponentWrapper(title))
-                .setGui(builder.build())
+                .setTitle(title)
+                .setUpperGui(builder.build())
                 .build()
                 .open();
     }
@@ -239,12 +234,12 @@ final class InvUiSalvageView implements SalvageView {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(SalvageIcons.rollbackIcon(group));
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             openChests(player, group.rollbackId());
         }
     }
@@ -262,12 +257,12 @@ final class InvUiSalvageView implements SalvageView {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(SalvageIcons.chestIcon(snap));
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             openItems(player, rollbackId, snap);
         }
     }
@@ -289,12 +284,12 @@ final class InvUiSalvageView implements SalvageView {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(display.clone());
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             SalvageWithdrawals.Outcome outcome = withdrawals.withdraw(player, snap, index);
             switch (outcome.status()) {
                 case FULL -> player.sendMessage(
@@ -316,51 +311,59 @@ final class InvUiSalvageView implements SalvageView {
         }
 
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(SalvageIcons.button(Material.ARROW, "Back", NamedTextColor.YELLOW));
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             back.run();
         }
     }
 
     private static final class InfoItem extends AbstractItem {
         @Override
-        public ItemProvider getItemProvider() {
+        public ItemProvider getItemProvider(Player viewer) {
             return new ItemWrapper(SalvageIcons.button(Material.PAPER, "Rollback Salvage",
                     NamedTextColor.GRAY));
         }
 
         @Override
-        public void handleClick(ClickType clickType, Player who, InventoryClickEvent event) {
+        public void handleClick(ClickType clickType, Player who, Click event) {
             // Info only.
         }
     }
 
-    private static final class PrevItem extends PageItem {
-        PrevItem() {
-            super(false);
+    private static final class PrevItem extends AbstractPagedGuiBoundItem {
+        @Override
+        public void handleClick(ClickType clickType, Player who, Click event) {
+            if ((getGui().getPage() > 0)) {
+                getGui().setPage(getGui().getPage() - 1);
+            }
         }
 
         @Override
-        public ItemProvider getItemProvider(PagedGui<?> gui) {
-            Material material = gui.hasPreviousPage() ? Material.ARROW : Material.GRAY_STAINED_GLASS_PANE;
-            String label = gui.hasPreviousPage() ? "Previous page" : " ";
+        public ItemProvider getItemProvider(Player viewer) {
+            PagedGui<?> gui = getGui();
+            Material material = (gui.getPage() > 0) ? Material.ARROW : Material.GRAY_STAINED_GLASS_PANE;
+            String label = (gui.getPage() > 0) ? "Previous page" : " ";
             return new ItemWrapper(SalvageIcons.button(material, label, NamedTextColor.GREEN));
         }
     }
 
-    private static final class NextItem extends PageItem {
-        NextItem() {
-            super(true);
+    private static final class NextItem extends AbstractPagedGuiBoundItem {
+        @Override
+        public void handleClick(ClickType clickType, Player who, Click event) {
+            if ((getGui().getPage() + 1 < getGui().getPageCount())) {
+                getGui().setPage(getGui().getPage() + 1);
+            }
         }
 
         @Override
-        public ItemProvider getItemProvider(PagedGui<?> gui) {
-            Material material = gui.hasNextPage() ? Material.ARROW : Material.GRAY_STAINED_GLASS_PANE;
-            String label = gui.hasNextPage() ? "Next page" : " ";
+        public ItemProvider getItemProvider(Player viewer) {
+            PagedGui<?> gui = getGui();
+            Material material = (gui.getPage() + 1 < gui.getPageCount()) ? Material.ARROW : Material.GRAY_STAINED_GLASS_PANE;
+            String label = (gui.getPage() + 1 < gui.getPageCount()) ? "Next page" : " ";
             return new ItemWrapper(SalvageIcons.button(material, label, NamedTextColor.GREEN));
         }
     }

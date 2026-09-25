@@ -62,6 +62,13 @@ public final class IndexManager {
                 Indexes.ascending(RecordFields.LOCATION_CZ),
                 Indexes.descending(RecordFields.OCCURRED),
                 Indexes.descending(RecordFields.ID)));
+        // #360: exact-block inspection must not scan every event in a busy chunk.
+        // Equality on world/x/y/z leaves occurred/id ordered for the bounded lookup.
+        collection.createIndex(Indexes.compoundIndex(
+                Indexes.ascending(RecordFields.LOCATION_WORLD_ID),
+                Indexes.ascending("location.x", "location.y", "location.z"),
+                Indexes.descending(RecordFields.OCCURRED, RecordFields.ID)),
+                new IndexOptions().name("spyglass_exact_location_v1"));
         collection.createIndex(Indexes.ascending(RecordFields.EXPIRES_AT),
                 new IndexOptions().expireAfter(0L, TimeUnit.SECONDS));
 

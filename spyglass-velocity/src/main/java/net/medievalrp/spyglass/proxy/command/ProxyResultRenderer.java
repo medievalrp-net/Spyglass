@@ -274,6 +274,7 @@ public final class ProxyResultRenderer {
             case ItemDropRecord r -> r.target();
             case ItemPickupRecord r -> r.target();
             case TeleportRecord r -> r.target() + " via " + r.cause();
+            case net.medievalrp.spyglass.api.event.EntityLifecycleRecord decoration -> upperOrEmpty(decoration.target());
             case EntityDeathRecord r -> upperOrEmpty(r.target());
             case EntityHitRecord r -> upperOrEmpty(r.target());
             case EntityMountRecord r -> (r.dismount() ? "dismounted " : "mounted ") + upperOrEmpty(r.target());

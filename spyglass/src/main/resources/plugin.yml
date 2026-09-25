@@ -1,7 +1,7 @@
 name: Spyglass
 version: ${version}
 main: net.medievalrp.spyglass.plugin.SpyglassPlugin
-api-version: "1.21"
+api-version: "${minecraftTarget}"
 authors:
   - itdontmatta
 softdepend:
@@ -9,6 +9,12 @@ softdepend:
   - FastAsyncWorldEdit
   - CraftBook
 permissions:
+  spyglass.reload:
+    description: Reload live Spyglass configuration settings.
+    default: op
+  spyglass.update:
+    description: Receive compatible release notifications.
+    default: op
   spyglass.use:
     default: op
   spyglass.search:

@@ -129,10 +129,19 @@ public final class SpyglassCommands {
     private static final String SUPPORT_URL = "https://" + SUPPORT_INVITE;
     private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 
+    private java.util.function.Consumer<CommandSender> reloadHandler = sender -> {};
+    private java.util.function.Supplier<String> updateStatus = () -> "";
+
+    public void setReloadHandler(java.util.function.Consumer<CommandSender> handler) { reloadHandler = handler; }
+    public void setUpdateStatus(java.util.function.Supplier<String> status) { updateStatus = status; }
+
     public CommandManager<CommandSender> register() {
         LegacyPaperCommandManager<CommandSender> manager = LegacyPaperCommandManager.createNative(
                 plugin, ExecutionCoordinator.simpleCoordinator());
         for (String root : rootAliases) {
+            manager.command(manager.commandBuilder(root).literal("reload")
+                    .permission("spyglass.reload")
+                    .handler(ctx -> reloadHandler.accept(ctx.sender())));
             manager.command(manager.commandBuilder(root)
                     .permission("spyglass.use")
                     .handler(ctx -> help.send(ctx.sender())));
@@ -223,18 +232,11 @@ public final class SpyglassCommands {
                 // of a rollback-destroyed container is a distinct capability from
                 // running a rollback, so an operator can grant recovery without
                 // granting rollback (and vice versa). See plugin.yml (#199).
-                // No args: open the GUI (InvUI, supported versions) or print the
-                // listing (26.x / console).
+                // Open the in-game inventory GUI.
                 manager.command(manager.commandBuilder(root).literal(name)
                         .permission("spyglass.salvage")
                         .handler(ctx -> salvage.execute(ctx.sender())));
-                // /sg inventory <id>: recover a container's items via command
-                // (players only). The only recovery path on versions without the
-                // GUI, and always available for the clickable [Recover] listing.
-                manager.command(manager.commandBuilder(root).literal(name)
-                        .required("id", StringParser.stringParser())
-                        .permission("spyglass.salvage")
-                        .handler(ctx -> salvage.withdraw(ctx.sender(), ctx.get("id"))));
+
             }
 
             for (String name : SNAPSHOT_ALIASES) {
@@ -248,18 +250,7 @@ public final class SpyglassCommands {
                                 suggestions.snapshotParamsProvider())
                         .permission("spyglass.snapshot")
                         .handler(ctx -> snapshot.execute(ctx.sender(), ctx.get("params"))));
-                // /sg snapshot take <token> <slot>: the text-fallback take path
-                // (the GUI clicks reach the same SnapshotService.take). Gated on
-                // spyglass.snapshot.take, which the GUI re-checks per click. The
-                // literal "take" child is matched before the greedy params above,
-                // the same literal-before-variable routing /sg import mysql relies
-                // on. Hidden from help - it exists for the listing's [take] links.
-                manager.command(manager.commandBuilder(root).literal(name).literal("take")
-                        .required("token", StringParser.stringParser())
-                        .required("slot", IntegerParser.integerParser())
-                        .permission("spyglass.snapshot.take")
-                        .handler(ctx -> snapshot.take(ctx.sender(),
-                                ctx.get("token"), ctx.get("slot"))));
+
             }
 
             // /spyglass tele <world> <x> <y> <z> — wired to search-result click
@@ -342,6 +333,8 @@ public final class SpyglassCommands {
     }
 
     private void sendVersion(CommandSender sender) {
+        String status = updateStatus.get();
+        if (!status.isBlank()) sender.sendMessage(Feedback.bonus(status));
         for (Component line : versionLines(plugin.getPluginMeta().getVersion(),
                 plugin.getPluginMeta().getAuthors(),
                 plugin.getServer().getMinecraftVersion())) {

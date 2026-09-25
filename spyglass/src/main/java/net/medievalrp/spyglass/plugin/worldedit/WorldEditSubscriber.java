@@ -214,6 +214,12 @@ public final class WorldEditSubscriber {
             boolean afterTile = isTileEntity(weAfter);
             Instant occurred = support.now();
 
+            var sulfurDependents = player != null && weAfter.getBlockType().getMaterial().isAir()
+                    && !weBefore.getBlockType().getMaterial().isAir()
+                    ? FallingBlockCascade.captureSulfurDependents(world, x, y, z) : java.util.Map.<net.medievalrp.spyglass.api.util.BlockLocation, BlockSnapshot>of();
+            boolean sulfurAlreadyRecorded = weBefore.getBlockType().id().equals("minecraft:sulfur_spike")
+                    && weAfter.getBlockType().getMaterial().isAir()
+                    && cascadedAbove.contains(FallingBlockCascade.packCell(x, y, z));
             boolean result = super.setBlock(position, block);
 
             // Only a placed tile entity needs a post-write read — to keep the
@@ -223,7 +229,7 @@ public final class WorldEditSubscriber {
             BlockSnapshot richAfter = afterTile
                     ? BlockSnapshots.capture(world.getBlockAt(x, y, z).getState()) : null;
 
-            buffer.add(new Pending(x, y, z, occurred,
+            if (!sulfurAlreadyRecorded) buffer.add(new Pending(x, y, z, occurred,
                     richBefore, beforeTile ? null : weBefore,
                     richAfter, afterTile ? null : weAfter));
             if (buffer.size() >= DRAIN_THRESHOLD) {
@@ -242,6 +248,7 @@ public final class WorldEditSubscriber {
             if (player != null && !beforeAir && afterAir) {
                 FallingBlockCascade.emitCascadeAbove(recorder, support, player, world,
                         x, y, z, cascadedAbove);
+                if (result) FallingBlockCascade.emitSulfurDependents(recorder, support, player, sulfurDependents, cascadedAbove);
             }
             return result;
         }

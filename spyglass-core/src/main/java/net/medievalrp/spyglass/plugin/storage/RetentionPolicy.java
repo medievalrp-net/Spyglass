@@ -36,8 +36,18 @@ public final class RetentionPolicy {
      */
     public static final Instant MAX_EXPIRY = Instant.parse("2105-01-01T00:00:00Z");
 
-    private final long defaultSeconds;
-    private final Map<String, Long> perEventSeconds;
+    private record Settings(long defaultSeconds, Map<String, Long> perEventSeconds) {}
+    private volatile Settings settings;
+
+    /** Pin a single policy for a multi-statement prune while a reload can run. */
+    public RetentionPolicy snapshot() {
+        Settings current = settings;
+        return new RetentionPolicy(current.defaultSeconds, current.perEventSeconds);
+    }
+
+    public void updateFrom(RetentionPolicy policy) {
+        settings = policy.settings;
+    }
 
     /**
      * @param defaultSeconds  global retention (the {@code storage.retention}
@@ -48,8 +58,7 @@ public final class RetentionPolicy {
      *                        inherit {@code defaultSeconds}.
      */
     public RetentionPolicy(long defaultSeconds, Map<String, Long> perEventSeconds) {
-        this.defaultSeconds = defaultSeconds;
-        this.perEventSeconds = Map.copyOf(perEventSeconds);
+        settings = new Settings(defaultSeconds, Map.copyOf(perEventSeconds));
     }
 
     /** A policy with no per-event overrides - every type uses {@code seconds}. */
@@ -59,8 +68,9 @@ public final class RetentionPolicy {
 
     /** Retention in seconds for {@code event} - its override, or the default. */
     public long secondsFor(String event) {
-        Long override = perEventSeconds.get(event);
-        return override != null ? override : defaultSeconds;
+        Settings current = settings;
+        Long override = current.perEventSeconds.get(event);
+        return override != null ? override : current.defaultSeconds;
     }
 
     /** When a record of {@code event} fired at {@code occurred} expires, clamped
@@ -72,7 +82,7 @@ public final class RetentionPolicy {
 
     /** The global default retention in seconds (used for the bulk prune sweep). */
     public long defaultSeconds() {
-        return defaultSeconds;
+        return settings.defaultSeconds;
     }
 
     /**
@@ -82,8 +92,9 @@ public final class RetentionPolicy {
      * younger than this (#203).
      */
     public long minSeconds() {
-        long min = defaultSeconds;
-        for (long seconds : perEventSeconds.values()) {
+        Settings current = settings;
+        long min = current.defaultSeconds;
+        for (long seconds : current.perEventSeconds.values()) {
             min = Math.min(min, seconds);
         }
         return min;
@@ -95,8 +106,9 @@ public final class RetentionPolicy {
      * a sweep (used to advance the oldest-record watermark, #203).
      */
     public long maxSeconds() {
-        long max = defaultSeconds;
-        for (long seconds : perEventSeconds.values()) {
+        Settings current = settings;
+        long max = current.defaultSeconds;
+        for (long seconds : current.perEventSeconds.values()) {
             max = Math.max(max, seconds);
         }
         return max;
@@ -104,6 +116,6 @@ public final class RetentionPolicy {
 
     /** The per-event overrides (event-name -> seconds); never null, may be empty. */
     public Map<String, Long> overrides() {
-        return perEventSeconds;
+        return settings.perEventSeconds;
     }
 }

@@ -65,6 +65,7 @@ public final class EventCatalog {
         // shapes - no codec/schema change - but is deliberately NOT
         // rollbackable (NON_ROLLBACKABLE below): an area rollback must not
         // try to reverse thousands of hopper ticks (#226).
+        m.put("transfer-uncertain", CustomRecord.class);
         m.put("transfer-withdraw", ContainerWithdrawRecord.class);
         m.put("transfer-deposit", ContainerDepositRecord.class);
         // The pre-#354 lean transfer shapes: coalesced, no slot state. No
@@ -94,6 +95,14 @@ public final class EventCatalog {
         m.put("mount", EntityMountRecord.class);
         m.put("dismount", EntityMountRecord.class);
         m.put("named", EntityNameRecord.class);
+        m.put("cushion-place", EntityLifecycleRecord.class);
+        m.put("cushion-break", EntityLifecycleRecord.class);
+        m.put("sulfur-ignite", CustomRecord.class);
+        m.put("sulfur-content", CustomRecord.class);
+        m.put("sulfur-growth", CustomRecord.class);
+        m.put("sulfur-bucket", CustomRecord.class);
+        m.put("age-lock", CustomRecord.class);
+        m.put("straw-bed-consume", BlockBreakRecord.class);
         m.put("entity-deposit", ContainerDepositRecord.class);
         m.put("entity-withdraw", ContainerWithdrawRecord.class);
         // Emitted when an operator takes an item out of a rollback-salvage

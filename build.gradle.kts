@@ -41,7 +41,21 @@ dependencies {
     nmcpAggregation(project(":spyglass-api"))
 }
 
-val paperApiVersion = "1.21.8-R0.1-SNAPSHOT"
+// InvUI 2 supports one Minecraft release per dependency version.
+val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse("26.3")
+val targets = mapOf(
+    "26.1.2" to ("26.1.2.build.74-stable" to "2.1.1"),
+    "26.2" to ("26.2.build.129-stable" to "2.3.2"),
+    "26.3" to ("26.3.build.38-alpha" to "2.5.0"),
+)
+val target = targets[minecraftTarget]
+    ?: error("Unsupported minecraftTarget '$minecraftTarget'; choose ${targets.keys}")
+val paperApiVersion = target.first
+extra["minecraftTarget"] = minecraftTarget
+extra["invUiVersion"] = target.second
+val baseVersion = providers.gradleProperty("version").get()
+val targetVersion = baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
+    if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""
 val velocityApiVersion = "3.4.0-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
 val clickhouseClientVersion = "0.9.8"
@@ -50,7 +64,7 @@ val sqliteJdbcVersion = "3.50.1.0"
 // protocols, so one driver serves backend = "mariadb" and "mysql" alike.
 val mariaDbDriverVersion = "3.5.6"
 val configurateVersion = "4.2.0"
-val cloudMinecraftVersion = "2.0.0-beta.16"
+val cloudMinecraftVersion = "2.0.1"
 val cloudCoreVersion = "2.0.0"
 val picocliVersion = "4.7.6"
 val junitVersion = "5.13.4"
@@ -59,7 +73,7 @@ val mockitoVersion = "5.20.0"
 val testcontainersVersion = "1.21.3"
 val jetbrainsAnnotationsVersion = "26.0.2"
 val faweVersion = "2.15.2"
-val worldeditVersion = "7.3.15"
+val worldeditVersion = "7.4.5"
 val bstatsVersion = "3.2.1"
 
 // True when a Docker daemon is reachable. Used to warn (not fail) when the
@@ -82,7 +96,8 @@ fun dockerIsAvailable(): Boolean = try {
 
 allprojects {
     group = providers.gradleProperty("group").get()
-    version = providers.gradleProperty("version").get()
+    version = targetVersion
+    layout.buildDirectory.set(layout.projectDirectory.dir("build/mc$minecraftTarget"))
 
     repositories {
         mavenCentral()
@@ -92,6 +107,7 @@ allprojects {
 
 subprojects {
     apply(plugin = "jacoco")
+    extensions.configure<JacocoPluginExtension> { toolVersion = "0.8.14" }
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         // The Testcontainers store ITs assume-skip when Docker is absent, so

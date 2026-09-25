@@ -27,6 +27,50 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 class AsyncRecorderTest {
+    @Test
+    @Timeout(10)
+    void flushWaitsForBatchAlreadyRemovedFromQueue() throws Exception {
+        RecordStore store = org.mockito.Mockito.mock(RecordStore.class);
+        CountDownLatch saving = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            saving.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return null;
+        }).when(store).save(org.mockito.ArgumentMatchers.anyList());
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            recorder.record(sampleRecord());
+            assertThat(saving.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(recorder.queueDepth()).isZero();
+            var flushing = java.util.concurrent.CompletableFuture.supplyAsync(() -> recorder.flush(Duration.parse("3s")));
+            assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> flushing.get(100, TimeUnit.MILLISECONDS)))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            release.countDown();
+            assertThat(flushing.get(3, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            release.countDown();
+            recorder.shutdown(Duration.parse("2s"));
+        }
+    }
+
+    @Test
+    void liveEventToggleFiltersSingleAndBulkIntakeWithoutDiscardingQueuedRecords() {
+        CapturingStore store = new CapturingStore();
+        AsyncRecorder recorder = new AsyncRecorder(1000, store, Logger.getLogger("test"));
+        try {
+            recorder.record(sampleRecord());
+            recorder.setIntakeFilter(record -> false);
+            recorder.record(sampleRecord());
+            recorder.recordAll(List.of(sampleRecord(), sampleRecord()));
+            recorder.setIntakeFilter(record -> true);
+            recorder.recordAll(List.of(sampleRecord()));
+        } finally {
+            recorder.shutdown(Duration.parse("2s"));
+        }
+        assertThat(store.totalSaved()).isEqualTo(2);
+    }
+
 
     private static JoinRecord sampleRecord() {
         Instant now = Instant.now();

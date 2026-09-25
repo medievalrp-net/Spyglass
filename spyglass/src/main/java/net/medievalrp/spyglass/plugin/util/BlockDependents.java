@@ -53,6 +53,8 @@ public final class BlockDependents {
          */
         ALL,
 
+        SPIKE,
+
         NONE
     }
 
@@ -97,6 +99,17 @@ public final class BlockDependents {
                     out = new ArrayList<>(4);
                 }
                 out.add(neighbor);
+                // Sulfur spikes propagate support loss through the whole oriented column.
+                if (styleOf(neighbor.getType()) == Style.SPIKE) {
+                    Block segment = neighbor;
+                    for (int depth = 1; depth < world.getMaxHeight() - world.getMinHeight(); depth++) {
+                        int nextY = segment.getY() + face.getModY();
+                        if (nextY < world.getMinHeight() || nextY >= world.getMaxHeight()) break;
+                        segment = segment.getRelative(face);
+                        if (styleOf(segment.getType()) != Style.SPIKE || !isAttachedTo(segment, face)) break;
+                        out.add(segment);
+                    }
+                }
             }
         }
         return out == null ? List.of() : out;
@@ -140,6 +153,9 @@ public final class BlockDependents {
                     && directionFromHost != BlockFace.DOWN
                     && wallFacesHost(candidate, directionFromHost);
             case ALL -> switchAttachesTo(candidate, directionFromHost.getOppositeFace());
+            case SPIKE -> (directionFromHost == BlockFace.UP || directionFromHost == BlockFace.DOWN)
+                    && candidate.getBlockData().getAsString().contains("vertical_direction="
+                            + (directionFromHost == BlockFace.UP ? "up" : "down"));
             case NONE -> false;
         };
     }
@@ -187,6 +203,7 @@ public final class BlockDependents {
     }
 
     public static Style styleOf(Material material) {
+        if (material.name().equals("SULFUR_SPIKE")) return Style.SPIKE;
         // ALL — attaches to any face
         if (Tag.BUTTONS.isTagged(material) || material == Material.LEVER) {
             return Style.ALL;
