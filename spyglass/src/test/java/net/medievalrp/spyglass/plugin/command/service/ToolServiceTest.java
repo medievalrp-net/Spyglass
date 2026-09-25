@@ -68,7 +68,7 @@ class ToolServiceTest {
     }
 
     @Test
-    void toggleWhileActiveWithoutWandReissues() {
+    void toggleWhileActiveWithoutWandDeactivates() {
         UUID id = UUID.randomUUID();
         ToolStateStore store = mock(ToolStateStore.class);
         when(store.loadActive()).thenReturn(List.of(id));
@@ -83,11 +83,12 @@ class ToolServiceTest {
 
         service.toggle(player);
 
-        assertThat(service.isActive(id)).isTrue();
-        verify(handout).give(player, Material.REDSTONE_LAMP);
-        verify(store, never()).disable(id);
+        assertThat(service.isActive(id)).isFalse();
+        verify(handout, never()).give(player, Material.REDSTONE_LAMP);
+        verify(handout).take(player, Material.REDSTONE_LAMP);
+        verify(store).disable(id);
         assertThat(ServiceTestSupport.plainTexts(captured))
-                .anyMatch(line -> line.contains("Added the Spyglass data tool"));
+                .anyMatch(line -> line.contains("Deactivated the Spyglass Data Tool"));
     }
 
     @Test
@@ -157,7 +158,7 @@ class ToolServiceTest {
         contents[0] = wand; contents[8] = wand; contents[9] = ordinary;
         contents[39] = armor; contents[40] = oldMaterial;
         when(inventory.getContents()).thenReturn(contents);
-        when(inventory.getItemInMainHand()).thenReturn(wand);
+        when(inventory.getItemInMainHand()).thenReturn(ordinary);
         when(inventory.firstEmpty()).thenReturn(-1);
         ItemStack cursor = taggedItem();
         when(player.getItemOnCursor()).thenReturn(cursor);

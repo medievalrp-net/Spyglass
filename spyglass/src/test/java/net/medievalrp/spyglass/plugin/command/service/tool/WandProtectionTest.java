@@ -62,4 +62,48 @@ class WandProtectionTest {
         listener(mock(SearchService.class)).onAnvil(event);
         verify(event).setResult(null);
     }
+    @Test void droppingTaggedToolConsumesItAndDeactivatesWithoutReturningItToInventory() {
+        ToolService tool = mock(ToolService.class);
+        var listener = new WandInteractListener(tool, mock(SearchService.class), mock(SpyglassConfig.class));
+        var event = mock(org.bukkit.event.player.PlayerDropItemEvent.class);
+        var dropped = mock(org.bukkit.entity.Item.class);
+        var player = mock(Player.class);
+        ItemStack item = wand();
+        when(event.getItemDrop()).thenReturn(dropped);
+        when(event.getPlayer()).thenReturn(player);
+        when(dropped.getItemStack()).thenReturn(item);
+        listener.onDrop(event);
+        verify(dropped).remove();
+        verify(tool).deactivate(player);
+        verify(event, never()).setCancelled(true);
+    }
+
+    @Test void cancelledOrOrdinaryDropsDoNotDeactivateInspection() {
+        ToolService tool = mock(ToolService.class);
+        var listener = new WandInteractListener(tool, mock(SearchService.class), mock(SpyglassConfig.class));
+        var cancelled = mock(org.bukkit.event.player.PlayerDropItemEvent.class);
+        when(cancelled.isCancelled()).thenReturn(true);
+        listener.onDrop(cancelled);
+        var ordinary = mock(org.bukkit.event.player.PlayerDropItemEvent.class);
+        var dropped = mock(org.bukkit.entity.Item.class);
+        when(ordinary.getItemDrop()).thenReturn(dropped);
+        when(dropped.getItemStack()).thenReturn(mock(ItemStack.class));
+        listener.onDrop(ordinary);
+        verifyNoInteractions(tool);
+        verify(dropped, never()).remove();
+    }
+
+    @Test void inventoryWindowThrowsReachTheDropHandler() {
+        for (var action : new org.bukkit.event.inventory.InventoryAction[] {
+                org.bukkit.event.inventory.InventoryAction.DROP_ALL_CURSOR,
+                org.bukkit.event.inventory.InventoryAction.DROP_ONE_CURSOR,
+                org.bukkit.event.inventory.InventoryAction.DROP_ALL_SLOT,
+                org.bukkit.event.inventory.InventoryAction.DROP_ONE_SLOT}) {
+            var event = mock(org.bukkit.event.inventory.InventoryClickEvent.class);
+            when(event.getAction()).thenReturn(action);
+            listener(mock(SearchService.class)).onClick(event);
+            verify(event, never()).setCancelled(true);
+        }
+    }
+
 }

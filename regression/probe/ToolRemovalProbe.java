@@ -48,12 +48,13 @@ public final class ToolRemovalProbe extends JavaPlugin {
             inv.setItemInOffHand(wand(Material.STONE, 2));
             inv.setHelmet(wand(Material.DIAMOND_HELMET, 1));
             player.setItemOnCursor(wand(Material.BARRIER, 1));
-            inv.setItem(9, new ItemStack(Material.REDSTONE_LAMP, 7));
+            inv.setItem(1, new ItemStack(Material.REDSTONE_LAMP, 7));
+            inv.setHeldItemSlot(1); // Command must deactivate even while holding an ordinary item.
             player.performCommand("sg tool");
             step(player, op, () -> {
                 for (ItemStack item : inv.getContents()) if (tagged(item)) throw new AssertionError("tagged item survived deactivation");
                 if (tagged(player.getItemOnCursor())) throw new AssertionError("tagged cursor survived");
-                if (inv.getItem(9) == null || inv.getItem(9).getAmount() != 7) throw new AssertionError("ordinary lamps lost");
+                if (inv.getItem(1) == null || inv.getItem(1).getAmount() != 7) throw new AssertionError("ordinary lamps lost");
                 player.performCommand("sg tool");
                 step(player, op, () -> {
                     int count = 0;
@@ -64,8 +65,26 @@ public final class ToolRemovalProbe extends JavaPlugin {
                     step(player, op, () -> {
                         if (tagged(inv.getItemInMainHand()) || player.getItemOnCursor().getAmount() != 4)
                             throw new AssertionError("repeat deactivation or ordinary cursor preservation failed");
-                        result("PASS tool deactivation removes all PDC tools, preserves ordinary items, and reactivates once");
-                        player.setOp(op);
+                        player.performCommand("sg tool");
+                        step(player, op, () -> {
+                            inv.setHeldItemSlot(0);
+                            inv.setItemInOffHand(wand(Material.STONE, 2));
+                            player.dropItem(true);
+                            step(player, op, () -> {
+                                for (ItemStack item : inv.getContents()) if (tagged(item)) throw new AssertionError("drop retained tool");
+                                for (var entity : player.getNearbyEntities(8,8,8))
+                                    if (entity instanceof org.bukkit.entity.Item item && tagged(item.getItemStack()))
+                                        throw new AssertionError("dropped tool became a pickup");
+                                player.performCommand("sg tool");
+                                step(player, op, () -> {
+                                    int tools = 0;
+                                    for (ItemStack item : inv.getContents()) if (tagged(item)) tools += item.getAmount();
+                                    if (tools != 1) throw new AssertionError("dropping did not deactivate inspection");
+                                    result("PASS tool deactivation by command and throw, no dropped pickup, ordinary items preserved");
+                                    player.setOp(op);
+                                });
+                            });
+                        });
                     });
                 });
             });
