@@ -1,6 +1,6 @@
 # Issues 359–361 and update checker validation
 
-Validated 2026-09-24. Changes are local on `codex/minecraft-26.3` and `maintenance/1.21.11`; no push, release publication or production deployment was performed. The separate personal 26.3 test server was left running with its existing jar.
+Validated 2026-09-24. Validation covered the modern Minecraft builds and the 1.21.11 maintenance build before release publication; no production deployment was performed. The separate personal 26.3 test server was left running with its existing jar.
 
 Implemented permanent wand protection (#359), exact-location MongoDB indexing and ClickHouse skip indexes (#360), supported live config reload (#361), and compatible GitHub release notifications. See [configuration and updates](live-configuration-and-updates.md) for supported settings and retention semantics.
 
