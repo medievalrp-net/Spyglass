@@ -51,7 +51,7 @@ Snapshot versions are skipped. Published releases are never overwritten; a draft
 can be resumed only from its original commit.
 
 The release contains all three targets' lean, shaded, Velocity and developer API
-jars (18 jars total), one SHA256SUMS file, and notes recording the source commit.
+jars (12 jars total), one SHA256SUMS file, and notes recording the source commit.
 `python scripts/stage-release.py` validates and stages the complete set into an
 empty `dist` directory without publishing anything. Missing assets or mismatched
 embedded plugin versions/targets fail staging. Central publication retains the

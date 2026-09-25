@@ -38,13 +38,15 @@ class StageReleaseTest(unittest.TestCase):
     def test_complete_release_has_all_targets_and_checksums(self):
         self.stage()
         dist = self.root / "dist"
-        self.assertEqual(len(list(dist.glob("*.jar"))), 18)
+        self.assertEqual(len(list(dist.glob("*.jar"))), 12)
+        self.assertFalse(list(dist.glob("*-sources.jar")))
+        self.assertFalse(list(dist.glob("*-javadoc.jar")))
         for line in (dist / "SHA256SUMS").read_text().splitlines():
             digest, filename = line.split("  ")
             self.assertEqual(digest, hashlib.sha256((dist / filename).read_bytes()).hexdigest())
         notes = (dist / "NOTES.md").read_text()
         for mc in TARGETS:
-            self.assertIn(f"Minecraft {mc}", notes)
+            self.assertIn(f"**{mc}:**", notes)
         self.assertIn("a" * 40, notes)
 
     def test_missing_target_asset_prevents_partial_staging(self):
