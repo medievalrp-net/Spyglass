@@ -96,6 +96,7 @@ public final class ToolService {
                 return;
             }
             active.remove(id);
+            handout.take(player, wandMaterial);
             persistAsync(() -> store.disable(id), "disable");
             player.sendMessage(Feedback.toolOk("Deactivated the Spyglass Data Tool"));
             return;
@@ -195,12 +196,12 @@ public final class ToolService {
                     ItemStack[] contents = player.getInventory().getContents();
                     for (int i = 0; i < contents.length; i++) {
                         ItemStack stack = contents[i];
-                        if (stack == null || stack.getType() != material) {
-                            continue;
-                        }
                         if (isWandItem(stack)) {
                             player.getInventory().setItem(i, null);
                         }
+                    }
+                    if (isWandItem(player.getItemOnCursor())) {
+                        player.setItemOnCursor(null);
                     }
                 }
             };

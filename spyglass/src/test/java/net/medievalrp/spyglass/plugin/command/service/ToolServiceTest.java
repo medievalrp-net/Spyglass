@@ -130,4 +130,58 @@ class ToolServiceTest {
         assertThat(service.isActive(UUID.randomUUID())).isFalse();
     }
 
+    private static ItemStack taggedItem() {
+        ItemStack item = mock(ItemStack.class);
+        var meta = mock(org.bukkit.inventory.meta.ItemMeta.class);
+        var data = mock(org.bukkit.persistence.PersistentDataContainer.class);
+        when(item.hasItemMeta()).thenReturn(true);
+        when(item.getItemMeta()).thenReturn(meta);
+        when(meta.getPersistentDataContainer()).thenReturn(data);
+        when(data.has(ToolService.WAND_KEY, org.bukkit.persistence.PersistentDataType.BYTE)).thenReturn(true);
+        return item;
+    }
+
+    @Test
+    void deactivationRemovesEveryTaggedItemAndCursorButPreservesOrdinaryItems() {
+        UUID id = UUID.randomUUID();
+        ToolStateStore store = mock(ToolStateStore.class);
+        when(store.loadActive()).thenReturn(List.of(id));
+        Player player = mock(Player.class);
+        PlayerInventory inventory = mock(PlayerInventory.class);
+        when(player.getUniqueId()).thenReturn(id);
+        when(player.getInventory()).thenReturn(inventory);
+        ItemStack wand = taggedItem(), oldMaterial = taggedItem(), armor = taggedItem();
+        ItemStack ordinary = mock(ItemStack.class);
+        when(ordinary.getType()).thenReturn(Material.REDSTONE_LAMP);
+        ItemStack[] contents = new ItemStack[41];
+        contents[0] = wand; contents[8] = wand; contents[9] = ordinary;
+        contents[39] = armor; contents[40] = oldMaterial;
+        when(inventory.getContents()).thenReturn(contents);
+        when(inventory.getItemInMainHand()).thenReturn(wand);
+        when(inventory.firstEmpty()).thenReturn(-1);
+        ItemStack cursor = taggedItem();
+        when(player.getItemOnCursor()).thenReturn(cursor);
+        ServiceTestSupport.captureMessages(player);
+        ToolService service = new ToolService(store, Material.GLOWSTONE, ToolService.WandHandout.bukkit());
+
+        service.toggle(player);
+
+        assertThat(service.isActive(id)).isFalse();
+        verify(store).disable(id);
+        for (int slot : new int[] {0, 8, 39, 40}) verify(inventory).setItem(slot, null);
+        verify(inventory, never()).setItem(org.mockito.ArgumentMatchers.eq(9), any());
+        verify(player).setItemOnCursor(null);
+    }
+
+    @Test
+    void removalPreservesAnUntaggedCursorItem() {
+        Player player = mock(Player.class);
+        PlayerInventory inventory = mock(PlayerInventory.class);
+        when(player.getInventory()).thenReturn(inventory);
+        when(inventory.getContents()).thenReturn(new ItemStack[41]);
+        when(player.getItemOnCursor()).thenReturn(mock(ItemStack.class));
+        ToolService.WandHandout.bukkit().take(player, Material.REDSTONE_LAMP);
+        verify(player, never()).setItemOnCursor(any());
+    }
+
 }
