@@ -13,9 +13,7 @@ base = next(line.split("=", 1)[1].strip() for line in
 commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 assets = [("spyglass", "Spyglass", ""), ("spyglass", "Spyglass", "-shaded"),
           ("spyglass-velocity", "Spyglass-Velocity", ""),
-          ("spyglass-api", "spyglass-api", ""),
-          ("spyglass-api", "spyglass-api", "-sources"),
-          ("spyglass-api", "spyglass-api", "-javadoc")]
+          ("spyglass-api", "spyglass-api", "")]
 sources = []
 versions = {}
 for mc in TARGETS:
@@ -46,20 +44,13 @@ for source in sources:
 (dist / "SHA256SUMS").write_text("".join(
     f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
     for p in sorted(dist.glob("*.jar"))), encoding="utf-8")
-notes = [f"Spyglass {base} for Minecraft 26.1.2, 26.2 and 26.3 (Java 25).",
-         f"\nAll builds use source commit `{commit}`.",
-         "\nInstall only the build matching your server's Minecraft version.",
-         "\n## Downloads\n"]
+notes = ["**Minecraft 26.1.2, 26.2 and 26.3 - Java 25.** Download the jar matching your server:", ""]
 for mc, version in versions.items():
-    notes += [f"### Minecraft {mc}",
-              f"- `Spyglass-{version}.jar`: recommended lean plugin.",
-              f"- `Spyglass-{version}-shaded.jar`: bundles external libraries.",
-              f"- `Spyglass-Velocity-{version}.jar`: optional proxy companion.",
-              f"- `spyglass-api-{version}*.jar`: developer API, sources and Javadoc.",
-              f"- Maven: `net.medievalrp:spyglass-api:{version}` (when Central is configured).\n"]
-notes += ["Checksums: `SHA256SUMS`.",
-          "Minecraft 1.21.x remains a separate legacy release on `maintenance/1.21.11`."]
+    notes.append(f"- **{mc}:** `Spyglass-{version}.jar`")
+notes += ["", "Shaded jars bundle libraries; Velocity and API jars are optional. Checksums: `SHA256SUMS`.",
+          "Minecraft 1.21.11: use [1.0.13](https://github.com/medievalrp-net/Spyglass/releases/tag/v1.0.13).", ""]
 release_notes = root / ".github/release-notes.md"
 if release_notes.exists():
-    notes += ["\n## Changes\n", release_notes.read_text(encoding="utf-8")]
+    notes += [release_notes.read_text(encoding="utf-8").strip()]
+notes += [f"\nSource: `{commit}`."]
 (dist / "NOTES.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
