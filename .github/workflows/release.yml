@@ -86,37 +86,7 @@ jobs:
           # PUBLISHING.md) this is the difference between an integrator being
           # mildly inconvenienced and being blocked with no artifact at all.
           cp "spyglass-api/build/libs/spyglass-api-${v}.jar"         "dist/spyglass-api.jar"
-          cp "spyglass-api/build/libs/spyglass-api-${v}-sources.jar" "dist/spyglass-api-sources.jar"
-          cp "spyglass-api/build/libs/spyglass-api-${v}-javadoc.jar" "dist/spyglass-api-javadoc.jar"
-          {
-            echo "**Spyglass v${v}** - forensic logging & rollback for Paper 1.21.x (Java 21)."
-            echo
-            # Brief "what was fixed" summary, maintained per release in this file.
-            if [ -f .github/release-notes.md ]; then
-              echo "### What's fixed"
-              echo
-              cat .github/release-notes.md
-              echo
-            fi
-            echo "### Downloads"
-            echo "- **\`Spyglass.jar\`** (recommended) - lean build. Paper's library loader"
-            echo "  downloads its database driver, command framework, and config libs from"
-            echo "  Maven Central on first start (needs outbound internet once; cached under"
-            echo "  \`<server>/libraries/\`)."
-            echo "- **\`Spyglass-shaded.jar\`** - fat fallback with every dependency bundled."
-            echo "  Use it if your host blocks outbound network at boot, or you hit a"
-            echo "  library-loader issue. Identical behavior, larger file."
-            echo "- **\`Spyglass-Velocity.jar\`** - optional Velocity proxy companion for"
-            echo "  cross-server search. Read-only: never writes records, never rolls back."
-            echo "  Install on the proxy only if you run a Velocity network; a standalone"
-            echo "  Paper server doesn't need it."
-            echo
-            echo "### For plugin developers"
-            echo "- **\`spyglass-api.jar\`** (plus \`-sources\`/\`-javadoc\`) - the Apache-2.0"
-            echo "  API, for compiling against Spyglass. Prefer Maven Central:"
-            echo "  \`net.medievalrp:spyglass-api:${v}\`. These jars are a fallback for when"
-            echo "  Central hasn't caught up yet. Server owners don't need this file."
-          } > dist/NOTES.md
+          cp .github/release-notes.md dist/NOTES.md
           (cd dist && sha256sum *.jar > SHA256SUMS)
 
       - name: Create release
@@ -126,7 +96,7 @@ jobs:
         run: |
           gh release create "v${{ steps.ver.outputs.version }}" \
             dist/Spyglass.jar dist/Spyglass-shaded.jar dist/Spyglass-Velocity.jar \
-            dist/spyglass-api.jar dist/spyglass-api-sources.jar dist/spyglass-api-javadoc.jar dist/SHA256SUMS \
+            dist/spyglass-api.jar dist/SHA256SUMS \
             --target "$GITHUB_SHA" --latest=false \
             --title "Spyglass ${{ steps.ver.outputs.version }} - Minecraft 1.21.11" \
             --notes-file dist/NOTES.md
