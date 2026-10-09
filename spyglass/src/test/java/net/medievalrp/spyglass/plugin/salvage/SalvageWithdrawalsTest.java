@@ -93,6 +93,40 @@ class SalvageWithdrawalsTest {
         }
     }
 
+    // A click burst on a fast local store: the first take's write settles
+    // (delete committed, mark cleared) while the second click is mid-read, so
+    // the second read still returns the pre-delete row. If the slot were
+    // claimed only after that read, the cleared mark would let it pay twice.
+    @Test
+    void writeSettlingDuringASecondTakesReadCannotPayTwice() {
+        SalvageStore store = mock(SalvageStore.class);
+        List<Runnable> pending = new ArrayList<>();
+        Executor held = pending::add;
+        SalvageWithdrawals withdrawals =
+                new SalvageWithdrawals(store, held, null, Logger.getLogger("test"));
+
+        UUID id = UUID.randomUUID();
+        SalvageSnapshot snap = snapshotWithOneItem(id, 5);
+        when(store.get(id)).thenReturn(java.util.Optional.of(snap)).thenAnswer(read -> {
+            // The store thread finishes the first take's write during this read.
+            pending.forEach(Runnable::run);
+            pending.clear();
+            return java.util.Optional.of(snap);
+        });
+        Player player = playerWithRoom();
+        ItemStack diamond = oneDiamond();
+
+        try (MockedStatic<ItemSerialization> ms = mockStatic(ItemSerialization.class)) {
+            ms.when(() -> ItemSerialization.decode(anyString())).thenReturn(diamond);
+
+            SalvageWithdrawals.Outcome first = withdrawals.withdraw(player, snap, 0);
+            assertThat(first.status()).isEqualTo(SalvageWithdrawals.Status.EMPTIED);
+
+            withdrawals.withdraw(player, snap, 0);
+            verify(player.getInventory()).addItem(any(ItemStack.class)); // exactly once
+        }
+    }
+
     // #291: a GUI window that missed its refresh keeps offering a stack
     // that was already taken and persisted. The stale view must not pay
     // again - the store is the authority.

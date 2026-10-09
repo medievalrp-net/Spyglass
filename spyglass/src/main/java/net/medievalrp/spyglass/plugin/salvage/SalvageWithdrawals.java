@@ -85,23 +85,36 @@ public final class SalvageWithdrawals {
             return new Outcome(Status.SKIPPED, snap);
         }
         int slot = items.get(index).slot();
-        SalvageSnapshot fresh = store.get(snap.id()).orElse(null);
+        // Claim the slot before reading the store. A take's mark clears only
+        // once its write has settled, so while this mark is held the read
+        // below sees every earlier take of the slot. Claiming after the read
+        // let a write that settled mid-read (a click burst on a fast local
+        // store) clear the way for a second payout from the pre-write row.
+        if (!inFlight.markInFlight(snap.id(), slot)) {
+            logger.fine("Spyglass salvage take refused: slot " + slot
+                    + " of snapshot " + snap.id() + " is already in-flight");
+            return new Outcome(Status.REFUSED, snap);
+        }
+        SalvageSnapshot fresh;
+        try {
+            fresh = store.get(snap.id()).orElse(null);
+        } catch (RuntimeException ex) {
+            inFlight.clear(snap.id(), slot);
+            throw ex;
+        }
         if (fresh == null) {
             // Snapshot fully taken (or tombstoned by an undo, #292) since
             // this view rendered.
+            inFlight.clear(snap.id(), slot);
             return new Outcome(Status.EMPTIED, null);
         }
         int freshIndex = indexOfSlot(fresh.items(), slot);
         if (freshIndex < 0) {
             // This slot was already taken through another view.
+            inFlight.clear(snap.id(), slot);
             return new Outcome(Status.SKIPPED, fresh);
         }
         StoredItem storedItem = fresh.items().get(freshIndex);
-        if (!inFlight.markInFlight(fresh.id(), slot)) {
-            logger.fine("Spyglass salvage take refused: slot " + slot
-                    + " of snapshot " + fresh.id() + " is already in-flight");
-            return new Outcome(Status.REFUSED, fresh);
-        }
         Taken taken = takeMarkedSlot(player, fresh, storedItem);
         if (taken == null) {              // decoded to air/null - nothing to take
             inFlight.clear(fresh.id(), slot);
