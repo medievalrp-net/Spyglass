@@ -11,7 +11,7 @@ plugins {
 
 val paperApiVersion: String by rootProject.extra
 val minecraftTarget: String by rootProject.extra
-val invUiVersion: String by rootProject.extra
+val supportedMinecraft: String by rootProject.extra
 val mongoDriverVersion: String by rootProject.extra
 val clickhouseClientVersion: String by rootProject.extra
 val sqliteJdbcVersion: String by rootProject.extra
@@ -27,6 +27,7 @@ val jetbrainsAnnotationsVersion: String by rootProject.extra
 val faweVersion: String by rootProject.extra
 val worldeditVersion: String by rootProject.extra
 val bstatsVersion: String by rootProject.extra
+val inventoryFrameworkVersion: String by rootProject.extra
 
 java {
     toolchain {
@@ -36,8 +37,13 @@ java {
 }
 
 repositories {
-    maven("https://repo.xenondevs.xyz/releases")
     maven("https://maven.enginehub.org/repo/")
+    // FoliaLib, a runtime dependency of inventory-framework 3.7.x, is not on
+    // Maven Central. Only that group may resolve from this repository.
+    exclusiveContent {
+        forRepository { maven("https://repo.tcoded.com/releases") }
+        filter { includeGroup("com.tcoded") }
+    }
 }
 
 // ClickHouse 0.9.x pulls Guava 33.4.6 transitively, but Paper / WorldEdit
@@ -48,6 +54,8 @@ configurations.all {
     resolutionStrategy {
         force("com.google.guava:guava:33.3.1-jre")
     }
+    // inventory-framework's anvil text-input module is never used.
+    exclude(group = "me.devnatan", module = "inventory-framework-anvil-input")
 }
 
 dependencies {
@@ -82,8 +90,12 @@ dependencies {
     // requires relocation to avoid clashing with other plugins' copies. It is
     // tiny (~25 KB), so bundling it in the lean jar too doesn't dent "lean".
     implementation("org.bstats:bstats-bukkit:$bstatsVersion")
-    // Each artifact bundles the InvUI release pinned for its Minecraft target.
-    implementation("xyz.xenondevs.invui:invui:$invUiVersion")
+    // Inventory GUIs. Bukkit-API only, so one release runs on every supported
+    // Minecraft version. Shaded + relocated into both shipped jars, like bStats.
+    // The Paper module only adds Adventure titles; it pulls the Bukkit module
+    // at runtime scope, so that one is declared for compilation too.
+    implementation("me.devnatan:inventory-framework-platform-bukkit:$inventoryFrameworkVersion")
+    implementation("me.devnatan:inventory-framework-platform-paper:$inventoryFrameworkVersion")
 
     testImplementation(project(":spyglass-api"))
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
@@ -108,9 +120,9 @@ dependencies {
 
 tasks.processResources {
     inputs.property("minecraftTarget", minecraftTarget)
-    inputs.property("invUiVersion", invUiVersion)
+    inputs.property("supportedMinecraft", supportedMinecraft)
     filesMatching("spyglass-target.properties") {
-        expand("minecraftTarget" to minecraftTarget, "invUiVersion" to invUiVersion)
+        expand("minecraftTarget" to minecraftTarget, "supportedMinecraft" to supportedMinecraft)
     }
     val pluginProperties = mapOf(
             "version" to project.version.toString(),
@@ -184,12 +196,13 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
     archiveClassifier.set("")
     from(sourceSets["main"].output)
     configurations = listOf(project.configurations.runtimeClasspath.get())
-    // Keep our own modules, bStats and InvUI. Everything else is
-    // declared under plugin.yml `libraries:` and resolved by Paper at runtime, so
-    // it must not be bundled here. bStats and InvUI need private relocated
-    // packages, so they are bundled in both distributions.
+    // Keep our own modules, bStats, inventory-framework and its FoliaLib.
+    // Everything else is declared under plugin.yml `libraries:` and resolved by
+    // Paper at runtime, so it must not be bundled here. The bundled libraries
+    // need private relocated packages, so they ship in both distributions.
+    val bundledGroups = setOf("net.medievalrp", "org.bstats", "me.devnatan", "com.tcoded")
     dependencies {
-        exclude { it.moduleGroup != "net.medievalrp" && it.moduleGroup != "org.bstats" && it.moduleGroup != "xyz.xenondevs.invui" }
+        exclude { it.moduleGroup !in bundledGroups }
     }
 }
 
@@ -200,7 +213,8 @@ val leanJar = tasks.register<ShadowJar>("leanJar") {
 // keeps the rule in one place.
 tasks.withType<ShadowJar>().configureEach {
     relocate("org.bstats", "net.medievalrp.spyglass.libs.bstats")
-    relocate("xyz.xenondevs.invui", "net.medievalrp.spyglass.libs.invui")
+    relocate("me.devnatan.inventoryframework", "net.medievalrp.spyglass.libs.inventoryframework")
+    relocate("com.tcoded.folialib", "net.medievalrp.spyglass.libs.folialib")
 }
 
 tasks.build {

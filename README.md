@@ -76,13 +76,13 @@ Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQL
 
 ## Supported releases
 
-`main` produces separate Java 25 builds for Minecraft 26.1.2, 26.2 and 26.3, each bundling its matching InvUI version. All three builds ship in one release from the same source commit. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21.11`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21.11), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`. InvUI 2 is version-specific: install the artifact labeled for your exact server version.
+`main` produces Java 25 builds labeled for Minecraft 26.1.2, 26.2 and 26.3, all from the same source commit and shipped in one release. Each build runs on all three versions: the inventory menus use [inventory-framework](https://github.com/devnatan/inventory-framework), which only uses the Bukkit API. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21.11`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21.11), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`.
 
 Use the 1.1 release assets for modern Minecraft targets and the 1.0.13 maintenance release for Minecraft 1.21.11.
 
 ## Requirements
 
-- Paper 26.1.2, 26.2 or 26.3 (matching build required)
+- Paper 26.1.2, 26.2 or 26.3
 - Java 25
 - A database, one of:
   - Embedded SQLite, no external database (the default); writes to a file under the plugin folder

@@ -41,18 +41,19 @@ dependencies {
     nmcpAggregation(project(":spyglass-api"))
 }
 
-// InvUI 2 supports one Minecraft release per dependency version.
+// The Paper API each target compiles against. Every build runs on all of
+// these Minecraft releases (the GUI library only uses the Bukkit API), so the
+// target only picks the compile API and the artifact name.
 val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse("26.3")
 val targets = mapOf(
-    "26.1.2" to ("26.1.2.build.74-stable" to "2.1.1"),
-    "26.2" to ("26.2.build.129-stable" to "2.3.2"),
-    "26.3" to ("26.3.build.38-alpha" to "2.5.0"),
+    "26.1.2" to "26.1.2.build.74-stable",
+    "26.2" to "26.2.build.129-stable",
+    "26.3" to "26.3.build.38-alpha",
 )
-val target = targets[minecraftTarget]
+val paperApiVersion = targets[minecraftTarget]
     ?: error("Unsupported minecraftTarget '$minecraftTarget'; choose ${targets.keys}")
-val paperApiVersion = target.first
 extra["minecraftTarget"] = minecraftTarget
-extra["invUiVersion"] = target.second
+extra["supportedMinecraft"] = targets.keys.joinToString(",")
 val baseVersion = providers.gradleProperty("version").get()
 val targetVersion = baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
     if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""
@@ -75,6 +76,9 @@ val jetbrainsAnnotationsVersion = "26.0.2"
 val faweVersion = "2.15.2"
 val worldeditVersion = "7.4.5"
 val bstatsVersion = "3.2.1"
+// DevNatan's inventory-framework. Bukkit-API only, so one release covers every
+// supported Minecraft version; 3.7.x needs FoliaLib from repo.tcoded.com.
+val inventoryFrameworkVersion = "3.7.2"
 
 // True when a Docker daemon is reachable. Used to warn (not fail) when the
 // Testcontainers store ITs will assume-skip, so a no-Docker `check` isn't
@@ -237,4 +241,5 @@ extra.apply {
     set("faweVersion", faweVersion)
     set("worldeditVersion", worldeditVersion)
     set("bstatsVersion", bstatsVersion)
+    set("inventoryFrameworkVersion", inventoryFrameworkVersion)
 }

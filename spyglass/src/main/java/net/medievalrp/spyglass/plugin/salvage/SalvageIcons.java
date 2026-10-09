@@ -12,10 +12,10 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 /**
- * Rendering for the InvUI salvage GUI icons and nav buttons ({@link
- * InvUiSalvageView}). Every icon is a plain Adventure-styled {@link ItemStack}
- * that the view wraps with {@code ItemWrapper}. Kept separate from the view so
- * the icon shapes are easy to eyeball and adjust in one place.
+ * Rendering for the salvage GUI icons and nav buttons ({@link
+ * SalvageGuiView}). Every icon is a plain Adventure-styled {@link ItemStack}.
+ * Kept separate from the view so the icon shapes are easy to eyeball and
+ * adjust in one place.
  */
 final class SalvageIcons {
 

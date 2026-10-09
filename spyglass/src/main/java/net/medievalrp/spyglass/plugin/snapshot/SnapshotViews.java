@@ -1,37 +1,17 @@
 package net.medievalrp.spyglass.plugin.snapshot;
 
 import java.util.logging.Logger;
-import org.bukkit.plugin.Plugin;
-import org.jetbrains.annotations.Nullable;
+import net.medievalrp.spyglass.plugin.gui.Gui;
 
-/** Selects the bundled InvUI GUI on its pinned Minecraft release. */
+/** Builds the {@code /sg snapshot} GUI. */
 public final class SnapshotViews {
 
     private SnapshotViews() {
     }
 
-    /**
-     * The InvUI GUI view for this server, or {@code null} on versions InvUI
-     * does not support (the caller reports that the GUI is unavailable).
-     *
-     * @param minecraftVersion {@code Bukkit.getMinecraftVersion()}, e.g.
-     *                      {@code "26.3"}
-     * @param takes         the GUI take engine (permission, whole-stack fit rule, audit)
-     */
-    @Nullable
-    public static SnapshotView guiOrNull(Plugin plugin, String minecraftVersion,
-                                          SnapshotTakes takes, SnapshotSessions sessions,
-                                          Logger logger) {
-        if (!invUiSupported(minecraftVersion)) {
-            return null;
-        }
-        // Referenced only here: on an unsupported server this line never runs,
-        // so no InvUI class is resolved/loaded.
-        return new InvUiSnapshotView(plugin, takes, sessions, logger);
-    }
-
-    /** InvUI 2 is version-specific; do not load its internals on another release line. */
-    public static boolean invUiSupported(String minecraftVersion) {
-        return net.medievalrp.spyglass.plugin.MinecraftTarget.supports(minecraftVersion);
+    /** @param takes the GUI take engine (permission, whole-stack fit rule, audit) */
+    public static SnapshotView gui(Gui gui, SnapshotTakes takes, SnapshotSessions sessions,
+                                   Logger logger) {
+        return new SnapshotGuiView(gui, takes, sessions, logger);
     }
 }

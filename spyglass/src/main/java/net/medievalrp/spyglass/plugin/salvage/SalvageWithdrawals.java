@@ -13,7 +13,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 /**
- * The extract path for the InvUI salvage GUI ({@link InvUiSalvageView}).
+ * The extract path for the salvage GUI ({@link SalvageGuiView}).
  * Taking items out of a captured
  * container is the correctness-critical part (dupe prevention), so it lives in
  * one place with its own tests rather than being duplicated per surface.

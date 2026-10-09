@@ -6,8 +6,7 @@ import org.bukkit.entity.Player;
  * The interactive {@code /sg inventory} salvage GUI for a player: three
  * paginated, extract-only levels (rollbacks -> containers -> items).
  *
- * <p>Each supported distribution provides its matching InvUI implementation.
- * Missing GUIs report an error; there is no command-based recovery alternative.
+ * <p>A missing GUI reports an error; there is no command-based recovery alternative.
  */
 public interface SalvageView {
 
