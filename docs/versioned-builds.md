@@ -8,8 +8,9 @@ One shared modern codebase produces three distributions. Java 25 is required for
 | 26.2 | 26.2.build.129-stable | 1.1.0-mc26.2 |
 | 26.3 | 26.3.build.38-alpha | 1.1.0-mc26.3 |
 
-Every distribution runs on all three Minecraft versions. The target only picks the
-Paper API it compiles against and the artifact name. The inventory menus use
+A distribution runs on its target and every newer supported version, so the 26.1.2
+build runs on all three. Paper refuses a build on an older server ("Unsupported API
+version"), because the target is also the plugin's `api-version`. The inventory menus use
 [inventory-framework](https://github.com/devnatan/inventory-framework) 3.7.2, which
 only uses the Bukkit API, so one dependency version serves every target.
 26.1 means the supported patched release **26.1.2**; 26.1 and 26.1.1 are not claimed supported.
@@ -37,9 +38,9 @@ and reports. For example, the current lean build is
 `spyglass/build/mc26.2/libs/Spyglass-1.1.0-mc26.2.jar`; the fallback adds
 `-shaded` before `.jar`. Both bundle relocated inventory-framework and FoliaLib.
 The embedded target, plugin API version, Paper API pin and artifact version
-come from the selected Gradle target. Every build also embeds the full supported
-list (26.1.2, 26.2, 26.3) and starts on any of them; startup rejects any other
-Minecraft version before loading configuration. Future patch releases need
+come from the selected Gradle target. Every build also embeds the versions it
+supports (its target and the newer ones) and starts on any of them; startup rejects
+any other Minecraft version before loading configuration. Future patch releases need
 explicit validation.
 
 All modules, including the Velocity companion and developer API, carry the target
@@ -124,28 +125,61 @@ actionlint, and staging the real local artifacts produced all 18 verified checks
 
 ## inventory-framework validation
 
-Validated 2026-10-08 on macOS, before any push or release. After the menus moved
-from InvUI to inventory-framework 3.7.2, all three targets passed Gradle `build`:
-1,100 tests each, 0 failures; the skips are the Docker-dependent tests and the
-Windows-only assumption. Both jars carry inventory-framework and FoliaLib only under
-`net.medievalrp.spyglass.libs`, with no InvUI classes, and embed
-`supported=26.1.2,26.2,26.3`.
+Validated 2026-10-08 to 2026-10-10 on macOS, before any push or release. After the
+menus moved from InvUI to inventory-framework 3.7.2, all three targets passed
+Gradle `build`: 1,101 tests each, 0 failures; the skips are the Docker-dependent
+tests and the Windows-only assumption. Both jars carry inventory-framework and
+FoliaLib only under `net.medievalrp.spyglass.libs`, with no InvUI classes.
 
-The 26.1.2 lean and shaded jars each booted on Paper 26.1.2 build 74, 26.2
-build 129 and 26.3 build 38 (SQLite, WorldEdit 7.4.6-beta-01, ViaVersion/ViaBackwards 5.12.0,
-isolated loopback servers, offline mode). On each it passed
-`regression/bot/_26.3-gui.mjs` (13 checks) and the new
-`regression/bot/_gui-exploits.mjs` (21 checks), with no Spyglass or
-inventory-framework errors in the server logs. The exploit probe runs in survival
-and tries shift-click, number-key and offhand swaps, Q and ctrl-Q drops,
-double-click collect, middle-click clone and drags on snapshot and salvage content,
-filler and nav cells, plus click bursts while salvage switches levels. Server-side
-inventory and ground counts never exceeded the one legitimate take. Run it like
-the GUI probe, with the same server setup.
+Each target's lean jar was booted on Paper 26.1.2 build 74, 26.2 build 129 and
+26.3 build 38. A build enables on its target and every newer version, and Paper
+refuses it on an older one with "Unsupported API version", so only the 26.1.2
+build covers all three. Each build embeds that list (`supported=` in
+`spyglass-target.properties`).
 
-The first exploit run found a salvage duplicate: two withdraws of one slot 1 ms
-apart. `SalvageWithdrawals` read the store before claiming the slot, so a write
-that settled during the second click's read let it pay out again from the
-pre-write row. The slot is now claimed before the read, with a regression test.
-The same probe against `main`'s InvUI build passed once, with fewer burst clicks
-reaching the take handler; the race was in the shared withdraw engine.
+The servers ran SQLite, WorldEdit 7.4.6-beta-01 and ViaVersion/ViaBackwards
+5.12.0 on isolated loopback ports in offline mode and peaceful difficulty (the
+probes play in survival), with the bot probes
+connecting through ViaBackwards. On each version the 26.1.2 lean and shaded jars
+passed, with no Spyglass or inventory-framework errors in the server logs:
+
+- `regression/bot/_26.3-gui.mjs` (13 checks): the existing snapshot and salvage walkthrough.
+- `regression/bot/_gui-exploits.mjs` (21 checks): in survival, shift-click,
+  number-key and offhand swaps, Q and ctrl-Q drops, double-click collect,
+  middle-click clone and drags on snapshot and salvage content, filler and nav
+  cells, plus click bursts while salvage switches levels. Nobody ends up with more
+  than the one legitimate take, in their inventory or on the ground.
+- `regression/bot/_gui-coverage.mjs` (26 checks): two staff click-bursting the same
+  salvage at once (each stack paid out exactly once between them); a 50-container
+  salvage paged 45 + 5 with working previous/next, nothing taken from page-two
+  nav icons, and a page-two take; a double-chest (6-row) snapshot with its info in
+  chat; and a salvage take refused, then paid once, around a full inventory.
+- `regression/bot/_gui-reload.mjs` (8 checks): `bukkit:reload confirm` with a
+  salvage menu open closes the menu, nothing can be taken across the reload, and
+  the salvage survives and pays out once afterwards. ViaVersion does not survive a
+  reload, so the probe reconnects first; native clients need no reconnect.
+- `regression/bot/_gui-player-snapshot.mjs` (12 checks): the player-snapshot layout
+  (armor, offhand, main inventory, hotbar, info cells) and that copies carry no
+  display label.
+
+The 26.2 and 26.3 builds also passed `_26.3-gui.mjs` on their own versions.
+
+Testing found and fixed three problems:
+
+- A salvage duplicate: two withdraws of one slot 1 ms apart. `SalvageWithdrawals`
+  read the store before claiming the slot, so a write that settled during the
+  second click's read let it pay out again from the pre-write row. The slot is now
+  claimed before the read, with a regression test. The exploit probe against
+  `main`'s InvUI build passed once, with fewer burst clicks reaching the take
+  handler; the race was in the shared withdraw engine.
+- A stale container list: store writes run concurrently with the list re-read, so
+  a container emptied by the take that triggered the re-read could still be listed.
+  It could not pay out twice, but it showed. The list now also filters slots that
+  were in flight when its read started.
+- The probes undercounted inventories: `data get entity ... Inventory` output is
+  truncated after the first stack or so. They now count with `clear <player>
+  <item> 0` (`itemCount` in `regression/bot/cases/lib.js`), including the
+  existing `_26.3-gui.mjs`.
+
+Still untested: a native 26.x client walkthrough, and the MongoDB, ClickHouse and
+MariaDB backends.
