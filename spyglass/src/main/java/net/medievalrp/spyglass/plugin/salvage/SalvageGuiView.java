@@ -2,6 +2,7 @@ package net.medievalrp.spyglass.plugin.salvage;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
@@ -90,11 +91,17 @@ final class SalvageGuiView implements SalvageView {
     }
 
     private void openChests(Player player, UUID rollbackId) {
+        // Store writes run concurrently with this read, so a take's write can
+        // land mid-read and clear its mark before showChests filters, while
+        // the read still returns the pre-write row. Filter against the marks
+        // held when the read starts too.
+        Set<String> inFlightAtRead = inFlight.snapshot();
         readThenOpen(player, true, () -> store.listByRollback(rollbackId, FETCH_CAP),
-                snaps -> showChests(player, rollbackId, snaps));
+                snaps -> showChests(player, rollbackId, snaps, inFlightAtRead));
     }
 
-    private void showChests(Player player, UUID rollbackId, List<SalvageSnapshot> snaps) {
+    private void showChests(Player player, UUID rollbackId, List<SalvageSnapshot> snaps,
+                            Set<String> inFlightAtRead) {
         if (!player.isOnline()) {
             return;
         }
@@ -103,7 +110,7 @@ final class SalvageGuiView implements SalvageView {
         List<SalvageSnapshot> visible = new ArrayList<>(snaps.size());
         for (SalvageSnapshot snap : snaps) {
             List<StoredItem> items = snap.items().stream()
-                    .filter(item -> !inFlight.isInFlight(snap.id(), item.slot()))
+                    .filter(item -> !inFlight.isInFlight(snap.id(), item.slot(), inFlightAtRead))
                     .toList();
             if (!items.isEmpty()) {
                 visible.add(snap.withItems(items));
