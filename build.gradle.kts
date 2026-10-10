@@ -41,9 +41,10 @@ dependencies {
     nmcpAggregation(project(":spyglass-api"))
 }
 
-// The Paper API each target compiles against. Every build runs on all of
-// these Minecraft releases (the GUI library only uses the Bukkit API), so the
-// target only picks the compile API and the artifact name.
+// The Paper API each target compiles against. The GUI library only uses the
+// Bukkit API, so a build also runs on every newer target here; Paper refuses
+// a plugin whose api-version (the target) is newer than the server, so the
+// 26.1.2 build is the one that covers all of them.
 val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse("26.3")
 val targets = mapOf(
     "26.1.2" to "26.1.2.build.74-stable",
@@ -53,7 +54,7 @@ val targets = mapOf(
 val paperApiVersion = targets[minecraftTarget]
     ?: error("Unsupported minecraftTarget '$minecraftTarget'; choose ${targets.keys}")
 extra["minecraftTarget"] = minecraftTarget
-extra["supportedMinecraft"] = targets.keys.joinToString(",")
+extra["supportedMinecraft"] = targets.keys.dropWhile { it != minecraftTarget }.joinToString(",")
 val baseVersion = providers.gradleProperty("version").get()
 val targetVersion = baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
     if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""

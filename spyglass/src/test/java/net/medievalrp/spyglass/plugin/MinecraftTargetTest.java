@@ -2,13 +2,22 @@ package net.medievalrp.spyglass.plugin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class MinecraftTargetTest {
+    private static final List<String> MODERN = List.of("26.1.2", "26.2", "26.3");
+
+    // Paper refuses a plugin whose api-version (the build target) is newer
+    // than the server, so a build claims its target and the newer ones only.
     @Test
-    void everyBuildSupportsEveryModernTarget() {
-        assertThat(MinecraftTarget.supported()).containsExactly("26.1.2", "26.2", "26.3");
-        assertThat(MinecraftTarget.supported()).contains(MinecraftTarget.version());
+    void buildsSupportTheirTargetAndNewerTargets() {
+        int target = MODERN.indexOf(MinecraftTarget.version());
+        assertThat(target).isNotNegative();
+        assertThat(MinecraftTarget.supported()).isEqualTo(MODERN.subList(target, MODERN.size()));
+        for (String older : MODERN.subList(0, target)) {
+            assertThat(MinecraftTarget.supports(older)).as(older).isFalse();
+        }
     }
 
     @Test

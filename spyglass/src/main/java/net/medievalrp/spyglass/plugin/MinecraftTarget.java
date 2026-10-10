@@ -32,7 +32,7 @@ public final class MinecraftTarget {
         return TARGET.getProperty("minecraft");
     }
 
-    /** Every Minecraft release this build runs on. */
+    /** Every Minecraft release this build runs on: its target and the newer supported ones. */
     public static List<String> supported() {
         return SUPPORTED;
     }
