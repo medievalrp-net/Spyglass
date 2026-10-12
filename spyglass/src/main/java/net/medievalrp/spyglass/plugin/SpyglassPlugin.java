@@ -126,6 +126,7 @@ import net.medievalrp.spyglass.plugin.salvage.SqliteSalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageCapturer;
 import net.medievalrp.spyglass.plugin.salvage.SalvageStore;
 import net.medievalrp.spyglass.plugin.salvage.SalvageView;
+import net.medievalrp.spyglass.plugin.gui.Gui;
 import net.medievalrp.spyglass.plugin.salvage.SalvageViews;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawLogger;
 import net.medievalrp.spyglass.plugin.salvage.SalvageWithdrawals;
@@ -218,9 +219,10 @@ public final class SpyglassPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         if (!MinecraftTarget.supports(getServer().getMinecraftVersion())) {
-            getLogger().severe("This Spyglass build requires Minecraft " + MinecraftTarget.version()
+            getLogger().severe("This Spyglass build supports Minecraft "
+                    + String.join(", ", MinecraftTarget.supported())
                     + "; server is " + getServer().getMinecraftVersion()
-                    + ". Install the matching Minecraft release of Spyglass.");
+                    + ". Install a Spyglass release that supports this Minecraft version.");
             setEnabled(false);
             return;
         }
@@ -749,32 +751,28 @@ public final class SpyglassPlugin extends JavaPlugin {
                     salvageCtx, "salvage-withdraw", taken.getType().name(),
                     snap.containerType(), 0, amount, salvageStored, null));
         };
-        // A dupe-guarded extract engine behind the inventory GUI. Each supported distribution builds its matching InvUI GUI;
-        // the Minecraft target check above rejects incompatible servers.
-        // The InvUI view manages its own
-        // click listeners, so no registerEvents here.
+        // The salvage and snapshot inventory menus. Gui registers its own click
+        // listeners, so no registerEvents here.
+        Gui gui = new Gui(this);
+        // A dupe-guarded extract engine behind the inventory GUI.
         SalvageWithdrawals salvageWithdrawals = salvageStore == null ? null
                 : new SalvageWithdrawals(salvageStore, queryExecutor, salvageWithdrawLogger, getLogger());
         SalvageView salvageView = salvageStore == null ? null
-                : SalvageViews.guiOrNull(this, getServer().getMinecraftVersion(), salvageStore,
-                        queryExecutor, serviceSupport::onMainThread, salvageWithdrawals,
-                        config.limits().searchResult(), getLogger());
+                : SalvageViews.gui(gui, salvageStore, queryExecutor, serviceSupport::onMainThread,
+                        salvageWithdrawals, config.limits().searchResult(), getLogger());
         SalvageService salvageService = new SalvageService(
                 salvageStore, salvageView, getLogger());
 
         // /sg snapshot (#341): view a player inventory or container as of a past
         // instant and take copies out. Every take is audited onto snapshot-take
         // (reusing ItemPickupRecord + the extensions channel, the salvage-withdraw
-        // precedent). Every supported build supplies the matching InvUI GUI.
-        // The take permission is checked on each GUI interaction.
+        // precedent). The take permission is checked on each GUI interaction.
         SnapshotTakeLogger snapshotTakeLogger =
                 new SnapshotTakeLogger(apiImpl, support, getLogger());
         SnapshotSessions snapshotSessions = new SnapshotSessions();
         getServer().getPluginManager().registerEvents(snapshotSessions, this);
         SnapshotTakes snapshotTakes = new SnapshotTakes(snapshotTakeLogger);
-        SnapshotView snapshotView = SnapshotViews.guiOrNull(
-                this, getServer().getMinecraftVersion(), snapshotTakes, snapshotSessions,
-                getLogger());
+        SnapshotView snapshotView = SnapshotViews.gui(gui, snapshotTakes, snapshotSessions, getLogger());
         SnapshotService snapshotService = new SnapshotService(
                 playerSnapshotStore, recordStore, recorder, config, serviceSupport,
                 snapshotSessions, snapshotView, getLogger());

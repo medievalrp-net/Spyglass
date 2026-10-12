@@ -43,6 +43,25 @@ class InFlightTrackerTest {
         assertThat(tracker.markInFlight(snapId, 5)).isFalse();
     }
 
+    // A take's write can settle (clearing its mark) while a concurrent list
+    // read is still returning the pre-write row; the marks held when the read
+    // started must still hide it.
+    @Test
+    void snapshotKeepsHidingASlotWhoseMarkClearedDuringTheRead() {
+        InFlightTracker tracker = new InFlightTracker();
+        UUID snapId = UUID.randomUUID();
+        tracker.markInFlight(snapId, 5);
+
+        var atRead = tracker.snapshot();
+        tracker.clear(snapId, 5);
+
+        assertThat(tracker.isInFlight(snapId, 5)).isFalse();
+        assertThat(tracker.isInFlight(snapId, 5, atRead)).isTrue();
+        assertThat(tracker.isInFlight(snapId, 6, atRead)).isFalse();
+        tracker.markInFlight(snapId, 6);
+        assertThat(tracker.isInFlight(snapId, 6, atRead)).isTrue();
+    }
+
     @Test
     void differentSlotsAreIndependent() {
         InFlightTracker tracker = new InFlightTracker();

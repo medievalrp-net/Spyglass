@@ -66,6 +66,15 @@ export function rcon(cmd) {
 }
 
 // ── server truth ─────────────────────────────────────────────────
+// How many of `item` (default: any item) a player holds, cursor excluded.
+// `clear <player> <item> 0` counts without removing. Prefer it to parsing
+// `data get entity <player> Inventory`, whose output the server truncates
+// after the first stack or so.
+export async function itemCount(player, item = '*') {
+    const r = await rcon(`clear ${player} ${item} 0`);
+    const m = r.match(/Found (\d+)/i);
+    return m ? parseInt(m[1], 10) : 0;
+}
 export async function blockIs(x, y, z, type) {
     const r = await rcon(`execute if block ${x} ${y} ${z} minecraft:${type}`);
     return /passed/i.test(r);

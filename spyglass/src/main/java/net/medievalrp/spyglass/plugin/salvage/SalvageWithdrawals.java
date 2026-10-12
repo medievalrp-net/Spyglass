@@ -13,16 +13,17 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 /**
- * The extract path for the InvUI salvage GUI ({@link InvUiSalvageView}).
+ * The extract path for the salvage GUI ({@link SalvageGuiView}).
  * Taking items out of a captured
  * container is the correctness-critical part (dupe prevention), so it lives in
  * one place with its own tests rather than being duplicated per surface.
  *
  * <p>Every public method runs on the Bukkit main thread; the store write is
- * dispatched async. A slot is marked in-flight before its write is dispatched
- * and cleared only when that write settles, so a second take on the same slot
- * during the write window is refused. That, plus callers filtering in-flight
- * slots out of any DB re-read, closes the take-then-reopen dupe exploit across
+ * dispatched async. A take claims its snapshot (and marks its slot) before
+ * reading the store and releases both only when its write settles, so any
+ * second take on the same snapshot during the write window is refused. That,
+ * plus callers filtering in-flight slots out of any DB re-read, closes the
+ * take-then-reopen dupe exploit across
  * both the GUI and the command, and across two staff acting on one snapshot
  * ({@link InFlightTracker}).
  */
@@ -48,6 +49,15 @@ public final class SalvageWithdrawals {
     /** Summary of a whole-snapshot {@link #withdrawAll}. */
     public record BulkResult(int stacksTaken, int itemsTaken, boolean emptied, boolean inventoryFull) {
     }
+
+    /**
+     * In-flight key meaning "a write to this snapshot is pending" (container
+     * slots are never negative). Every take rewrites the snapshot's whole item
+     * list from its own read, so two overlapping takes - even of different
+     * slots - could each write back a stack the other took, re-offering it for
+     * a second payout. One pending write per snapshot rules that out.
+     */
+    private static final int SNAPSHOT_WRITE = -1;
 
     private final SalvageStore store;
     private final Executor storeExecutor;
@@ -85,30 +95,45 @@ public final class SalvageWithdrawals {
             return new Outcome(Status.SKIPPED, snap);
         }
         int slot = items.get(index).slot();
-        SalvageSnapshot fresh = store.get(snap.id()).orElse(null);
+        // Claim the snapshot before reading the store. The claim clears only
+        // once the previous take's write has settled, so while it is held the
+        // read below sees every earlier take. Claiming after the read let a
+        // write that settled mid-read pay out again from the pre-write row;
+        // claiming per slot let takes of different slots overwrite each other.
+        if (!inFlight.markInFlight(snap.id(), SNAPSHOT_WRITE)) {
+            logger.fine("Spyglass salvage take refused: snapshot " + snap.id()
+                    + " has a take in flight");
+            return new Outcome(Status.REFUSED, snap);
+        }
+        // The slot mark is what the views filter on while the write is pending.
+        inFlight.markInFlight(snap.id(), slot);
+        SalvageSnapshot fresh;
+        try {
+            fresh = store.get(snap.id()).orElse(null);
+        } catch (RuntimeException ex) {
+            release(snap.id(), slot);
+            throw ex;
+        }
         if (fresh == null) {
             // Snapshot fully taken (or tombstoned by an undo, #292) since
             // this view rendered.
+            release(snap.id(), slot);
             return new Outcome(Status.EMPTIED, null);
         }
         int freshIndex = indexOfSlot(fresh.items(), slot);
         if (freshIndex < 0) {
             // This slot was already taken through another view.
+            release(snap.id(), slot);
             return new Outcome(Status.SKIPPED, fresh);
         }
         StoredItem storedItem = fresh.items().get(freshIndex);
-        if (!inFlight.markInFlight(fresh.id(), slot)) {
-            logger.fine("Spyglass salvage take refused: slot " + slot
-                    + " of snapshot " + fresh.id() + " is already in-flight");
-            return new Outcome(Status.REFUSED, fresh);
-        }
         Taken taken = takeMarkedSlot(player, fresh, storedItem);
         if (taken == null) {              // decoded to air/null - nothing to take
-            inFlight.clear(fresh.id(), slot);
+            release(snap.id(), slot);
             return new Outcome(Status.SKIPPED, fresh);
         }
         if (taken.amount() == 0) {        // inventory full
-            inFlight.clear(fresh.id(), slot);
+            release(snap.id(), slot);
             return new Outcome(Status.FULL, fresh);
         }
         List<StoredItem> updated = new ArrayList<>(fresh.items());
@@ -121,6 +146,11 @@ public final class SalvageWithdrawals {
         return updated.isEmpty()
                 ? new Outcome(Status.EMPTIED, null)
                 : new Outcome(Status.TAKEN, fresh.withItems(updated));
+    }
+
+    private void release(UUID id, int slot) {
+        inFlight.clear(id, slot);
+        inFlight.clear(id, SNAPSHOT_WRITE);
     }
 
     private static int indexOfSlot(List<StoredItem> items, int slot) {
@@ -139,8 +169,19 @@ public final class SalvageWithdrawals {
      * {@link #withdraw} (#291).
      */
     public BulkResult withdrawAll(Player player, SalvageSnapshot staleSnap) {
-        SalvageSnapshot snap = store.get(staleSnap.id()).orElse(null);
+        // Same snapshot claim as withdraw, taken before the read.
+        if (!inFlight.markInFlight(staleSnap.id(), SNAPSHOT_WRITE)) {
+            return new BulkResult(0, 0, false, false);
+        }
+        SalvageSnapshot snap;
+        try {
+            snap = store.get(staleSnap.id()).orElse(null);
+        } catch (RuntimeException ex) {
+            inFlight.clear(staleSnap.id(), SNAPSHOT_WRITE);
+            throw ex;
+        }
         if (snap == null) {
+            inFlight.clear(staleSnap.id(), SNAPSHOT_WRITE);
             return new BulkResult(0, 0, true, false);
         }
         List<StoredItem> leftovers = new ArrayList<>();
@@ -213,8 +254,8 @@ public final class SalvageWithdrawals {
 
     /**
      * Dispatch the store write for the new item list, then clear the in-flight
-     * marks this call placed. Clears only {@code markedSlots} (not the whole
-     * snapshot) so a concurrent take on another slot keeps its guard.
+     * marks this call placed - its slots and the snapshot claim - once the
+     * write has settled, opening the snapshot to its next take.
      */
     private void persist(UUID id, List<StoredItem> remaining, List<Integer> markedSlots) {
         boolean emptied = remaining.isEmpty();
@@ -233,6 +274,7 @@ public final class SalvageWithdrawals {
                 for (int slot : markedSlots) {
                     inFlight.clear(id, slot);
                 }
+                inFlight.clear(id, SNAPSHOT_WRITE);
             }
         });
     }

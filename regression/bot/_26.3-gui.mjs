@@ -1,7 +1,7 @@
 // Isolated Minecraft 26.x server probe. Requires WorldEdit; older bot transport via ViaBackwards.
 // All movement is server teleportation because the bridge rejects bot movement packets.
 import mineflayer from "mineflayer";
-import { rcon, sleep, sgOp, blockIs } from "./cases/lib.js";
+import { rcon, sleep, sgOp, blockIs, itemCount } from "./cases/lib.js";
 const name = "ui" + Date.now().toString(36).slice(-5);
 const bot = mineflayer.createBot({
   host: process.env.SG_HOST || "127.0.0.1",
@@ -37,15 +37,11 @@ const windowAfter = async (action) => {
   console.log("WINDOW", w.title);
   return w;
 };
+// Exact server-side count (`data get ... Inventory` output is truncated).
 const count = async (item = "diamond") => {
-  const data = await rcon(`data get entity ${name} Inventory`);
-  console.log("INVENTORY", data);
-  return [...data.matchAll(/\{[^{}]*\}/g)]
-    .filter((m) => m[0].includes(`id: "minecraft:${item}"`))
-    .reduce(
-      (sum, m) => sum + Number(m[0].match(/count:\s*(\d+)/)?.[1] || 0),
-      0,
-    );
+  const n = await itemCount(name, item);
+  console.log("INVENTORY", item, n);
+  return n;
 };
 try {
   await new Promise((res, rej) => {

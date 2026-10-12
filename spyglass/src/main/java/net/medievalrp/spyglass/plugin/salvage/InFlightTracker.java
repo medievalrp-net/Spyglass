@@ -48,6 +48,22 @@ final class InFlightTracker {
     }
 
     /**
+     * The marks held right now. A store read started after this call can
+     * still return a row whose write settles - clearing its mark - before
+     * the read's result is filtered; checking this snapshot as well hides
+     * that row. Call on the main thread before dispatching the read.
+     */
+    Set<String> snapshot() {
+        return Set.copyOf(inFlight);
+    }
+
+    /** In flight now, or held in {@code earlier} (a {@link #snapshot()}). */
+    boolean isInFlight(UUID snapshotId, int containerSlot, Set<String> earlier) {
+        String key = key(snapshotId, containerSlot);
+        return inFlight.contains(key) || earlier.contains(key);
+    }
+
+    /**
      * Remove all in-flight marks for the given snapshot. Call when a snapshot is
      * fully deleted so stale marks do not accumulate.
      */

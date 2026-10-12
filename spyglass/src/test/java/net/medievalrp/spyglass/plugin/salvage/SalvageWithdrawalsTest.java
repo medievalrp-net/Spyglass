@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,6 +91,83 @@ class SalvageWithdrawalsTest {
             // Settle the write: the slot clears and the store is mutated once.
             pending.forEach(Runnable::run);
             verify(store).delete(id);
+        }
+    }
+
+    // A click burst on a fast local store: the first take's write settles
+    // (delete committed, mark cleared) while the second click is mid-read, so
+    // the second read still returns the pre-delete row. If the slot were
+    // claimed only after that read, the cleared mark would let it pay twice.
+    @Test
+    void writeSettlingDuringASecondTakesReadCannotPayTwice() {
+        SalvageStore store = mock(SalvageStore.class);
+        List<Runnable> pending = new ArrayList<>();
+        Executor held = pending::add;
+        SalvageWithdrawals withdrawals =
+                new SalvageWithdrawals(store, held, null, Logger.getLogger("test"));
+
+        UUID id = UUID.randomUUID();
+        SalvageSnapshot snap = snapshotWithOneItem(id, 5);
+        when(store.get(id)).thenReturn(java.util.Optional.of(snap)).thenAnswer(read -> {
+            // The store thread finishes the first take's write during this read.
+            pending.forEach(Runnable::run);
+            pending.clear();
+            return java.util.Optional.of(snap);
+        });
+        Player player = playerWithRoom();
+        ItemStack diamond = oneDiamond();
+
+        try (MockedStatic<ItemSerialization> ms = mockStatic(ItemSerialization.class)) {
+            ms.when(() -> ItemSerialization.decode(anyString())).thenReturn(diamond);
+
+            SalvageWithdrawals.Outcome first = withdrawals.withdraw(player, snap, 0);
+            assertThat(first.status()).isEqualTo(SalvageWithdrawals.Status.EMPTIED);
+
+            withdrawals.withdraw(player, snap, 0);
+            verify(player.getInventory()).addItem(any(ItemStack.class)); // exactly once
+        }
+    }
+
+    // Two takes of different slots overlapping: each rewrites the snapshot's
+    // whole item list from its own read, so the later write could put back the
+    // stack the earlier take removed and re-offer it (a lost update, seen on
+    // MongoDB as two staff both receiving one stack). The second take must
+    // wait until the first take's write has settled.
+    @Test
+    void overlappingTakesOfDifferentSlotsAreSerialized() {
+        SalvageStore store = mock(SalvageStore.class);
+        List<Runnable> pending = new ArrayList<>();
+        Executor held = pending::add;
+        SalvageWithdrawals withdrawals =
+                new SalvageWithdrawals(store, held, null, Logger.getLogger("test"));
+
+        UUID id = UUID.randomUUID();
+        StoredItem five = new StoredItem(5, "DIAMOND", "blob");
+        StoredItem six = new StoredItem(6, "DIAMOND", "blob");
+        SalvageSnapshot both = snapshotWithOneItem(id, 5).withItems(List.of(five, six));
+        when(store.get(id)).thenReturn(java.util.Optional.of(both));
+        Player player = playerWithRoom();
+        ItemStack diamond = oneDiamond();
+
+        try (MockedStatic<ItemSerialization> ms = mockStatic(ItemSerialization.class)) {
+            ms.when(() -> ItemSerialization.decode(anyString())).thenReturn(diamond);
+
+            assertThat(withdrawals.withdraw(player, both, 0).status())
+                    .isEqualTo(SalvageWithdrawals.Status.TAKEN);
+            // Slot 6 while slot 5's write is pending: refused, nothing paid.
+            assertThat(withdrawals.withdraw(player, both, 1).status())
+                    .isEqualTo(SalvageWithdrawals.Status.REFUSED);
+            verify(player.getInventory()).addItem(any(ItemStack.class));
+
+            pending.forEach(Runnable::run);
+            pending.clear();
+            verify(store).replaceItems(id, List.of(six));
+
+            // Once it settles, the next take reads the written state.
+            when(store.get(id)).thenReturn(java.util.Optional.of(both.withItems(List.of(six))));
+            assertThat(withdrawals.withdraw(player, both, 1).status())
+                    .isEqualTo(SalvageWithdrawals.Status.EMPTIED);
+            verify(player.getInventory(), times(2)).addItem(any(ItemStack.class));
         }
     }
 
