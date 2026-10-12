@@ -20,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Test combined release packaging
+      - name: Test release packaging
         run: python3 -m unittest discover -s scripts/tests
       - name: Build and test
         run: ./gradlew build -PminecraftTarget=${{ matrix.minecraft }} --no-daemon
@@ -32,8 +32,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: spyglass-mc${{ matrix.minecraft }}
-          path: |
-            spyglass/build/mc${{ matrix.minecraft }}/libs/Spyglass-*-mc${{ matrix.minecraft }}-SNAPSHOT.jar
-            spyglass/build/mc${{ matrix.minecraft }}/libs/Spyglass-*-mc${{ matrix.minecraft }}.jar
-            spyglass/build/mc${{ matrix.minecraft }}/libs/Spyglass-*-mc${{ matrix.minecraft }}-SNAPSHOT-shaded.jar
-            spyglass/build/mc${{ matrix.minecraft }}/libs/Spyglass-*-mc${{ matrix.minecraft }}-shaded.jar
+          path: spyglass/build/mc${{ matrix.minecraft }}/libs/Spyglass-*.jar

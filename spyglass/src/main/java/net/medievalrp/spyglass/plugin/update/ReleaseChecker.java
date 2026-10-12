@@ -27,6 +27,11 @@ public final class ReleaseChecker {
             String name = asset.getString("name");
             if (("Spyglass-" + version + "-mc" + minecraft + ".jar").equals(name)
                     || ("Spyglass-" + version + "-mc" + minecraft + "-shaded.jar").equals(name)) return true;
+            // From 1.1.1 one modern jar covers every supported 26.x version. A
+            // release that drops a version must go back to -mc qualified names.
+            if (!minecraft.startsWith("1.")
+                    && (("Spyglass-" + version + ".jar").equals(name)
+                    || ("Spyglass-" + version + "-shaded.jar").equals(name))) return true;
             // Existing 1.x releases used unqualified names; do not treat a 2.x jar as legacy-compatible.
             if (minecraft.startsWith("1.21.") && version.startsWith("1.")
                     && ("Spyglass.jar".equals(name) || "Spyglass-shaded.jar".equals(name))) return true;

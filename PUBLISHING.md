@@ -1,8 +1,7 @@
-> Modern 2.x releases use one shared tag and Minecraft-specific artifact versions. See
-> [versioned builds](docs/versioned-builds.md) for the current release workflow.
-> Pass `-PminecraftTarget=26.1.2`, `26.2`, or `26.3` to every build or
-> publication command below; omission defaults to 26.3. Maven versions include
-> the `-mc<target>` suffix, preventing artifacts for different servers from colliding.
+> Modern releases publish one API build, compiled for Minecraft 26.1.2 (the default
+> target), under the plain version: `net.medievalrp:spyglass-api:1.1.1`. Other targets
+> carry a `-mc<target>` suffix and are not published. See
+> [versioned builds](docs/versioned-builds.md) for the release workflow.
 
 # Publishing spyglass-api to Maven Central
 

@@ -44,8 +44,10 @@ dependencies {
 // The Paper API each target compiles against. The GUI library only uses the
 // Bukkit API, so a build also runs on every newer target here; Paper refuses
 // a plugin whose api-version (the target) is newer than the server, so the
-// 26.1.2 build is the one that covers all of them.
-val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse("26.3")
+// 26.1.2 build is the one that covers all of them. It is the default and the
+// only one released; the others just compile and test against newer APIs.
+val releaseTarget = "26.1.2"
+val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse(releaseTarget)
 val targets = mapOf(
     "26.1.2" to "26.1.2.build.74-stable",
     "26.2" to "26.2.build.129-stable",
@@ -56,8 +58,11 @@ val paperApiVersion = targets[minecraftTarget]
 extra["minecraftTarget"] = minecraftTarget
 extra["supportedMinecraft"] = targets.keys.dropWhile { it != minecraftTarget }.joinToString(",")
 val baseVersion = providers.gradleProperty("version").get()
-val targetVersion = baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
-    if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""
+// The released build carries the plain version; the others keep a
+// -mc<target> suffix so their jars can't be mistaken for a release.
+val targetVersion = if (minecraftTarget == releaseTarget) baseVersion
+    else baseVersion.removeSuffix("-SNAPSHOT") + "-mc$minecraftTarget" +
+        if (baseVersion.endsWith("-SNAPSHOT")) "-SNAPSHOT" else ""
 val velocityApiVersion = "3.4.0-SNAPSHOT"
 val mongoDriverVersion = "5.5.0"
 val clickhouseClientVersion = "0.9.8"

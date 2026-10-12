@@ -77,16 +77,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("publish=true", (self.root / "output").read_text())
         dist = self.root / "dist"
         dist.mkdir()
-        for i in range(18):
-            (dist / f"artifact-{i}.jar").write_bytes(b"fixture")
-        (dist / "SHA256SUMS").write_text("fixture")
+        for name in ("Spyglass-1.1.0.jar", "Spyglass-1.1.0-shaded.jar"):
+            (dist / name).write_bytes(b"fixture")
         self.run_step("Create or resume draft at this exact commit")
         self.run_step("Publish release")
         calls = self.calls()
         self.assertEqual(calls.count("release create "), 1)
         self.assertIn("--target " + "a" * 40, calls)
         upload = next(line for line in calls.splitlines() if line.startswith("release upload"))
-        self.assertEqual(upload.count(".jar"), 18)
+        self.assertEqual(upload.count(".jar"), 2)
         self.assertIn("release edit v1.1.0 --draft=false --latest", calls)
 
     def test_wrong_commit_draft_cannot_upload_or_publish(self):
@@ -106,33 +105,31 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.run_step("Create or resume draft at this exact commit", expected=1)
         self.assertNotIn("release create", self.calls())
 
-    def test_successful_build_covers_all_targets(self):
+    def test_release_builds_only_the_26_1_2_jar(self):
         (self.root / "gradlew").write_text(
             '#!/usr/bin/env bash\necho "$*" >> builds\n', newline="\n")
         (self.root / "gradlew").chmod(0o755)
-        self.run_step("Build and test matching dependencies")
+        self.run_step("Build and test")
         builds = (self.root / "builds").read_text().splitlines()
-        self.assertEqual(len(builds), 3)
-        for target, command in zip(("26.1.2", "26.2", "26.3"), builds):
-            self.assertIn("-PminecraftTarget=" + target, command)
+        self.assertEqual(len(builds), 1)
+        self.assertIn("-PminecraftTarget=26.1.2", builds[0])
 
     def test_central_without_credentials_is_skipped(self):
         self.env["CENTRAL_PORTAL_USERNAME"] = ""
-        result = self.run_step("Publish target-specific API to Central")
+        result = self.run_step("Publish API to Central")
         self.assertIn("Central credentials absent", result.stdout)
         self.assertFalse((self.root / "builds").exists())
 
-    def test_central_publishes_all_target_coordinates_when_configured(self):
+    def test_central_publishes_the_released_api_when_configured(self):
         self.env["CENTRAL_PORTAL_USERNAME"] = "fake-user"
         (self.root / "gradlew").write_text(
             '#!/usr/bin/env bash\necho "$*" >> builds\n', newline="\n")
         (self.root / "gradlew").chmod(0o755)
-        self.run_step("Publish target-specific API to Central")
+        self.run_step("Publish API to Central")
         builds = (self.root / "builds").read_text().splitlines()
-        self.assertEqual(len(builds), 3)
-        for target, command in zip(("26.1.2", "26.2", "26.3"), builds):
-            self.assertIn("publishAggregationToCentralPortal", command)
-            self.assertIn("-PminecraftTarget=" + target, command)
+        self.assertEqual(len(builds), 1)
+        self.assertIn("publishAggregationToCentralPortal", builds[0])
+        self.assertIn("-PminecraftTarget=26.1.2", builds[0])
 
     def test_invalid_version_is_rejected_before_any_gh_call(self):
         (self.root / "gradle.properties").write_text("version=not-a-release\n")
@@ -141,26 +138,20 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_publication_steps_are_gated_and_follow_build_and_staging(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        build = workflow.index("- name: Build and test matching dependencies")
-        staging = workflow.index("- name: Stage labeled assets")
+        build = workflow.index("- name: Build and test\n")
+        staging = workflow.index("- name: Stage release assets")
         create = workflow.index("- name: Create or resume draft at this exact commit")
         self.assertLess(build, staging)
         self.assertLess(staging, create)
         for name in ("Create or resume draft at this exact commit", "Publish release",
-                     "Publish target-specific API to Central"):
+                     "Publish API to Central"):
             section = workflow.split("      - name: " + name + "\n", 1)[1].split("\n      - ", 1)[0]
             self.assertIn("if: steps.release.outputs.publish == 'true'", section)
 
-    def test_failed_build_stops_before_third_target(self):
-        (self.root / "gradlew").write_text(
-            '#!/usr/bin/env bash\necho "$*" >> builds\n'
-            '[[ "$*" != *26.2* ]]\n', newline="\n")
+    def test_failed_build_fails_the_step(self):
+        (self.root / "gradlew").write_text('#!/usr/bin/env bash\nexit 1\n', newline="\n")
         (self.root / "gradlew").chmod(0o755)
-        self.run_step("Build and test matching dependencies", expected=1)
-        builds = (self.root / "builds").read_text()
-        self.assertIn("26.1.2", builds)
-        self.assertIn("26.2", builds)
-        self.assertNotIn("26.3", builds)
+        self.run_step("Build and test", expected=1)
 
 if __name__ == "__main__":
     unittest.main()

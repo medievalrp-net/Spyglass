@@ -37,15 +37,14 @@ jobs:
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
         if: steps.release.outputs.publish == 'true'
-      - name: Test combined release packaging
+      - name: Test release packaging
         run: python3 -m unittest discover -s scripts/tests
-      - name: Build and test matching dependencies
+      - name: Build and test
         if: steps.release.outputs.publish == 'true'
+        # The 26.1.2 build runs on every supported version; it is the release.
         run: |
-          for mc in 26.1.2 26.2 26.3; do
-            ./gradlew build -PminecraftTarget="$mc" --no-daemon --stacktrace
-          done
-      - name: Stage labeled assets
+          ./gradlew build -PminecraftTarget=26.1.2 --no-daemon --stacktrace
+      - name: Stage release assets
         if: steps.release.outputs.publish == 'true'
         run: python3 scripts/stage-release.py
       - name: Create or resume draft at this exact commit
@@ -67,7 +66,7 @@ jobs:
           [[ "$(gh release view "$TAG" --json targetCommitish --jq '.targetCommitish')" == "$GITHUB_SHA" ]] || {
             echo "Draft belongs to a different commit; inspect it before retrying."; exit 1;
           }
-          gh release upload "$TAG" dist/*.jar dist/SHA256SUMS --clobber
+          gh release upload "$TAG" dist/*.jar --clobber
       - name: Publish release
         if: steps.release.outputs.publish == 'true'
         env:
@@ -75,7 +74,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
         run: |
           gh release edit "$TAG" --draft=false --latest
-      - name: Publish target-specific API to Central
+      - name: Publish API to Central
         if: steps.release.outputs.publish == 'true'
         env:
           CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
@@ -84,9 +83,7 @@ jobs:
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
           if [[ -n "$CENTRAL_PORTAL_USERNAME" ]]; then
-            for mc in 26.1.2 26.2 26.3; do
-              ./gradlew publishAggregationToCentralPortal -PminecraftTarget="$mc" --no-daemon --stacktrace
-            done
+            ./gradlew publishAggregationToCentralPortal -PminecraftTarget=26.1.2 --no-daemon --stacktrace
           else
-            echo "Central credentials absent; API jars remain available in the GitHub release."
+            echo "Central credentials absent; skipping the API publication."
           fi

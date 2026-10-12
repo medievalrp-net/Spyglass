@@ -76,9 +76,9 @@ Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQL
 
 ## Supported releases
 
-`main` produces Java 25 builds labeled for Minecraft 26.1.2, 26.2 and 26.3, all from the same source commit and shipped in one release. The inventory menus use [inventory-framework](https://github.com/devnatan/inventory-framework), which only uses the Bukkit API, so a build also runs on the newer supported versions: the 26.1.2 build runs on all three. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21.11`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21.11), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`.
+`main` produces one Java 25 jar for Minecraft 26.1.2, 26.2 and 26.3. The inventory menus use [inventory-framework](https://github.com/devnatan/inventory-framework), which only uses the Bukkit API, so the 26.1.2 build runs on all three. See [versioned builds and releases](docs/versioned-builds.md). Minecraft 1.21.x remains on [`maintenance/1.21.11`](https://github.com/medievalrp-net/Spyglass/tree/maintenance/1.21.11), using Java 21 and InvUI 1.49. That branch receives critical fixes; new features target `main`.
 
-Use the 1.1 release assets for modern Minecraft targets and the 1.0.13 maintenance release for Minecraft 1.21.11.
+Download `Spyglass-<version>.jar` (or `-shaded.jar` if your host can't download libraries) from the latest release for Minecraft 26.x, and the 1.0.13 maintenance release for Minecraft 1.21.11.
 
 ## Requirements
 

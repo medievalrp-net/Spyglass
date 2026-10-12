@@ -1,13 +1,11 @@
-import hashlib
 from pathlib import Path
 import runpy
 import tempfile
 import unittest
-from unittest.mock import patch
 import zipfile
 
 SCRIPT = Path(__file__).resolve().parents[1] / "stage-release.py"
-TARGETS = ("26.1.2", "26.2", "26.3")
+LIBS = "spyglass/build/mc26.1.2/libs"
 
 class StageReleaseTest(unittest.TestCase):
     def setUp(self):
@@ -17,50 +15,49 @@ class StageReleaseTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         self.script = self.root / "scripts/stage-release.py"
         self.script.write_bytes(SCRIPT.read_bytes())
-        (self.root / "gradle.properties").write_text("version=1.1.0\n")
-        for mc in TARGETS:
-            for module, name, suffix in [
-                ("spyglass", "Spyglass", ""), ("spyglass", "Spyglass", "-shaded"),
-                ("spyglass-velocity", "Spyglass-Velocity", ""),
-                ("spyglass-api", "spyglass-api", ""),
-                ("spyglass-api", "spyglass-api", "-sources"),
-                ("spyglass-api", "spyglass-api", "-javadoc")]:
-                path = self.root / module / f"build/mc{mc}/libs/{name}-1.1.0-mc{mc}{suffix}.jar"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with zipfile.ZipFile(path, "w") as jar:
-                    jar.writestr("spyglass-target.properties", f"minecraft={mc}\n")
-                    jar.writestr("plugin.yml", f"version: 1.1.0-mc{mc}\n")
+        (self.root / "gradle.properties").write_text("version=1.1.1\n")
+        (self.root / ".github").mkdir()
+        (self.root / ".github/release-notes.md").write_text("- A fix.\n")
+        for name in ("Spyglass-1.1.1.jar", "Spyglass-1.1.1-shaded.jar", "Spyglass-1.1.1-thin.jar",
+                     "Spyglass-1.1.1-sources.jar"):
+            self.jar(name)
+
+    def jar(self, name, target="26.1.2", version="1.1.1"):
+        path = self.root / LIBS / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w") as jar:
+            jar.writestr("spyglass-target.properties",
+                         f"minecraft={target}\nsupported=26.1.2,26.2,26.3\n")
+            jar.writestr("plugin.yml", f"version: {version}\n")
 
     def stage(self):
-        with patch("subprocess.check_output", return_value="a" * 40):
-            runpy.run_path(str(self.script), run_name="__main__")
+        runpy.run_path(str(self.script), run_name="__main__")
 
-    def test_complete_release_has_all_targets_and_checksums(self):
+    def test_release_is_the_lean_and_shaded_jar_with_notes(self):
         self.stage()
         dist = self.root / "dist"
-        self.assertEqual(len(list(dist.glob("*.jar"))), 12)
-        self.assertFalse(list(dist.glob("*-sources.jar")))
-        self.assertFalse(list(dist.glob("*-javadoc.jar")))
-        for line in (dist / "SHA256SUMS").read_text().splitlines():
-            digest, filename = line.split("  ")
-            self.assertEqual(digest, hashlib.sha256((dist / filename).read_bytes()).hexdigest())
+        self.assertEqual(sorted(p.name for p in dist.iterdir()),
+                         ["NOTES.md", "Spyglass-1.1.1-shaded.jar", "Spyglass-1.1.1.jar"])
         notes = (dist / "NOTES.md").read_text()
-        for mc in TARGETS:
-            self.assertIn(f"**{mc}:**", notes)
-        self.assertIn("a" * 40, notes)
+        self.assertIn("Minecraft 26.1.2, 26.2 and 26.3", notes)
+        self.assertIn("`Spyglass-1.1.1.jar`", notes)
+        self.assertIn("- A fix.", notes)
 
-    def test_missing_target_asset_prevents_partial_staging(self):
-        next((self.root / "spyglass/build/mc26.3/libs").glob("*.jar")).unlink()
+    def test_missing_jar_prevents_partial_staging(self):
+        (self.root / LIBS / "Spyglass-1.1.1-shaded.jar").unlink()
         with self.assertRaisesRegex(SystemExit, "Missing release asset"):
             self.stage()
         self.assertFalse((self.root / "dist").exists())
 
     def test_wrong_embedded_target_prevents_staging(self):
-        path = next((self.root / "spyglass/build/mc26.2/libs").glob("*.jar"))
-        with zipfile.ZipFile(path, "w") as jar:
-            jar.writestr("spyglass-target.properties", "minecraft=26.3\n")
-            jar.writestr("plugin.yml", "version: 1.1.0-mc26.2\n")
+        self.jar("Spyglass-1.1.1.jar", target="26.3")
         with self.assertRaisesRegex(SystemExit, "Wrong embedded target"):
+            self.stage()
+        self.assertFalse((self.root / "dist").exists())
+
+    def test_wrong_embedded_version_prevents_staging(self):
+        self.jar("Spyglass-1.1.1-shaded.jar", version="1.1.0")
+        with self.assertRaisesRegex(SystemExit, "Wrong embedded version"):
             self.stage()
         self.assertFalse((self.root / "dist").exists())
 

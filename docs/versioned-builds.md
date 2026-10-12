@@ -1,12 +1,15 @@
-# Minecraft-specific builds and releases
+# Minecraft builds and releases
 
-One shared modern codebase produces three distributions. Java 25 is required for all of them.
+From 1.1.1 one jar runs on Minecraft 26.1.2, 26.2 and 26.3, and releases ship only
+that build: `Spyglass-<version>.jar` and `Spyglass-<version>-shaded.jar`. Java 25 is
+required. The other targets still build, only to compile and test against newer
+Paper APIs.
 
-| Minecraft | Paper compile API | Artifact version example |
+| Minecraft target | Paper compile API | Artifact version example |
 | --- | --- | --- |
-| 26.1.2 | 26.1.2.build.74-stable | 1.1.0-mc26.1.2 |
-| 26.2 | 26.2.build.129-stable | 1.1.0-mc26.2 |
-| 26.3 | 26.3.build.38-alpha | 1.1.0-mc26.3 |
+| 26.1.2 (default, released) | 26.1.2.build.74-stable | 1.1.1 |
+| 26.2 | 26.2.build.129-stable | 1.1.1-mc26.2 |
+| 26.3 | 26.3.build.38-alpha | 1.1.1-mc26.3 |
 
 A distribution runs on its target and every newer supported version, so the 26.1.2
 build runs on all three. Paper refuses a build on an older server ("Unsupported API
@@ -32,10 +35,11 @@ selected by the Gradle target, not by different source branches.
 ./gradlew.bat build '-PminecraftTarget=26.3'
 ```
 
-The default target is 26.3. Unknown targets fail configuration. Each module writes to
+The default target is 26.1.2, the released one, and its artifacts carry the plain
+version. Unknown targets fail configuration. Each module writes to
 `build/mc<target>/`, so successive builds preserve the other targets' binaries
-and reports. For example, the current lean build is
-`spyglass/build/mc26.2/libs/Spyglass-1.1.0-mc26.2.jar`; the fallback adds
+and reports. For example, the release's lean build is
+`spyglass/build/mc26.1.2/libs/Spyglass-1.1.1.jar`; the fallback adds
 `-shaded` before `.jar`. Both bundle relocated inventory-framework and FoliaLib.
 The embedded target, plugin API version, Paper API pin and artifact version
 come from the selected Gradle target. Every build also embeds the versions it
@@ -43,31 +47,29 @@ supports (its target and the newer ones) and starts on any of them; startup reje
 any other Minecraft version before loading configuration. Future patch releases need
 explicit validation.
 
-All modules, including the Velocity companion and developer API, carry the target
-suffix. This avoids publishing different Paper-dependent builds under one Maven
-coordinate: for example `net.medievalrp:spyglass-api:1.1.0-mc26.2`.
+Non-default targets give every module, including the Velocity companion and
+developer API, the target suffix, so they can never be confused with the release.
+Only the 26.1.2 API is published: `net.medievalrp:spyglass-api:1.1.1`. 1.1.0 was
+published per target (`1.1.0-mc26.2` and so on).
 
 ## Releases
 
-The Verify workflow builds and tests all three modern targets. On a stable version
-bump pushed to `main`, or manual dispatch, the Release workflow builds all three
-from the same checkout. Only after every build and test succeeds does it stage
-all assets and publish **one release**, tagged `v<version>` (for example `v1.1.0`).
-Snapshot versions are skipped. Published releases are never overwritten; a draft
-can be resumed only from its original commit.
+The Verify workflow builds and tests all three targets. On a stable version bump
+pushed to `main`, or manual dispatch, the Release workflow builds and tests the
+26.1.2 target only, then publishes **one release** tagged `v<version>` with two
+assets: `Spyglass-<version>.jar` (libraries downloaded by Paper on first start) and
+`Spyglass-<version>-shaded.jar` (everything bundled). The notes are a short header
+plus `.github/release-notes.md`. Snapshot versions are skipped. Published releases
+are never overwritten; a draft can be resumed only from its original commit.
 
-The release contains all three targets' lean, shaded, Velocity and developer API
-jars (12 jars total), one SHA256SUMS file, and notes recording the source commit.
-`python scripts/stage-release.py` validates and stages the complete set into an
-empty `dist` directory without publishing anything. Missing assets or mismatched
-embedded plugin versions/targets fail staging. Central publication retains the
-separate target-specific Maven coordinates.
+`python scripts/stage-release.py` validates and stages both jars and the notes into
+an empty `dist` directory without publishing anything. A missing jar, or one whose
+embedded target, supported versions or plugin version is wrong, fails staging.
+Velocity and API jars are no longer release assets; the API stays on Maven Central.
 
-This combined modern release receives GitHub's Latest label. Minecraft 1.21 remains
-on its separate legacy release line. Pin downloads to the desired release and
-Minecraft-labeled artifact; `Spyglass.jar` is not a modern release asset name.
-
-No workflow or release has been pushed or published as part of this local setup.
+Installed 1.1.0 copies only recognize `-mc<target>` asset names, so they do not get
+an in-game notice for 1.1.1. From 1.1.1 the update check also accepts the plain
+names on any 26.x server. Minecraft 1.21 remains on its separate legacy release line.
 
 ## Inventory UIs
 

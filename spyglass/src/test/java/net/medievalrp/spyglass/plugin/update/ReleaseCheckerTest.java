@@ -32,6 +32,19 @@ class ReleaseCheckerTest {
         assertThat(ReleaseChecker.newest(releases, "26.3")).isEmpty();
     }
 
+    @Test void oneModernJarIsOfferedOnEveryModernVersionButNotLegacy() {
+        var releases = List.of(release("1.1.1", "Spyglass-1.1.1.jar", "Spyglass-1.1.1-shaded.jar"),
+                release("1.1.0", "Spyglass-1.1.0-mc26.3.jar"));
+        for (String minecraft : List.of("26.1.2", "26.2", "26.3")) {
+            assertThat(ReleaseChecker.newest(releases, minecraft).orElseThrow().version()).isEqualTo("1.1.1");
+        }
+        assertThat(ReleaseChecker.newest(List.of(release("1.1.2", "Spyglass-1.1.2-shaded.jar")), "26.2")
+                .orElseThrow().version()).isEqualTo("1.1.2");
+        assertThat(ReleaseChecker.newest(releases, "1.21.11")).isEmpty();
+        assertThat(ReleaseChecker.newer("1.1.2", "1.1.1")).isTrue();
+        assertThat(ReleaseChecker.newer("1.1.1", "1.1.0-mc26.3")).isTrue();
+    }
+
     @Test void comparesNumericVersionsAndSnapshotsWithoutDowngrading() {
         assertThat(ReleaseChecker.newer("2.0.10", "2.0.9-mc26.2")).isTrue();
         assertThat(ReleaseChecker.newer("2.0.0", "2.0.0-mc26.3-SNAPSHOT")).isTrue();
