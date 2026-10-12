@@ -181,5 +181,83 @@ Testing found and fixed three problems:
   <item> 0` (`itemCount` in `regression/bot/cases/lib.js`), including the
   existing `_26.3-gui.mjs`.
 
-Still untested: a native 26.x client walkthrough, and the MongoDB, ClickHouse and
-MariaDB backends.
+Still untested: a native 26.x client walkthrough.
+
+## Storage backend validation
+
+Validated 2026-10-11/12 on macOS with Docker (Colima, Docker Engine 29) and the
+images the integration tests use: `mongo:7.0`,
+`clickhouse/clickhouse-server:24.8-alpine`, `mariadb:11`, plus `mysql:8.4` for the
+`mysql` spelling of the MariaDB backend.
+
+The integration tests had never run on a current Docker: Testcontainers 1.21.3
+requests Docker API 1.32 and Docker Engine 29 refuses anything below 1.40, so every
+store IT assume-skipped, and the build's "Docker not reachable" warning stayed quiet
+because the `docker` CLI still worked. With the client forced to API 1.44 all 1,101
+tests ran, the 92 store ITs included (MongoDB, ClickHouse, MariaDB), 0 failures.
+Testcontainers 1.21.4 is the drop-in fix.
+
+Each backend then got a clean install: a fresh database container with nothing
+created up front (Spyglass creates its own databases), and a fresh Paper 26.3
+server running the 26.1.2 lean jar. On each, `_26.3-gui.mjs`, `_gui-exploits.mjs`,
+`_gui-coverage.mjs`, `_gui-player-snapshot.mjs`, `_gui-reload.mjs` and
+`_backend-core.mjs` ran, then the server was fully restarted and
+`_backend-core.mjs` ran again with `PHASE=after`. `_backend-core.mjs` covers chat
+and command logging, a 72-block WorldEdit edit searched, rolled back, restored and
+undone, a real player block break through the bridge, and, after the restart, that
+the chat line, the placements, an unwithdrawn salvage and a player snapshot are
+still there and still work. Each run then counted records in the database itself,
+proving the backend received them.
+
+The first pass found a salvage duplicate on every networked backend. Every take
+rewrote the container's whole item list from its own read while only its slot was
+claimed, so two overlapping takes of different slots could write back a stack the
+other had taken. Two staff click-bursting one salvage got 224 items from a
+160-item salvage on MongoDB and 320 on ClickHouse; MariaDB and MySQL duplicated
+too. Takes are now serialized per container (a click inside the write window is
+refused and can be repeated). With that fix every backend passed all 98 checks:
+
+| Backend | GUI, exploit, coverage, snapshot, reload, core | After restart | Records stored |
+| --- | --- | --- | --- |
+| SQLite | 90/90 | 8/8 | 325 |
+| MongoDB | 90/90 | 8/8 | 327 |
+| ClickHouse | 90/90 | 8/8 | 328 |
+| MariaDB 11 | 90/90 | 8/8 | 327 |
+| MySQL 8.4 | 90/90 | 8/8 | 327 |
+
+The only errors in the server logs were Paper's own `ConcurrentModificationException`
+in its async command builder during `bukkit:reload`, with no Spyglass frames.
+
+### Migration chain
+
+One clean server carried the same history across every backend with
+`/sg migrate`: seeded on SQLite by `_26.3-gui.mjs` and `_backend-core.mjs`
+(`PHASE=before`), then SQLite → MongoDB → ClickHouse → MariaDB → a fresh SQLite
+file → MySQL. Each hop ran `_backend-migrate.mjs` as an in-game operator,
+restarted the server on the target, and ran `_backend-history.mjs` there: the
+seeded chat line, the 72 WorldEdit placements and the commands are searchable,
+and the placements still roll back and undo.
+
+The first run lost history leaving ClickHouse: the ClickHouse → MariaDB hop
+copied 147 of ~205 records, only block changes. `queryPage`, which `/sg migrate`
+pages through, reused the rollback reader's rollbackable-only filter and trimmed
+columns, so chat, commands, joins, quits, teleports, rollback ops, salvage takes
+and snapshot takes were dropped. ClickHouse's `queryPage` now reads every event
+type with full columns (SQLite, MariaDB and MongoDB already did), with an IT
+covering it. Rerun with the fix:
+
+| Hop | Copied | Stored on target | History checks |
+| --- | --- | --- | --- |
+| SQLite → MongoDB | 181 | 191 | 5/5 |
+| MongoDB → ClickHouse | 193 | 202 | 5/5 |
+| ClickHouse → MariaDB 11 | 204 | 214 | 5/5 |
+| MariaDB → SQLite (new file) | 216 | 226 | 5/5 |
+| SQLite → MySQL 8.4 | 228 | 237 | 5/5 |
+
+"Stored" is counted in the database after the target's checks, so it includes
+the records the checking bots themselves wrote. After the ClickHouse → MariaDB
+hop, every event type in ClickHouse was present in MariaDB with at least the
+same count. No errors in any of the server logs.
+
+Salvage, undo history, tool state and player snapshots are separate stores and
+are not part of `/sg migrate`.
