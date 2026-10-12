@@ -150,6 +150,19 @@ try {
   }
   await sleep(4000);
   await closeAll(a, b);
+  // A click while another take on the container is in flight is refused by
+  // design, so a burst can leave stacks behind. Collect them with slow single
+  // clicks; the count below then checks both no duplicates and nothing lost.
+  for (let i = 0; i < 6; i++) {
+    try {
+      await openFirstSalvage(a);
+    } catch {
+      break; // no salvage window: nothing left
+    }
+    await click(a, 0, 0, 0);
+    await sleep(2500);
+    await closeAll(a);
+  }
   {
     const ia = await inventory(a.username);
     const ib = await inventory(b.username);
