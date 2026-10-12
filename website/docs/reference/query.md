@@ -15,7 +15,7 @@
 | Key | Also | Example | Matches |
 | --- | --- | --- | --- |
 | `p:` | `player:` | `p:Steve,Alex` · `p:!Steve` | The player who did it |
-| `a:` | `action:`, `event:` | `a:break,place` · `a:!place` | The [event type](./events) |
+| `a:` | `action:`, `event:` | `a:break,place` · `a:!place` | The [event type](events.md) |
 | `b:` | `block:` | `b:diamond_ore` · `b:!chest` | The block |
 | `e:` | `entity:` | `e:creeper` | The entity involved |
 | `c:` | `cause:` | `c:tnt,!creeper` | What caused it, for changes that weren't a player |
@@ -75,4 +75,4 @@ Units: `s` seconds, `m` minutes, `h` hours, `d` days, `w` weeks, `mo` months. Co
 
 ## Snapshot keys
 
-`/sg snapshot` takes its own short list: `t:` (required), `p:`, `trg:` and `w:`. See [Inventory snapshots](../guide/snapshots#keys).
+`/sg snapshot` takes its own short list: `t:` (required), `p:`, `trg:` and `w:`. See [Inventory snapshots](../guide/snapshots.md#keys).

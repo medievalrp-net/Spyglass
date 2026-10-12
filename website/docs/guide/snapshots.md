@@ -16,23 +16,23 @@ Snapshots only work in-game.
 
 ## Player inventories
 
-::: warning Off by default
-Player snapshots need this in `config.conf`, followed by a restart:
+!!! warning "Off by default"
 
-```hocon
-snapshot {
-  players {
-    enabled = true
-  }
-}
-```
-:::
+    Player snapshots need this in `config.conf`, followed by a restart:
+
+    ```hocon
+    snapshot {
+      players {
+        enabled = true
+      }
+    }
+    ```
 
 Once on, Spyglass saves each player's inventory when they join, leave, die or change worlds, plus every minute while they're online. It only writes when the inventory changed, so idle players cost nothing.
 
 A snapshot shows the newest save at or before the time you asked for, and says when that save was taken. Saves are kept for 30 days.
 
-It's off by default because it's the only feature that records on a timer, so it uses some disk whether or not anyone looks. You can change the interval and how long saves are kept in [Configuration](../reference/configuration#inventory-snapshots).
+It's off by default because it's the only feature that records on a timer, so it uses some disk whether or not anyone looks. You can change the interval and how long saves are kept in [Configuration](../reference/configuration.md#inventory-snapshots).
 
 ## Containers
 

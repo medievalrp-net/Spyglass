@@ -26,7 +26,7 @@ Needs the `spyglass.search` permission. Aliases: `/sg s`, `/sg lookup`, `/sg l`.
 | `r:` | Radius in blocks around you | `r:50` |
 | `w:` | World | `w:world_nether` |
 
-The full list, including item names, lore, enchantments, chat text, IPs and more, is in [Search keys and flags](../reference/query).
+The full list, including item names, lore, enchantments, chat text, IPs and more, is in [Search keys and flags](../reference/query.md).
 
 ## Combining values
 
@@ -43,7 +43,7 @@ Searches have two defaults, so a bare search stays fast:
 
 Time units: `s`, `m`, `h`, `d`, `w`, `mo`. You can combine them: `t:1d12h`.
 
-The console has no position, so its searches cover the whole server; narrow them with `w:` or `trg:`. Server owners can change both defaults in [`config.conf`](../reference/configuration#search-defaults).
+The console has no position, so its searches cover the whole server; narrow them with `w:` or `trg:`. Server owners can change both defaults in [`config.conf`](../reference/configuration.md#search-defaults).
 
 ## Reading the results
 

@@ -6,7 +6,7 @@ Needs the `spyglass.import` permission. Works with CoreProtect 20 and newer.
 
 ## Before you start
 
-1. Install Spyglass and pick your [database](./databases).
+1. Install Spyglass and pick your [database](databases.md).
 2. **Check `storage.retention`.** Imported records older than it are deleted after the import. To keep everything, set it first and restart:
 
    ```hocon
@@ -65,6 +65,6 @@ Block changes, kills, logins and logouts, chat, commands, container deposits and
 
 When you're happy with the result, remove CoreProtect.
 
-::: details Importing without a running server
-A standalone command-line importer can import offline and audit that every CoreProtect row arrived. See the [CoreProtect migration runbook](https://github.com/medievalrp-net/Spyglass/blob/main/docs/migration-from-coreprotect.md).
-:::
+??? note "Importing without a running server"
+
+    A standalone command-line importer can import offline and audit that every CoreProtect row arrived. See the [CoreProtect migration runbook](https://github.com/medievalrp-net/Spyglass/blob/main/docs/migration-from-coreprotect.md).

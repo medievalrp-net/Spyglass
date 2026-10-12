@@ -1,6 +1,6 @@
 # Events
 
-Every record has an event type. Use these names with `a:`, like `/sg search a:break,place`. `/sg events` lists the ones your server records. Each can be turned off or kept for a different time in [`config.conf`](./configuration#events).
+Every record has an event type. Use these names with `a:`, like `/sg search a:break,place`. `/sg events` lists the ones your server records. Each can be turned off or kept for a different time in [`config.conf`](configuration.md#events).
 
 ## Blocks
 
@@ -44,7 +44,7 @@ Every record has an event type. Use these names with `a:`, like `/sg search a:br
 | Event | Logged when |
 | --- | --- |
 | `say` | Chat messages |
-| `command` | Commands, from players or the console. Passwords can be [hidden](./configuration#hiding-passwords-in-commands) |
+| `command` | Commands, from players or the console. Passwords can be [hidden](configuration.md#hiding-passwords-in-commands) |
 | `join` / `quit` | Logging in and out (with IP address) |
 | `teleport` | A player teleports |
 | `named` | Something is renamed with a name tag |
@@ -64,8 +64,8 @@ Every record has an event type. Use these names with `a:`, like `/sg search a:br
 | --- | --- |
 | `rollback-op` | A rollback, restore or undo finishes |
 | `rolled-place` / `rolled-break` / `rolled-deposit` / `rolled-withdraw` | Shown in results for changes a rollback made. Built from `rollback-op`, not stored separately |
-| `salvage-withdraw` | Someone takes an item from [salvage](../guide/salvage) |
-| `snapshot-take` | Someone copies an item out of a [snapshot](../guide/snapshots) |
+| `salvage-withdraw` | Someone takes an item from [salvage](../guide/salvage.md) |
+| `snapshot-take` | Someone copies an item out of a [snapshot](../guide/snapshots.md) |
 
 ## What can be rolled back
 

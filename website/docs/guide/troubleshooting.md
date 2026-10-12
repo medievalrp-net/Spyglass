@@ -29,7 +29,7 @@ Some hosts block outgoing connections. Use `Spyglass-<version>-shaded.jar` inste
 
 - **"Unsupported API version":** your Paper is older than 26.1.2. Use the [1.0.13 release](https://github.com/medievalrp-net/Spyglass/releases/tag/v1.0.13) for 1.21.11.
 - **A Minecraft version error:** Spyglass only starts on the versions it was built for (26.1.2, 26.2 and 26.3). Check for a newer release.
-- **A database error:** check the connection details for your backend in `config.conf`. See [Choosing a database](./databases).
+- **A database error:** check the connection details for your backend in `config.conf`. See [Choosing a database](databases.md).
 
 ## "In-game only" errors
 
@@ -37,7 +37,7 @@ Some hosts block outgoing connections. Use `Spyglass-<version>-shaded.jar` inste
 
 ## Player snapshots say they're turned off
 
-Player inventory snapshots are off by default. Set `snapshot.players.enabled = true` and restart. See [Inventory snapshots](./snapshots).
+Player inventory snapshots are off by default. Set `snapshot.players.enabled = true` and restart. See [Inventory snapshots](snapshots.md).
 
 ## IP addresses show as "(ip hidden)"
 

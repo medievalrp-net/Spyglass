@@ -22,7 +22,7 @@ Shows everything Steve did in the last day within 250 blocks of you. Add more ke
 /sg search p:Steve a:break b:diamond_ore t:1d r:50
 ```
 
-Each key filters the results: `p:` player, `a:` action, `b:` block, `t:` how far back, `r:` radius. Use `/sg page 2` to see more results. Everything is listed in [Search keys and flags](../reference/query).
+Each key filters the results: `p:` player, `a:` action, `b:` block, `t:` how far back, `r:` radius. Use `/sg page 2` to see more results. Everything is listed in [Search keys and flags](../reference/query.md).
 
 ## 3. Roll back griefing
 
@@ -48,4 +48,4 @@ Undo reverses your last rollback, however big it was.
 - **Rollbacks leave chests alone unless you ask.** Add `--containers` to also restore chest contents, and `--entities` to bring back animals and mobs that players killed.
 - **Items are never lost.** If a rollback destroys a chest that had items in it, open `/sg inventory` to get them back.
 
-Next: [Searching](./searching) and [Rollback, restore and undo](./rollback) explain each step in depth.
+Next: [Searching](searching.md) and [Rollback, restore and undo](rollback.md) explain each step in depth.

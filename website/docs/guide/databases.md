@@ -15,69 +15,73 @@ Spyglass creates its own database and tables on first start. You only need a dat
 
 Only the block for the backend you chose is read. These are the defaults:
 
-::: code-group
+=== "SQLite"
 
-```hocon [SQLite]
-database {
-  backend = "sqlite"
-  sqlite {
-    path = "spyglass.db"   # inside plugins/Spyglass/
-  }
-}
-```
+    ```hocon
+    database {
+      backend = "sqlite"
+      sqlite {
+        path = "spyglass.db"   # inside plugins/Spyglass/
+      }
+    }
+    ```
 
-```hocon [MariaDB / MySQL]
-database {
-  backend = "mariadb"      # or "mysql"
-  mariadb {
-    host = "localhost"
-    port = 3306
-    database = "spyglass"
-    user = "root"
-    password = ""
-    ssl = false
-  }
-}
-```
+=== "MariaDB / MySQL"
 
-```hocon [MongoDB]
-database {
-  backend = "mongo"
-  mongo {
-    host = "localhost"
-    port = 27017
-    database = "Spyglass"
-    user = ""
-    password = ""
-    ssl = false
-    collection = "EventRecords"
-    # A full connection string (replica set, Atlas, advanced TLS).
-    # When set, it replaces the fields above.
-    uri = ""
-  }
-}
-```
+    ```hocon
+    database {
+      backend = "mariadb"      # or "mysql"
+      mariadb {
+        host = "localhost"
+        port = 3306
+        database = "spyglass"
+        user = "root"
+        password = ""
+        ssl = false
+      }
+    }
+    ```
 
-```hocon [ClickHouse]
-database {
-  backend = "clickhouse"
-  clickhouse {
-    host = "localhost"
-    port = 8123            # the HTTP port
-    database = "spyglass"
-    table = "event_records"
-    user = "default"
-    password = ""
-    ssl = false
-  }
-}
-```
+=== "MongoDB"
 
-:::
+    ```hocon
+    database {
+      backend = "mongo"
+      mongo {
+        host = "localhost"
+        port = 27017
+        database = "Spyglass"
+        user = ""
+        password = ""
+        ssl = false
+        collection = "EventRecords"
+        # A full connection string (replica set, Atlas, advanced TLS).
+        # When set, it replaces the fields above.
+        uri = ""
+      }
+    }
+    ```
+
+=== "ClickHouse"
+
+    ```hocon
+    database {
+      backend = "clickhouse"
+      clickhouse {
+        host = "localhost"
+        port = 8123            # the HTTP port
+        database = "spyglass"
+        table = "event_records"
+        user = "default"
+        password = ""
+        ssl = false
+      }
+    }
+    ```
 
 ## How long records are kept
 
-Records are deleted after **26 weeks** by default. Change it with `storage.retention`, or per event type. See [Configuration](../reference/configuration#storage).
+Records are deleted after **26 weeks** by default. Change it with `storage.retention`, or per event type. See [Configuration](../reference/configuration.md#storage).
 
 ## Moving to another database
 

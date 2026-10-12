@@ -6,11 +6,11 @@
 - **Java 25**
 - Optional: **WorldEdit** 7.3+ or **FastAsyncWorldEdit** 2.15+, to log WorldEdit edits and to search inside a selection
 
-You don't need a database server. Spyglass stores everything in a local SQLite file by default. See [Choosing a database](./databases) if you want something bigger.
+You don't need a database server. Spyglass stores everything in a local SQLite file by default. See [Choosing a database](databases.md) if you want something bigger.
 
-::: tip Minecraft 1.21.11
-Use [Spyglass 1.0.13](https://github.com/medievalrp-net/Spyglass/releases/tag/v1.0.13) (Java 21). 1.1 and later only run on Minecraft 26.x.
-:::
+!!! tip "Minecraft 1.21.11"
+
+    Use [Spyglass 1.0.13](https://github.com/medievalrp-net/Spyglass/releases/tag/v1.0.13) (Java 21). 1.1 and later only run on Minecraft 26.x.
 
 ## Download
 
@@ -30,16 +30,16 @@ Both behave the same. One jar works on every supported Minecraft version.
 3. Start the server. Spyglass creates `plugins/Spyglass/config.conf` and starts logging right away, using SQLite (`plugins/Spyglass/spyglass.db`).
 4. Check it's running: `/sg version`.
 
-That's it. Every command defaults to server operators. See [Permissions](../reference/permissions) to open them up to staff.
+That's it. Every command defaults to server operators. See [Permissions](../reference/permissions.md) to open them up to staff.
 
 ## Updating
 
 Stop the server, replace the old Spyglass jar with the new one, and start the server again. Your config and data carry over.
 
-Spyglass checks GitHub for new releases every six hours and tells operators in chat when one is out. It never downloads anything by itself. See [Reloading and updates](./maintenance).
+Spyglass checks GitHub for new releases every six hours and tells operators in chat when one is out. It never downloads anything by itself. See [Reloading and updates](maintenance.md).
 
 ## Next steps
 
-- [Quick start](./quick-start): your first lookup, search and rollback.
-- [Configuration](../reference/configuration): retention, default search radius, the wand item and more.
-- [Importing from CoreProtect](./coreprotect): bring your old history with you.
+- [Quick start](quick-start.md): your first lookup, search and rollback.
+- [Configuration](../reference/configuration.md): retention, default search radius, the wand item and more.
+- [Importing from CoreProtect](coreprotect.md): bring your old history with you.

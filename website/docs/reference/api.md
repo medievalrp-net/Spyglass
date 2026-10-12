@@ -6,34 +6,36 @@ Other plugins can record their own events into Spyglass, search the log, add sea
 
 The API is on Maven Central as `net.medievalrp:spyglass-api`. Use the version matching the Spyglass you build against, and mark it `compileOnly` (Gradle) or `provided` (Maven). The Spyglass plugin supplies it at runtime, and bundling it causes conflicts.
 
-::: code-group
+=== "Gradle (Kotlin)"
 
-```kotlin [Gradle (Kotlin)]
-repositories {
-    mavenCentral()
-}
+    ```kotlin
+    repositories {
+        mavenCentral()
+    }
 
-dependencies {
-    compileOnly("net.medievalrp:spyglass-api:1.1.1")
-}
-```
+    dependencies {
+        compileOnly("net.medievalrp:spyglass-api:1.1.1")
+    }
+    ```
 
-```groovy [Gradle (Groovy)]
-dependencies {
-    compileOnly 'net.medievalrp:spyglass-api:1.1.1'
-}
-```
+=== "Gradle (Groovy)"
 
-```xml [Maven]
-<dependency>
-    <groupId>net.medievalrp</groupId>
-    <artifactId>spyglass-api</artifactId>
-    <version>1.1.1</version>
-    <scope>provided</scope>
-</dependency>
-```
+    ```groovy
+    dependencies {
+        compileOnly 'net.medievalrp:spyglass-api:1.1.1'
+    }
+    ```
 
-:::
+=== "Maven"
+
+    ```xml
+    <dependency>
+        <groupId>net.medievalrp</groupId>
+        <artifactId>spyglass-api</artifactId>
+        <version>1.1.1</version>
+        <scope>provided</scope>
+    </dependency>
+    ```
 
 In your `plugin.yml`, add `softdepend: [Spyglass]` (or `depend` if your plugin needs it).
 

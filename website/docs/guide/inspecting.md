@@ -38,4 +38,4 @@ tool {
 }
 ```
 
-Both can be changed with [`/sg reload`](./maintenance) without a restart. Wands players already have keep working after you change the material.
+Both can be changed with [`/sg reload`](maintenance.md) without a restart. Wands players already have keep working after you change the material.

@@ -7,7 +7,7 @@
 | `/sg undo` | Reverses your last rollback or restore |
 | `/sg rbqueue` | Shows and manages running rollbacks |
 
-All need the `spyglass.rollback` permission. Rollback and restore use the same keys as [search](./searching).
+All need the `spyglass.rollback` permission. Rollback and restore use the same keys as [search](searching.md).
 
 ## Always search first
 
@@ -18,7 +18,7 @@ A rollback changes the world, so check what it matches before you run it:
 /sg rollback p:griefer t:6h r:100    # then roll it back
 ```
 
-The [same defaults](./searching#where-and-when-it-looks) apply: 250 blocks around you and the last 4 hours, unless you say otherwise. There's no size limit. Rollbacks run off the main thread, so the server keeps its TPS even for millions of blocks.
+The [same defaults](searching.md#where-and-when-it-looks) apply: 250 blocks around you and the last 4 hours, unless you say otherwise. There's no size limit. Rollbacks run off the main thread, so the server keeps its TPS even for millions of blocks.
 
 ## What gets rolled back
 
@@ -39,7 +39,7 @@ Each block is set back to its recorded state, whatever is there now. That's what
 
 The catch: if another player legitimately built in those same spots afterwards, the rollback overwrites their work too. Keep rollbacks tight with `p:`, `r:` and `t:`.
 
-If a rollback destroys a container that had items in it, those items aren't lost. They go to [salvage](./salvage).
+If a rollback destroys a container that had items in it, those items aren't lost. They go to [salvage](salvage.md).
 
 Water and lava aren't replayed block by block. After a rollback, they flow again naturally from the restored terrain.
 
@@ -53,7 +53,7 @@ Reverses your most recent rollback or restore. Run it again to keep going back, 
 
 - Undo works on **your own** operations from the **last 24 hours**. It's in-game only; rollbacks run from the console can't be undone with it.
 - There's no redo. To re-apply something you undid, run `/sg restore` with the original keys.
-- Items a rollback destroyed come back through [salvage](./salvage), not undo.
+- Items a rollback destroyed come back through [salvage](salvage.md), not undo.
 
 ## Restore
 
@@ -94,6 +94,6 @@ If the server crashes during a rollback, the job shows up as resumable after the
 /sg restore a:break t:1h -we
 ```
 
-::: tip Who gets blamed for explosions?
-TNT a player lit is logged as that player, so `p:<name>` covers the crater. TNT set off by redstone, dispensers or chain reactions, and mob explosions, are logged under their cause. Use `c:tnt` or `c:creeper`.
-:::
+!!! tip "Who gets blamed for explosions?"
+
+    TNT a player lit is logged as that player, so `p:<name>` covers the crater. TNT set off by redstone, dispensers or chain reactions, and mob explosions, are logged under their cause. Use `c:tnt` or `c:creeper`.

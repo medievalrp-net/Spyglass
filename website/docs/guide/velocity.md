@@ -19,9 +19,9 @@ It's **read-only**: it never logs anything and never rolls anything back. Each P
 
 SQLite only works if the proxy can reach the same file (same machine or a shared folder). For a real network, use MariaDB/MySQL, MongoDB or ClickHouse.
 
-::: info Getting the companion jar
-Releases from 1.1.1 on only include the Paper plugin. Build the companion from source with `./gradlew :spyglass-velocity:build`; the jar is in `spyglass-velocity/build/mc26.1.2/libs/`.
-:::
+!!! info "Getting the companion jar"
+
+    Releases from 1.1.1 on only include the Paper plugin. Build the companion from source with `./gradlew :spyglass-velocity:build`; the jar is in `spyglass-velocity/build/mc26.1.2/libs/`.
 
 ## Usage
 
@@ -33,4 +33,4 @@ The proxy uses its own command, `/sgv`, so it never hides the Paper `/sg` comman
 /sgv help
 ```
 
-It takes the same [search keys](../reference/query) as `/sg search`, plus `srv:` to pick a server. Needs `spyglass.search` on the proxy; `spyglass.search.ip` reveals IP addresses.
+It takes the same [search keys](../reference/query.md) as `/sg search`, plus `srv:` to pick a server. Needs `spyglass.search` on the proxy; `spyglass.search.ip` reveals IP addresses.

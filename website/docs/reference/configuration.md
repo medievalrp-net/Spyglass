@@ -1,12 +1,12 @@
 # Configuration
 
-Spyglass is configured in `plugins/Spyglass/config.conf`, created on first start. The file has comments explaining each setting. Some settings apply with [`/sg reload`](../guide/maintenance#reloading-the-config); the rest need a restart.
+Spyglass is configured in `plugins/Spyglass/config.conf`, created on first start. The file has comments explaining each setting. Some settings apply with [`/sg reload`](../guide/maintenance.md#reloading-the-config); the rest need a restart.
 
 Times are written like `"30s"`, `"4h"`, `"7d"` or `"26w"`. `"0"` or `"never"` means forever.
 
 ## Database
 
-Which storage to use, and how to connect. See [Choosing a database](../guide/databases).
+Which storage to use, and how to connect. See [Choosing a database](../guide/databases.md).
 
 ```hocon
 database {
@@ -31,7 +31,7 @@ database {
 
 ## Events
 
-One line per [event type](./events). You can turn any of them off, change the verb shown in results, or give it its own retention:
+One line per [event type](events.md). You can turn any of them off, change the verb shown in results, or give it its own retention:
 
 ```hocon
 events {
