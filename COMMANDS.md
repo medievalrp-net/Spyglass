@@ -20,6 +20,7 @@ Root command is `/spyglass`, aliased to `/sg` and (on by default) the single-let
 | `/sg snapshot <params>` | `snap` | `spyglass.snapshot` | View a player inventory or container as of a past instant (GUI, or a listing where there is no GUI) |
 | `/sg reload` | — | `spyglass.reload` | Reload supported live settings; reject restart-only changes |
 | `/sg version` | `ver` | `spyglass.use` | Show version and cached compatible update status |
+| `/sg stats` | `analytics` | `spyglass.use` | Disk-spill backlog, plus ingest stats when `analytics.enabled` is on |
 | `/sg tool` | `t`, `inspect` | `spyglass.tool` | Toggle the inspection wand |
 | `/sg import <file \| mysql <source>>` | - | `spyglass.import` | Import a CoreProtect database: a SQLite file from `plugins/Spyglass/import/`, or a live MySQL source defined in `import.conf` |
 | `/sg migrate <backend>` | - | `spyglass.migrate` | Copy every record from the active backend into another configured backend |
@@ -66,10 +67,11 @@ Values are plain terms. Wrap in double quotes to search for a value that contain
 | `ilore:` | `itemlore:`, `d:` | `ilore:cursed` · `ilore:"for the worthy"` | Item lore line (substring) |
 | `itags:` | `itag:` | `itags:deliver_letter` · `itags:"mmoitems:type"` | Item custom data / NBT (substring): vanilla `custom_data`, datapack, and plugin PDC values |
 | `ench:` | `enchant:`, `enchantment:`, `ienchant:`, `ienchantments:` | `ench:sharpness=5` | Item enchantment |
-| `cu:` | `custom:` | `cu:my-custom-item` | Item carries metadata: custom name, lore, enchants, or custom data |
+| `cu:` | `custom:` | `cu:y` · `cu:n` | Item has (`y`) or lacks (`n`) metadata: custom name, lore, enchants, or custom data |
 | `e:` | `entity:` | `e:creeper` | Entity type involved |
 | `c:` | `cause:` | `c:tnt,!creeper` | Change cause; `!cause` excludes |
 | `m:` | `message:` | `m:hello` | Chat, sign, or book text (substring) |
+| `content:` | - | `content:hello` · `content:/(spam\|scam)/` | Chat and command text; `/.../` is a case-insensitive regular expression |
 | `rcp:` | `recipient:` | `rcp:Steve` | Private-message recipient |
 | `r:` | `radius:` | `r:50` | Search radius around you in blocks. Default applies if omitted; use `-g` for global |
 | `cr:` | `chunkradius:` | `cr:1` · `cr:3` | Search radius in chunks, full height. `cr:1` = your chunk, `cr:2` = 3x3. Overrides the default radius |
@@ -90,7 +92,7 @@ Flags start with `-` and take no value unless noted.
 | `-we` | `-worldedit` | Use your active WorldEdit selection as the region |
 | `-ord:<asc\|desc>` | `-order:` | Search sort order (newest first by default). `-ord:asc` and `-ord=asc` both work. Rollback and restore ignore it: they force newest-first / oldest-first, or the apply order would corrupt the result |
 | `-ng` | `-nogroup` | Don't merge duplicate adjacent events in the result list |
-| `-nc` | `-nochat` | Don't echo the summary line to chat (action-bar only) |
+| `-nc` | `-nochat` | Leave chat messages out of the results |
 | `-ex` | `-extended` | Include extra detail columns in the result list |
 | `-nod:<keys>` | `-nodefault:` | Drop defaults. `-nod:r,t` (or `-nod=r,t`) runs with no radius or time bound |
 | `--containers` | `-containers` | Rollback/restore also touches containers. Without it, a rollback never places a container block, never overwrites a live one, and never reverts deposits/withdrawals |
@@ -176,7 +178,7 @@ If the server crashes mid-rollback, the job comes back as resumable on the next 
 
 When a force-overwrite rollback destroys a container that had items in it - a chest someone filled after the grief, restored back to stone - those items are **not lost**. The rollback captures the destroyed inventory first and files it under `/sg inventory`, gated behind its own `spyglass.salvage` node (granted independently of `spyglass.rollback`).
 
-On Minecraft 26.3, `/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. A container disappears from the GUI once emptied.
+`/sg inventory` (alias `inv`) opens a paginated GUI, grouped by rollback. The first screen lists each **rollback** that destroyed containers (operator, time, and how many containers); click one to see that rollback's **containers** (icons showing type and coordinates); click a container to open its **items**. The bottom row has Back / Previous / Next buttons - every level paginates (45 per page), so a rollback that wiped a 124-chest base browses cleanly. It is **extract-only**: take items out, but you cannot put any in. A container disappears from the GUI once emptied.
 
 Rollback salvage is inventory-only and requires an in-game player. Console/RCON receives an in-game-only error. There is no text listing or `/sg inventory <id>` recovery command. Missing or failing GUIs report an error without recovering items. Every GUI withdrawal is logged as a `salvage-withdraw` event (`/sg search a:salvage-withdraw`).
 

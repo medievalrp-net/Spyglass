@@ -37,3 +37,8 @@ coreprotect-test/
 
 # Python release-packaging test cache
 __pycache__/
+
+# Docs website build output
+website/node_modules/
+website/.vitepress/cache/
+website/.vitepress/dist/

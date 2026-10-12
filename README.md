@@ -8,7 +8,7 @@ A standalone CLI imports existing CoreProtect databases into Spyglass — see [`
 
 Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
 
-**Docs:** [Commands & query reference](COMMANDS.md) · [Live config & updates](docs/live-configuration-and-updates.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
+**Docs:** [Documentation site](https://medievalrp-net.github.io/Spyglass/) · [Commands & query reference](COMMANDS.md) · [Live config & updates](docs/live-configuration-and-updates.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
 
 ## Sponsors
 
