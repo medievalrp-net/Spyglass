@@ -682,6 +682,53 @@ class ClickHouseRecordStoreIT {
     }
 
     @Test
+    void queryPageCopiesEveryEventTypeWithItsFields() {
+        // /sg migrate copies a store through queryPage. Sharing the
+        // rollback stream's rollbackable-only filter and trimmed columns
+        // dropped chat (and every other non-block event) when migrating
+        // out of ClickHouse.
+        Instant base = Instant.now().minusSeconds(600);
+        BlockLocation location = new BlockLocation(WORLD, "world", 1, 64, 1);
+        BlockSnapshot stone = new BlockSnapshot(
+                org.bukkit.Material.STONE, "minecraft:stone",
+                List.of(), List.of(), List.of(), List.of(), null);
+        BlockSnapshot air = new BlockSnapshot(
+                org.bukkit.Material.AIR, "minecraft:air",
+                List.of(), List.of(), List.of(), List.of(), null);
+        Origin origin = Origin.player();
+        Source source = Source.player(ALICE, "Alice");
+        List<EventRecord> saved = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            saved.add(new ChatRecord(UUID.randomUUID(), "say", base.plusSeconds(2 * i),
+                    base.plusSeconds(7200), origin, source, location, "test", "Alice",
+                    "hello " + i, List.of(), Map.of()));
+            saved.add(new BlockPlaceRecord(UUID.randomUUID(), "place", base.plusSeconds(2 * i + 1),
+                    base.plusSeconds(7200), origin, source, location, "test", "STONE", air, stone));
+        }
+        store.save(saved);
+        flushAsyncInserts();
+
+        QueryRequest copyAll = new QueryRequest(List.of(), Sort.OLDEST_FIRST,
+                Integer.MAX_VALUE, EnumSet.noneOf(Flag.class), false);
+        List<EventRecord> copied = new java.util.ArrayList<>();
+        QueryPage.Cursor cursor = null;
+        do {
+            QueryPage page = store.queryPage(copyAll, cursor, 3);
+            copied.addAll(page.records());
+            cursor = page.next();
+        } while (cursor != null);
+
+        // The store assigns its own ids, so compare by event and order.
+        assertThat(copied).extracting(EventRecord::event)
+                .containsExactlyElementsOf(saved.stream().map(EventRecord::event).toList());
+        assertThat(copied).filteredOn(ChatRecord.class::isInstance)
+                .extracting(r -> ((ChatRecord) r).message())
+                .containsExactly("hello 0", "hello 1", "hello 2", "hello 3", "hello 4");
+        assertThat(copied).filteredOn(BlockPlaceRecord.class::isInstance)
+                .allSatisfy(r -> assertThat(((BlockPlaceRecord) r).newBlock()).isNotNull());
+    }
+
+    @Test
     void streamRollbackEffectsDecodesSimpleBlocksLeanly() {
         // #67: the rollback engine reads via streamRollbackEffects. A simple
         // block-replace must arrive as primitives (block-data + expected),

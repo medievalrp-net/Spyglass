@@ -580,8 +580,13 @@ public final class ClickHouseRecordStore implements RecordStore {
 
     @Override
     public QueryPage queryPage(QueryRequest request, QueryPage.Cursor cursor, int pageSize) {
+        // Every event type, every column: /sg migrate copies a whole store
+        // through here, so it must not share streamRollback's rollbackable
+        // -only filter and trimmed SELECT - those dropped chat, commands,
+        // joins and the rest when migrating out of ClickHouse.
         List<EventRecord> records = new ArrayList<>(Math.min(pageSize, 4096));
-        QueryPage.Cursor next = streamRollback(request, cursor, pageSize, records::add);
+        String sql = buildPageSql(fullSelect, request, cursor, pageSize, false);
+        QueryPage.Cursor next = streamRecords(sql, pageSize, records::add);
         return new QueryPage(records, next);
     }
 
@@ -606,8 +611,14 @@ public final class ClickHouseRecordStore implements RecordStore {
         //      damage/projectile/dismount/name). Cuts the network
         //      response ~3x on block-heavy rollbacks and the
         //      decodeRow cost in lockstep.
-        String sql = buildRollbackSql(rollbackSelect, request, cursor, windowLimit);
+        String sql = buildPageSql(rollbackSelect, request, cursor, windowLimit, true);
+        return streamRecords(sql, windowLimit, sink);
+    }
 
+    // Keyset-streamed read of decoded records, shared by queryPage and
+    // streamRollback; returns the cursor for the next window, or null once
+    // a window comes back short.
+    private QueryPage.Cursor streamRecords(String sql, int windowLimit, RecordSink sink) {
         // Streaming reader — pulls rows from CH as they arrive instead
         // of materializing every GenericRecord up front. The OOM at
         // 1M-row pageSize was the queryAll() materialization step
@@ -665,8 +676,8 @@ public final class ClickHouseRecordStore implements RecordStore {
         // rollback reads only before_* block columns, a restore only after_*
         // — halving the per-row LowCardinality string churn that, left
         // unchecked, fills eden and triggers a young GC mid-rollback.
-        String sql = buildRollbackSql(rollback ? rollbackReadSelect : restoreReadSelect,
-                request, cursor, windowLimit);
+        String sql = buildPageSql(rollback ? rollbackReadSelect : restoreReadSelect,
+                request, cursor, windowLimit, true);
         Instant lastOccurred = null;
         UUID lastId = null;
         int rowCount = 0;
@@ -699,12 +710,13 @@ public final class ClickHouseRecordStore implements RecordStore {
                 : null;
     }
 
-    // Shared rollback SQL: rollbackable-event filter, keyset cursor in the
-    // configured sort direction, and the spill-to-disk SETTINGS that keep a
-    // large LIMIT under CH's default 1 GiB per-query budget. The only
-    // difference between the record and effect readers is the column list.
-    private String buildRollbackSql(String select, QueryRequest request,
-                                    QueryPage.Cursor cursor, int windowLimit) {
+    // Shared keyset-page SQL: keyset cursor in the configured sort direction
+    // and the spill-to-disk SETTINGS that keep a large LIMIT under CH's
+    // default 1 GiB per-query budget. The rollback readers add the
+    // rollbackable-event filter and differ only in their column lists.
+    private String buildPageSql(String select, QueryRequest request,
+                                QueryPage.Cursor cursor, int windowLimit,
+                                boolean rollbackableOnly) {
         StringBuilder sql = new StringBuilder("SELECT ")
                 .append(select)
                 .append(" FROM ").append(qualifiedTable);
@@ -716,21 +728,24 @@ public final class ClickHouseRecordStore implements RecordStore {
         String where = predicateToSql.translate(predicates);
         boolean newestFirst = request.sort() != Sort.OLDEST_FIRST;
         String op = newestFirst ? "<" : ">";
+        List<String> conditions = new ArrayList<>();
         if (!where.isEmpty()) {
-            sql.append(" WHERE ").append(where);
-            sql.append(" AND ").append(ROLLBACKABLE_EVENT_FILTER);
-        } else {
-            sql.append(" WHERE ").append(ROLLBACKABLE_EVENT_FILTER);
+            conditions.add(where);
+        }
+        if (rollbackableOnly) {
+            conditions.add(ROLLBACKABLE_EVENT_FILTER);
         }
         if (cursor != null) {
-            sql.append(" AND ");
             // v2 ids are UInt64 sequences; the cursor UUID maps back
             // through EventIds at this boundary.
-            sql.append("(occurred, id) ").append(op).append(" (")
-                    .append(chTimestamp(cursor.occurred())).append(", ")
-                    .append(Long.toUnsignedString(
-                            net.medievalrp.spyglass.api.util.EventIds.sequenceOf(cursor.id())))
-                    .append(")");
+            conditions.add("(occurred, id) " + op + " ("
+                    + chTimestamp(cursor.occurred()) + ", "
+                    + Long.toUnsignedString(
+                            net.medievalrp.spyglass.api.util.EventIds.sequenceOf(cursor.id()))
+                    + ")");
+        }
+        if (!conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conditions));
         }
         sql.append(" ORDER BY occurred ").append(newestFirst ? "DESC" : "ASC")
                 .append(", id ").append(newestFirst ? "DESC" : "ASC")
