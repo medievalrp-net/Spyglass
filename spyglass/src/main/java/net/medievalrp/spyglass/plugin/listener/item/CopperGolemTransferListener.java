@@ -29,7 +29,8 @@ public final class CopperGolemTransferListener implements RecordingListener {
     private final RecordingSupport support;
     private final Map<UUID, Watch> watches = new HashMap<>();
     private final Map<UUID, Frame> frames = new HashMap<>();
-    private final Set<BlockLocation> contaminated = new HashSet<>();
+    // Written from every world thread under Leaf parallel world ticking.
+    private final Set<BlockLocation> contaminated = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public CopperGolemTransferListener(Recorder recorder, RecordingSupport support) {
         this.recorder = recorder; this.support = support;
