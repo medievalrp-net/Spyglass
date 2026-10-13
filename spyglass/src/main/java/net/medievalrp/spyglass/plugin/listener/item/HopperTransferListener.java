@@ -23,14 +23,13 @@ import net.medievalrp.spyglass.plugin.util.BlockLocations;
 import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.block.Chest;
 import org.bukkit.block.Container;
-import org.bukkit.block.DoubleChest;
 import org.bukkit.entity.Entity;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -327,25 +326,33 @@ public final class HopperTransferListener implements RecordingListener {
      * queries see transfer and click records in the same coordinate space.
      * (Shared-resolver unification with the container listeners is deferred
      * until #353 lands; this mirrors its mapping.)
+     *
+     * <p>Hot path (every hopper move): never build a BlockState, which
+     * snapshots the whole inventory - halves come from the inventory itself
+     * and the holder is fetched without a snapshot.
      */
     private EndpointTarget resolveTarget(Inventory inventory, BlockLocation fallback) {
+        if (inventory instanceof DoubleChestInventory doubleChest) {
+            Inventory left = doubleChest.getLeftSide();
+            Inventory right = doubleChest.getRightSide();
+            Location leftLoc = left.getLocation();
+            Location rightLoc = right.getLocation();
+            if (leftLoc != null && rightLoc != null) {
+                BlockLocation leftAt = BlockLocations.fromLocation(leftLoc);
+                String leftType = leftLoc.getBlock().getType().name();
+                BlockLocation rightAt = BlockLocations.fromLocation(rightLoc);
+                String rightType = rightLoc.getBlock().getType().name();
+                int leftSize = left.getSize();
+                return slot -> slot >= leftSize
+                        ? new SlotTarget(rightAt, rightType, slot - leftSize)
+                        : new SlotTarget(leftAt, leftType, slot);
+            }
+        }
         InventoryHolder holder = null;
         try {
-            holder = inventory.getHolder();
+            holder = inventory.getHolder(false);
         } catch (RuntimeException ignored) {
             // A broken third-party inventory: fall through to the location.
-        }
-        if (holder instanceof DoubleChest doubleChest
-                && doubleChest.getLeftSide() instanceof Chest left
-                && doubleChest.getRightSide() instanceof Chest right) {
-            BlockLocation leftAt = BlockLocations.fromLocation(left.getBlock().getLocation());
-            String leftType = left.getBlock().getType().name();
-            BlockLocation rightAt = BlockLocations.fromLocation(right.getBlock().getLocation());
-            String rightType = right.getBlock().getType().name();
-            int leftSize = left.getBlockInventory().getSize();
-            return slot -> slot >= leftSize
-                    ? new SlotTarget(rightAt, rightType, slot - leftSize)
-                    : new SlotTarget(leftAt, leftType, slot);
         }
         if (holder instanceof Container blockContainer) {
             BlockLocation at = BlockLocations.fromLocation(blockContainer.getBlock().getLocation());

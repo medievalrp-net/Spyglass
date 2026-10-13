@@ -20,9 +20,8 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.Chest;
-import org.bukkit.block.DoubleChest;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.Test;
@@ -202,9 +201,7 @@ class HopperTransferListenerTest {
         // A hopper pulling from a double chest sees the combined 54-slot
         // inventory; raw slot 30 must attribute to the right half's block at
         // its local slot 3, the click listener's mapping.
-        Inventory source = inventory(64, 54);
-        DoubleChest holder = doubleChestHolder();
-        when(source.getHolder()).thenReturn(holder);
+        DoubleChestInventory source = doubleChest();
         ItemStack hoisted14 = mockStack(Material.COBBLESTONE, 4);
         when(source.getItem(30)).thenReturn(hoisted14);
         Inventory dest = inventory(63, 5);
@@ -221,6 +218,9 @@ class HopperTransferListenerTest {
         ContainerWithdrawRecord out = (ContainerWithdrawRecord) find("transfer-withdraw");
         assertThat(out.location().x()).as("right-half block").isEqualTo(2);
         assertThat(out.slot()).as("re-based local slot").isEqualTo(3);
+        assertThat(out.containerType()).isEqualTo("CHEST");
+        verify(source, never()).getHolder();
+        verify(source, never()).getHolder(true);
     }
 
     // ── fixtures ─────────────────────────────────────────────────
@@ -273,28 +273,30 @@ class HopperTransferListenerTest {
         return event;
     }
 
-    private DoubleChest doubleChestHolder() {
+    /** A 54-slot double chest at y=64 whose halves sit at x=1 and x=2. */
+    private DoubleChestInventory doubleChest() {
+        DoubleChestInventory inv = mock(DoubleChestInventory.class);
         when(world.getUID()).thenReturn(WORLD_ID);
         when(world.getName()).thenReturn("world");
-        Chest left = chestHalf(1);
-        Chest right = chestHalf(2);
-        DoubleChest doubleChest = mock(DoubleChest.class);
-        when(doubleChest.getLeftSide()).thenReturn(left);
-        when(doubleChest.getRightSide()).thenReturn(right);
-        return doubleChest;
+        when(inv.getLocation()).thenReturn(new Location(world, 1.5, 64, 2));
+        when(inv.getSize()).thenReturn(54);
+        Inventory left = chestHalf(1);
+        Inventory right = chestHalf(2);
+        when(inv.getLeftSide()).thenReturn(left);
+        when(inv.getRightSide()).thenReturn(right);
+        return inv;
     }
 
     /** A 27-slot chest block at the given x, one half of a double chest. */
-    private Chest chestHalf(int x) {
+    private Inventory chestHalf(int x) {
+        Location at = new Location(world, x, 64, 2);
         org.bukkit.block.Block block = mock(org.bukkit.block.Block.class);
-        when(block.getLocation()).thenReturn(new Location(world, x, 64, 2));
         when(block.getType()).thenReturn(Material.CHEST);
-        Inventory blockInv = mock(Inventory.class);
-        when(blockInv.getSize()).thenReturn(27);
-        Chest chest = mock(Chest.class);
-        when(chest.getBlock()).thenReturn(block);
-        when(chest.getBlockInventory()).thenReturn(blockInv);
-        return chest;
+        when(world.getBlockAt(at)).thenReturn(block);
+        Inventory half = mock(Inventory.class);
+        when(half.getLocation()).thenReturn(at);
+        when(half.getSize()).thenReturn(27);
+        return half;
     }
 
     /** A mutable, self-cloning stack mock: the listener's drain-time
