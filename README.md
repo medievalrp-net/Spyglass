@@ -69,10 +69,10 @@ A live [spark profile](https://spark.lucko.me/5JzJrfOmaM) of Spyglass running in
 | TPS during a 2M rollback | **20.0, flat** | dips to ~13 |
 | Worst single tick | **~100 ms** | up to ~900 ms |
 | Automatic data pruning | ✓ |  |
-| Storage engines | SQLite, MongoDB, ClickHouse, MariaDB/MySQL | SQLite, MySQL |
+| Storage engines | ClickHouse, SQLite, MariaDB/MySQL, MongoDB | SQLite, MySQL |
 | Minecraft versions | 26.1.2 / 26.2 / 26.3 | 1.7+ |
 
-Spyglass runs on SQLite, MongoDB, ClickHouse, or MariaDB/MySQL. The embedded SQLite backend needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; MongoDB, ClickHouse, and MariaDB/MySQL are there when you outgrow it or already run one.
+We recommend ClickHouse: it gives the fastest rollbacks and the smallest storage. Spyglass also runs on SQLite, MariaDB/MySQL and MongoDB. The embedded SQLite backend is the default and needs no external database, so the zero-ops install CoreProtect offers is available on Spyglass too; move to ClickHouse any time with `/sg migrate clickhouse`.
 
 ## Supported releases
 
@@ -85,10 +85,10 @@ Download `Spyglass-<version>.jar` (or `-shaded.jar` if your host can't download 
 - Paper 26.1.2, 26.2 or 26.3
 - Java 25
 - A database, one of:
-  - Embedded SQLite, no external database (the default); writes to a file under the plugin folder
-  - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
-  - ClickHouse (set `database.backend = "clickhouse"`)
+  - **ClickHouse (recommended)** (set `database.backend = "clickhouse"`): the fastest rollbacks and the smallest storage. See [setting up ClickHouse](https://medievalrp-net.github.io/Spyglass/guide/databases/#setting-up-clickhouse)
+  - Embedded SQLite, no external database (the default, so Spyglass works out of the box); writes to a file under the plugin folder
   - MariaDB or MySQL (set `database.backend = "mariadb"`, or `"mysql"`) at `localhost:3306`
+  - MongoDB (set `database.backend = "mongo"`) at `mongodb://localhost:27017`
 - Optional: WorldEdit 7.3+ or FastAsyncWorldEdit 2.15+ for WorldEdit-edit capture and `-we` queries. Capture hooks the edit-session pipeline, not command names, so every block-mutating operation is recorded - `//set`, `//replace`, `//walls`, `//overlay`, `//paste`, schematic paste, brushes, generation, `//move`/`//stack`, and `//undo`/`//redo` alike - for player and non-player (console/plugin) edits
 
 ## Commands

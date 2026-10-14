@@ -4,9 +4,10 @@
 
 - **Paper** 26.1.2, 26.2 or 26.3
 - **Java 25**
+- Recommended: a **ClickHouse** server for storage
 - Optional: **WorldEdit** 7.3+ or **FastAsyncWorldEdit** 2.15+, to log WorldEdit edits and to search inside a selection
 
-You don't need a database server. Spyglass stores everything in a local SQLite file by default. See [Choosing a database](databases.md) if you want something bigger.
+Spyglass works without a database server: until you set one up, it stores everything in a local SQLite file. For the fastest rollbacks and the smallest storage, we recommend [setting up ClickHouse](databases.md#setting-up-clickhouse).
 
 !!! tip "Minecraft 1.21.11"
 
@@ -40,6 +41,7 @@ Spyglass checks GitHub for new releases every six hours and tells operators in c
 
 ## Next steps
 
+- [Set up ClickHouse](databases.md#setting-up-clickhouse), our recommended database.
 - [Quick start](quick-start.md): your first lookup, search and rollback.
 - [Configuration](../reference/configuration.md): retention, default search radius, the wand item and more.
 - [Importing from CoreProtect](coreprotect.md): bring your old history with you.

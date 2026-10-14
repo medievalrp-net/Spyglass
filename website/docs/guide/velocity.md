@@ -17,7 +17,7 @@ It's **read-only**: it never logs anything and never rolls anything back. Each P
 2. Install the companion jar in the proxy's `plugins/` folder and start the proxy once. It creates `plugins/spyglass/config.conf`.
 3. Copy the `database` block from a Paper server's `config.conf` into it and restart the proxy.
 
-SQLite only works if the proxy can reach the same file (same machine or a shared folder). For a real network, use MariaDB/MySQL, MongoDB or ClickHouse.
+SQLite only works if the proxy can reach the same file (same machine or a shared folder). For a real network, use ClickHouse (recommended), MariaDB/MySQL or MongoDB.
 
 !!! info "Getting the companion jar"
 

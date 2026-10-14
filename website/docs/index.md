@@ -33,11 +33,11 @@ Logging and rollback for Paper 26.1.2, 26.2 and 26.3. See who changed what, sear
 
     Items a rollback destroyed go to a recovery menu, and you can see any player's inventory or chest as it was in the past.
 
--   :lucide-database: __Your choice of database__
+-   :lucide-database: __Built for ClickHouse__
 
     ---
 
-    Built-in SQLite with zero setup, or MongoDB, ClickHouse, MariaDB or MySQL. Move between them with one command.
+    Our recommended database, for the fastest rollbacks and the smallest storage. SQLite works with zero setup, and MongoDB, MariaDB and MySQL are supported too.
 
 -   :lucide-import: __Easy switch from CoreProtect__
 

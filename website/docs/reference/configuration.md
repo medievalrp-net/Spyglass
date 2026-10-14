@@ -6,15 +6,15 @@ Times are written like `"30s"`, `"4h"`, `"7d"` or `"26w"`. `"0"` or `"never"` me
 
 ## Database
 
-Which storage to use, and how to connect. See [Choosing a database](../guide/databases.md).
+Which storage to use, and how to connect. ClickHouse is recommended; see [Choosing a database](../guide/databases.md).
 
 ```hocon
 database {
-  backend = "sqlite"   # "sqlite", "mariadb", "mysql", "mongo" or "clickhouse"
+  backend = "sqlite"   # "clickhouse" (recommended), "sqlite", "mariadb", "mysql" or "mongo"
+  clickhouse { ... }
   sqlite { ... }
   mariadb { ... }
   mongo { ... }
-  clickhouse { ... }
 }
 ```
 

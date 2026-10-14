@@ -6,7 +6,7 @@ Needs the `spyglass.import` permission. Works with CoreProtect 20 and newer.
 
 ## Before you start
 
-1. Install Spyglass and pick your [database](databases.md).
+1. Install Spyglass and set up your [database](databases.md). ClickHouse is recommended, and imports into it take minutes instead of hours.
 2. **Check `storage.retention`.** Imported records older than it are deleted after the import. To keep everything, set it first and restart:
 
    ```hocon

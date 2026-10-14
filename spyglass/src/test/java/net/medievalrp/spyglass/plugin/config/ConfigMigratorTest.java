@@ -177,7 +177,7 @@ class ConfigMigratorTest {
         // rebuild from the template rather than editing the old file in place.
         String written = Files.readString(file);
         assertThat(written).contains("Storage backend");
-        assertThat(written).contains("recommended for large servers");
+        assertThat(written).contains("\"clickhouse\" - recommended");
     }
 
     // The upgrade the #307/#312 removals lean on: a 1.0.8 operator who opted
