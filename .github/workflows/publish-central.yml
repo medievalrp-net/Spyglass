@@ -55,7 +55,7 @@ jobs:
           DEPLOYMENT_ID: ${{ inputs.deployment_id }}
         run: |
           test -n "$CENTRAL_PORTAL_USERNAME" || {
-            echo "CENTRAL_PORTAL_USERNAME is not set - see PUBLISHING.md."; exit 1;
+            echo "CENTRAL_PORTAL_USERNAME is not set - see .github/PUBLISHING.md."; exit 1;
           }
           if ! printf '%s' "$DEPLOYMENT_ID" | grep -Eq \
             '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then

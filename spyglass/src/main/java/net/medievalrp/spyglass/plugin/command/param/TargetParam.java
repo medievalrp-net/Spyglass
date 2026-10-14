@@ -14,7 +14,7 @@ import org.bukkit.command.CommandSender;
  * <ul>
  *   <li>{@code trg:x,y,z} - exact block coordinates. Pins the query to
  *       that single cell (and suppresses the default radius via the
- *       parser's location-bound detection), which is what COMMANDS.md
+ *       parser's location-bound detection), which is what the docs site
  *       and the inspection-wand hint always promised (#305).</li>
  *   <li>{@code trg:chest} - case-insensitive substring regex against
  *       the record's {@code target} field. General-purpose fallback for

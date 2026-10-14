@@ -61,10 +61,43 @@ Importing the same source twice is refused. Add `--confirm` to import anyway; re
 
 ## What's imported
 
-Block changes, kills, logins and logouts, chat, commands, container deposits and withdrawals, and item drops and pickups. The full table-by-table coverage is in the [importer notes](https://github.com/medievalrp-net/Spyglass/blob/main/docs/importer.md).
+Block changes, kills, logins and logouts, chat, commands, container deposits and withdrawals, and item drops and pickups.
+
+A few things CoreProtect records don't carry over:
+
+- **Sign edits** made in place. Signs that were placed or broken are imported, with their text.
+- **Rare item actions** beyond drops and pickups, usually under 1% of CoreProtect's item records. The import summary counts what it skipped.
+- **IP addresses.** CoreProtect never stores them, so imported logins have none.
+- **CoreProtect's own rollbacks.** Imported records are history only and don't replay through Spyglass rollbacks.
 
 When you're happy with the result, remove CoreProtect.
 
-??? note "Importing without a running server"
+## Importing without a running server
 
-    A standalone command-line importer can import offline and audit that every CoreProtect row arrived. See the [CoreProtect migration runbook](https://github.com/medievalrp-net/Spyglass/blob/main/docs/migration-from-coreprotect.md).
+A standalone command-line importer imports into ClickHouse while the server is offline, and can check that every CoreProtect row arrived. Build it from the repository:
+
+```
+./gradlew :spyglass-importer:shadowJar
+```
+
+Copy your world folders somewhere the importer can read them (it needs each world's `uid.dat`), then try a dry run:
+
+```
+java -jar spyglass-importer/build/libs/spyglass-importer-*.jar import \
+    --source ./database.db \
+    --worlds-dir ./worlds-for-import \
+    --server-name survival \
+    --clickhouse-host localhost \
+    --dry-run
+```
+
+Drop `--dry-run` to import for real. Use the same `--server-name` as `server.name` in Spyglass's `config.conf`, so imported and new records show up together. Then compare row counts with CoreProtect:
+
+```
+java -jar spyglass-importer/build/libs/spyglass-importer-*.jar validate \
+    --coreprotect-sqlite ./database.db \
+    --clickhouse-host localhost \
+    --server-name survival
+```
+
+Running the import again is safe: duplicate rows collapse instead of doubling.

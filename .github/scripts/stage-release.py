@@ -5,7 +5,7 @@ import zipfile
 
 # The one released build: it runs on its target and every newer supported version.
 TARGET = "26.1.2"
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 version = next(line.split("=", 1)[1].strip() for line in
                (root / "gradle.properties").read_text(encoding="utf-8").splitlines()
                if line.startswith("version="))

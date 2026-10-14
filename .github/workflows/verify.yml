@@ -21,7 +21,7 @@ jobs:
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
       - name: Test release packaging
-        run: python3 -m unittest discover -s scripts/tests
+        run: python3 -m unittest discover -s .github/scripts/tests
       - name: Build and test
         run: ./gradlew build -PminecraftTarget=${{ matrix.minecraft }} --no-daemon
       - uses: actions/upload-artifact@v4

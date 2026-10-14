@@ -4,11 +4,11 @@
 # EditSessions (#105), so a console //set is a real, rollbackable edit with no
 # player. Isolated ports (25599/25579) - never touches the live RP_Server.
 #
-# Usage: scripts/worldedit-rollback-test.sh <jar> <version> [sqlite|mongo|clickhouse]
+# Usage: regression/scripts/worldedit-rollback-test.sh <jar> <version> [sqlite|mongo|clickhouse]
 set -u
 JAR_IN="${1:?jar}"; V="${2:?version}"; BE="${3:-sqlite}"
 JAR="$(cd "$(dirname "$JAR_IN")" && pwd)/$(basename "$JAR_IN")"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="${BOOT_SMOKE_DIR:-/Volumes/External-NVME/tmp-bootmatrix}"
 WE_JAR="$WORK/worldedit.jar"
 pj="$WORK/paper-cache/paper-$V.jar"

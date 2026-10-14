@@ -1,7 +1,6 @@
-> Modern releases publish one API build, compiled for Minecraft 26.1.2 (the default
-> target), under the plain version: `net.medievalrp:spyglass-api:1.1.1`. Other targets
-> carry a `-mc<target>` suffix and are not published. See
-> [versioned builds](docs/versioned-builds.md) for the release workflow.
+> Releases publish one API build, compiled for Minecraft 26.1.2, under the plain
+> version (`net.medievalrp:spyglass-api:1.1.1`). The release itself is
+> [`workflows/release.yml`](workflows/release.yml).
 
 # Publishing spyglass-api to Maven Central
 

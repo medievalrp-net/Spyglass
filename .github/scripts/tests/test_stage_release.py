@@ -12,11 +12,10 @@ class StageReleaseTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        (self.root / "scripts").mkdir()
-        self.script = self.root / "scripts/stage-release.py"
+        (self.root / ".github/scripts").mkdir(parents=True)
+        self.script = self.root / ".github/scripts/stage-release.py"
         self.script.write_bytes(SCRIPT.read_bytes())
         (self.root / "gradle.properties").write_text("version=1.1.1\n")
-        (self.root / ".github").mkdir()
         (self.root / ".github/release-notes.md").write_text("- A fix.\n")
         for name in ("Spyglass-1.1.1.jar", "Spyglass-1.1.1-shaded.jar", "Spyglass-1.1.1-thin.jar",
                      "Spyglass-1.1.1-sources.jar"):

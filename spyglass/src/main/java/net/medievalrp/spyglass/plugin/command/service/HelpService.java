@@ -13,7 +13,7 @@ public final class HelpService {
     }
 
     // Every registered command, in rough workflow order (#249). Keep this in
-    // lockstep with SpyglassCommands registrations and COMMANDS.md - a
+    // lockstep with SpyglassCommands registrations and the docs site's command list - a
     // command an operator can't discover here may as well not exist.
     private static final Entry[] ENTRIES = new Entry[]{
             // Page 1: the daily commands (the classic help screen).

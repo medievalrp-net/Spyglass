@@ -9,7 +9,7 @@
 // loop. Exits 0 on all-pass, 1 on a failed check, 2 on a harness error.
 //
 // Env: BOT_VERSION (e.g. 1.21.8), BOT_NAME. Server must be on 127.0.0.1:25566
-// with RCON on 25576 (pass test123) - see scripts/gameplay-test.sh.
+// with RCON on 25576 (pass test123) - see regression/scripts/gameplay-test.sh.
 import mineflayer from 'mineflayer';
 import {
     HOST, PORT,

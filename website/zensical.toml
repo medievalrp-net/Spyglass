@@ -37,6 +37,9 @@ nav = [
     "reference/events.md",
     "reference/api.md",
   ] },
+  { "Project" = [
+    "project/ai-policy.md",
+  ] },
 ]
 
 [project.theme]

@@ -38,7 +38,7 @@ import org.jetbrains.annotations.ApiStatus;
  * built against paper-api only, resolved once, and on lookup failure
  * every pass is a no-op (the pre-#270 behavior) with one WARN.
  *
- * <p>Known limitation, documented in COMMANDS.md: re-simulation drives
+ * <p>Known limitation, documented on the docs site: re-simulation drives
  * water to its natural equilibrium for the restored terrain, which is
  * not necessarily the exact fluid layout at the rollback timestamp -
  * flow was never recorded (deliberately: per-cell-per-tick volume, see

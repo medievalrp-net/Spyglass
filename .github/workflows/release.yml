@@ -38,7 +38,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.release.outputs.publish == 'true'
       - name: Test release packaging
-        run: python3 -m unittest discover -s scripts/tests
+        run: python3 -m unittest discover -s .github/scripts/tests
       - name: Build and test
         if: steps.release.outputs.publish == 'true'
         # The 26.1.2 build runs on every supported version; it is the release.
@@ -46,7 +46,7 @@ jobs:
           ./gradlew build -PminecraftTarget=26.1.2 --no-daemon --stacktrace
       - name: Stage release assets
         if: steps.release.outputs.publish == 'true'
-        run: python3 scripts/stage-release.py
+        run: python3 .github/scripts/stage-release.py
       - name: Create or resume draft at this exact commit
         if: steps.release.outputs.publish == 'true'
         env:

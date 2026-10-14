@@ -37,7 +37,7 @@ class TargetParamTest {
                 .isInstanceOf(ParamParseException.class);
     }
 
-    // trg:x,y,z is the coordinate form COMMANDS.md documents (#305):
+    // trg:x,y,z is the coordinate form the docs site documents (#305):
     // point ranges on location.*, so the parser's location-bound
     // detection suppresses the default radius.
     @Test

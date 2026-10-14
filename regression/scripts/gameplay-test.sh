@@ -3,12 +3,12 @@
 # gameplay+rollback scenario bot against it, capture PASS/FAIL, stop the server.
 # Reuses the Paper jar cached by boot-smoke.sh. Never touches the live RP_Server.
 #
-# Usage: scripts/gameplay-test.sh <jar> <version> [sqlite|mongo|clickhouse]
+# Usage: regression/scripts/gameplay-test.sh <jar> <version> [sqlite|mongo|clickhouse]
 set -u
 JAR_IN="${1:?usage: gameplay-test.sh <jar> <version> [backend]}"
 V="${2:?version}"; BE="${3:-sqlite}"
 JAR="$(cd "$(dirname "$JAR_IN")" && pwd)/$(basename "$JAR_IN")"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="${BOOT_SMOKE_DIR:-/Volumes/External-NVME/tmp-bootmatrix}"
 pj="$WORK/paper-cache/paper-$V.jar"
 [ -s "$pj" ] || { echo "FAIL  $V  $BE  no cached paper jar (run boot-smoke first)"; exit 2; }

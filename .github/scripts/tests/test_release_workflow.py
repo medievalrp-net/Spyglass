@@ -7,7 +7,7 @@ import tempfile
 import textwrap
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 BASH = shutil.which("bash")
 if os.name == "nt":
     BASH = "C:/Program Files/Git/bin/bash.exe"
