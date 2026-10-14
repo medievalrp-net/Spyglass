@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/logo.jpg" alt="Spyglass" width="128">
+  <img src=".github/assets/logo.jpg" alt="Spyglass" width="256">
 </p>
 
 <h1 align="center">Spyglass</h1>
