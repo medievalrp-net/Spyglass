@@ -20,9 +20,8 @@ import net.medievalrp.spyglass.plugin.pipeline.Recorder;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.Chest;
-import org.bukkit.block.DoubleChest;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.Test;
@@ -48,7 +47,6 @@ class HopperTransferListenerTest {
     private final CapturingRecorder recorder = new CapturingRecorder();
     private final RecordingSupport support = new RecordingSupport(Duration.parse("4w"), "test");
     private final List<Runnable> serializer = new ArrayList<>();
-    private final List<Runnable> nextTick = new ArrayList<>();
     // Strong ref so Location's weak World reference can't be collected mid-test.
     private final World world = mock(World.class);
 
@@ -64,14 +62,13 @@ class HopperTransferListenerTest {
 
         // Nothing recorded inline; nothing even diffed yet.
         assertThat(recorder.records).isEmpty();
-        assertThat(nextTick).hasSize(1);
 
         // The move applied: source slot 1 dropped to 4, dest slot 0 gained 1.
         ItemStack hoisted1 = mockStack(Material.COBBLESTONE, 4);
         when(source.getItem(1)).thenReturn(hoisted1);
         ItemStack hoisted2 = mockStack(Material.COBBLESTONE, 1);
         when(dest.getItem(0)).thenReturn(hoisted2);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         assertThat(recorder.records).as("records build on the serializer, not inline").isEmpty();
         serializer.forEach(Runnable::run);
 
@@ -101,13 +98,12 @@ class HopperTransferListenerTest {
         // Two moves against the same endpoints in one tick.
         listener.onInventoryMoveItem(move(source, dest, mockStack(Material.COBBLESTONE, 1)));
         listener.onInventoryMoveItem(move(source, dest, mockStack(Material.COBBLESTONE, 1)));
-        assertThat(nextTick).as("one drain per tick, not one per move").hasSize(1);
 
         ItemStack hoisted4 = mockStack(Material.COBBLESTONE, 3);
         when(source.getItem(0)).thenReturn(hoisted4);
         ItemStack hoisted5 = mockStack(Material.COBBLESTONE, 2);
         when(dest.getItem(0)).thenReturn(hoisted5);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         serializer.forEach(Runnable::run);
 
         assertThat(recorder.records).hasSize(2);
@@ -128,7 +124,7 @@ class HopperTransferListenerTest {
         when(source.getItem(0)).thenReturn(hoisted7);
         ItemStack hoisted8 = mockStack(Material.COBBLESTONE, 1);
         when(dest.getItem(0)).thenReturn(hoisted8);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         serializer.forEach(Runnable::run);
 
         assertThat(recorder.records).hasSize(1);
@@ -143,7 +139,6 @@ class HopperTransferListenerTest {
 
         listener.onInventoryMoveItem(move(source, dest, mockStack(Material.COBBLESTONE, 1)));
 
-        assertThat(nextTick).isEmpty();
         assertThat(serializer).isEmpty();
         assertThat(recorder.records).isEmpty();
     }
@@ -156,7 +151,6 @@ class HopperTransferListenerTest {
 
         listener.onInventoryMoveItem(move(inventory(64, 3), inventory(63, 5), air));
 
-        assertThat(nextTick).isEmpty();
         assertThat(recorder.records).isEmpty();
         verify(air, never()).clone();
     }
@@ -171,7 +165,7 @@ class HopperTransferListenerTest {
         listener.onInventoryMoveItem(move(source, dest, mockStack(Material.COBBLESTONE, 1)));
         ItemStack hoisted9 = mockStack(Material.COBBLESTONE, 1);
         when(dest.getItem(0)).thenReturn(hoisted9);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         serializer.forEach(Runnable::run);
 
         assertThat(recorder.records).hasSize(1);
@@ -194,7 +188,7 @@ class HopperTransferListenerTest {
         // A player dropped gold into another dest slot the same tick.
         ItemStack hoisted13 = mockStack(Material.GOLD_INGOT, 7);
         when(dest.getItem(3)).thenReturn(hoisted13);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         serializer.forEach(Runnable::run);
 
         assertThat(recorder.records).hasSize(2);
@@ -207,9 +201,7 @@ class HopperTransferListenerTest {
         // A hopper pulling from a double chest sees the combined 54-slot
         // inventory; raw slot 30 must attribute to the right half's block at
         // its local slot 3, the click listener's mapping.
-        Inventory source = inventory(64, 54);
-        DoubleChest holder = doubleChestHolder();
-        when(source.getHolder()).thenReturn(holder);
+        DoubleChestInventory source = doubleChest();
         ItemStack hoisted14 = mockStack(Material.COBBLESTONE, 4);
         when(source.getItem(30)).thenReturn(hoisted14);
         Inventory dest = inventory(63, 5);
@@ -220,18 +212,21 @@ class HopperTransferListenerTest {
         when(source.getItem(30)).thenReturn(hoisted15);
         ItemStack hoisted16 = mockStack(Material.COBBLESTONE, 1);
         when(dest.getItem(0)).thenReturn(hoisted16);
-        nextTick.forEach(Runnable::run);
+        listener.onTickEnd(null);
         serializer.forEach(Runnable::run);
 
         ContainerWithdrawRecord out = (ContainerWithdrawRecord) find("transfer-withdraw");
         assertThat(out.location().x()).as("right-half block").isEqualTo(2);
         assertThat(out.slot()).as("re-based local slot").isEqualTo(3);
+        assertThat(out.containerType()).isEqualTo("CHEST");
+        verify(source, never()).getHolder();
+        verify(source, never()).getHolder(true);
     }
 
     // ── fixtures ─────────────────────────────────────────────────
 
     private HopperTransferListener listener(Set<String> enabled) {
-        return new HopperTransferListener(recorder, support, serializer::add, nextTick::add, enabled);
+        return new HopperTransferListener(recorder, support, serializer::add, enabled);
     }
 
     private static Set<String> enabled(String... names) {
@@ -278,28 +273,30 @@ class HopperTransferListenerTest {
         return event;
     }
 
-    private DoubleChest doubleChestHolder() {
+    /** A 54-slot double chest at y=64 whose halves sit at x=1 and x=2. */
+    private DoubleChestInventory doubleChest() {
+        DoubleChestInventory inv = mock(DoubleChestInventory.class);
         when(world.getUID()).thenReturn(WORLD_ID);
         when(world.getName()).thenReturn("world");
-        Chest left = chestHalf(1);
-        Chest right = chestHalf(2);
-        DoubleChest doubleChest = mock(DoubleChest.class);
-        when(doubleChest.getLeftSide()).thenReturn(left);
-        when(doubleChest.getRightSide()).thenReturn(right);
-        return doubleChest;
+        when(inv.getLocation()).thenReturn(new Location(world, 1.5, 64, 2));
+        when(inv.getSize()).thenReturn(54);
+        Inventory left = chestHalf(1);
+        Inventory right = chestHalf(2);
+        when(inv.getLeftSide()).thenReturn(left);
+        when(inv.getRightSide()).thenReturn(right);
+        return inv;
     }
 
     /** A 27-slot chest block at the given x, one half of a double chest. */
-    private Chest chestHalf(int x) {
+    private Inventory chestHalf(int x) {
+        Location at = new Location(world, x, 64, 2);
         org.bukkit.block.Block block = mock(org.bukkit.block.Block.class);
-        when(block.getLocation()).thenReturn(new Location(world, x, 64, 2));
         when(block.getType()).thenReturn(Material.CHEST);
-        Inventory blockInv = mock(Inventory.class);
-        when(blockInv.getSize()).thenReturn(27);
-        Chest chest = mock(Chest.class);
-        when(chest.getBlock()).thenReturn(block);
-        when(chest.getBlockInventory()).thenReturn(blockInv);
-        return chest;
+        when(world.getBlockAt(at)).thenReturn(block);
+        Inventory half = mock(Inventory.class);
+        when(half.getLocation()).thenReturn(at);
+        when(half.getSize()).thenReturn(27);
+        return half;
     }
 
     /** A mutable, self-cloning stack mock: the listener's drain-time
