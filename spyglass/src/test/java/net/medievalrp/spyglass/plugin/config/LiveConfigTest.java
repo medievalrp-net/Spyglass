@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class LiveConfigTest {
     @Test void disablingHandBreakLoggingDoesNotDisableWorldEdit() {
         var config = org.mockito.Mockito.mock(SpyglassConfig.class);
-        org.mockito.Mockito.when(config.events()).thenReturn(Map.of("break", new SpyglassConfig.EventSettings(false, "broke", null)));
+        org.mockito.Mockito.when(config.events()).thenReturn(Map.of("break", new SpyglassConfig.EventSettings(false, "broke", null, false)));
         org.mockito.Mockito.when(config.worldedit()).thenReturn(new SpyglassConfig.WorldEdit(true));
         var record = org.mockito.Mockito.mock(net.medievalrp.spyglass.api.event.JoinRecord.class);
         org.mockito.Mockito.when(record.event()).thenReturn("break");
@@ -29,7 +29,7 @@ class LiveConfigTest {
 
     private SpyglassConfig config(int queue, String retention, Material wand) {
         return new SpyglassConfig(null, new SpyglassConfig.Storage(Duration.parse(retention), queue, 0, false, 10, Duration.parse("10s")),
-                null, null, Map.of("break", new SpyglassConfig.EventSettings(true, "broke", null)),
+                null, null, Map.of("break", new SpyglassConfig.EventSettings(true, "broke", null, false)),
                 List.of("login"), new SpyglassConfig.Tool(wand, Duration.parse("26w")), null, null, null, null, null, null);
     }
     @Test void liveSettingsCanChangeTogether() {
