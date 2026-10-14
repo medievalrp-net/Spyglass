@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | `p:` | `player:` | `p:Steve,Alex` · `p:!Steve` | The player who did it |
 | `a:` | `action:`, `event:` | `a:break,place` · `a:!place` | The [event type](events.md) |
-| `b:` | `block:` | `b:diamond_ore` · `b:!chest` | The block |
+| `b:` | `block:` | `b:diamond_ore,deepslate_diamond_ore` · `b:!chest` | The block. Exact names only, no wildcards |
 | `e:` | `entity:` | `e:creeper` | The entity involved |
 | `c:` | `cause:` | `c:tnt,!creeper` | What caused it, for changes that weren't a player |
 | `ip:` | | `ip:192.168.1.10` | The player's IP. Needs `spyglass.search.ip` |

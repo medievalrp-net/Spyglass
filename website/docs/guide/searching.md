@@ -7,7 +7,7 @@
 A search is a list of `key:value` filters. A result has to match **all** of them.
 
 ```
-/sg search p:Steve a:break b:diamond_ore t:1d r:50
+/sg search p:Steve a:break b:diamond_ore,deepslate_diamond_ore t:1d r:50
 ```
 
 "Diamond ore Steve broke in the last day, within 50 blocks of me."
@@ -20,7 +20,7 @@ Needs the `spyglass.search` permission. Aliases: `/sg s`, `/sg lookup`, `/sg l`.
 | --- | --- | --- |
 | `p:` | Player | `p:Steve` · `p:Steve,Alex` |
 | `a:` | Action (event type) | `a:break` · `a:place,break` |
-| `b:` | Block | `b:diamond_ore` · `b:chest` |
+| `b:` | Block (exact name, no wildcards) | `b:diamond_ore` · `b:chest,barrel` |
 | `i:` | Item | `i:netherite_sword` |
 | `t:` | How far back | `t:30m` · `t:1d` · `t:2w` |
 | `r:` | Radius in blocks around you | `r:50` |

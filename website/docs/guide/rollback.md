@@ -18,6 +18,12 @@ A rollback changes the world, so check what it matches before you run it:
 /sg rollback p:griefer t:6h r:100    # then roll it back
 ```
 
+!!! warning "Keep rollbacks narrow"
+
+    A rollback with `-g` and no `p:` changes every matching block on the server, including other players' legitimate building. Always name the player, cause or area you mean.
+
+    Rollbacks run from the console can't be reversed with `/sg undo`, so run big ones in-game.
+
 The [same defaults](searching.md#where-and-when-it-looks) apply: 250 blocks around you and the last 4 hours, unless you say otherwise. There's no size limit. Rollbacks run off the main thread, so the server keeps its TPS even for millions of blocks.
 
 ## What gets rolled back
@@ -52,7 +58,7 @@ Water and lava aren't replayed block by block. After a rollback, they flow again
 Reverses your most recent rollback or restore. Run it again to keep going back, newest first.
 
 - Undo works on **your own** operations from the **last 24 hours**. It's in-game only; rollbacks run from the console can't be undone with it.
-- There's no redo. To re-apply something you undid, run `/sg restore` with the original keys.
+- There's no redo. To redo a rollback you undid, run the same `/sg rollback` again.
 - Items a rollback destroyed come back through [salvage](salvage.md), not undo.
 
 ## Restore
@@ -87,11 +93,14 @@ If the server crashes during a rollback, the job shows up as resumable after the
 # Everything a player placed or broke, anywhere, in the last 2 hours
 /sg rollback p:Bob a:place,break t:2h -g
 
-# Include chest contents
-/sg rollback p:thief t:1d r:50 --containers
+# A raided base: blocks plus the chests they broke and emptied
+/sg rollback p:griefer t:6h r:100 --containers
 
-# Restore what was broken inside a WorldEdit selection
-/sg restore a:break t:1h -we
+# Put back blocks broken inside your WorldEdit selection
+/sg rollback a:break t:1h -we
+
+# Rolled back the wrong player's builds? Put them back
+/sg restore p:Builder t:1d r:50
 ```
 
 !!! tip "Who gets blamed for explosions?"

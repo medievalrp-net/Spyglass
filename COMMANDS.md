@@ -148,7 +148,7 @@ The trade-off: a rollback does not skip a cell just because someone changed it a
 
 ```
 /sg undo                             # reverse your last rollback or restore
-/sg restore p:griefer t:6h r:100     # re-apply something you undid
+/sg restore p:Builder t:1d r:50      # put back changes a rollback removed
 ```
 
 `/sg undo` reverses your most recent operation. Run it again to keep walking back, newest first. Undo references the last 24 hours.
@@ -157,7 +157,7 @@ Undo's limits, spelled out:
 
 - **Per player, player only.** It walks *your* operations; console-run rollbacks never enter the ledger and console cannot invoke undo.
 - **24 hour window.** Older operations age out of the ledger (the records themselves keep `storage.retention`).
-- **No redo.** An undo cannot itself be undone; to re-apply, run `/sg restore` with the original query.
+- **No redo.** An undo cannot itself be undone; to redo a rollback you undid, run the same `/sg rollback` again.
 - **It replays the query, not the world.** Undo re-runs the stored query in the opposite direction. Container items the rollback destroyed come back only via [Container salvage](#container-salvage), and a cell someone legitimately edited *after* the original window replays to its recorded state, not to that later edit.
 - An unreadable ledger entry is discarded on contact; run `/sg undo` again to reach the operation beneath it.
 
@@ -253,8 +253,8 @@ The full operator runbook, including the standalone CLI importer and parity vali
 ## Examples
 
 ```
-# Who broke this block in the last day?
-/sg search b:* t:1d r:5
+# What was broken around here in the last day? (b: takes exact block names, no wildcards)
+/sg search a:break t:1d r:5
 
 # Roll back every place and break a player did in the last 2 hours, globally.
 /sg rollback p:Bob a:place,break t:2h -g
@@ -262,8 +262,8 @@ The full operator runbook, including the standalone CLI importer and parity vali
 # TNT crater: player-lit TNT is attributed to the igniter.
 /sg rollback p:griefer t:1h r:30
 
-# Roll back everything except containers, leaving chest contents alone.
-/sg rollback p:griefer t:6h r:100 b:!chest
+# A raided base: blocks plus the chests they broke and emptied (containers are skipped without --containers).
+/sg rollback p:griefer t:6h r:100 --containers
 
 # Who picked up that diamond sword named Excalibur?
 /sg search a:pickup iname:Excalibur t:1w -g
@@ -280,9 +280,9 @@ The full operator runbook, including the standalone CLI importer and parity vali
 # Every command a specific IP ran today.
 /sg search ip:1.2.3.4 a:command t:1d -g
 
-# Restore everything inside my WorldEdit selection that was broken last hour.
+# Put back everything broken inside my WorldEdit selection in the last hour.
 //wand   (select region with WorldEdit)
-/sg restore a:break t:1h -we
+/sg rollback a:break t:1h -we
 ```
 
 ## Live configuration and update notifications

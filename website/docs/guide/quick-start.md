@@ -19,7 +19,7 @@ You get the inspection wand. **Left-click** a block to see who placed, broke or 
 Shows everything Steve did in the last day within 250 blocks of you. Add more keys to narrow it down:
 
 ```
-/sg search p:Steve a:break b:diamond_ore t:1d r:50
+/sg search p:Steve a:break b:diamond_ore,deepslate_diamond_ore t:1d r:50
 ```
 
 Each key filters the results: `p:` player, `a:` action, `b:` block, `t:` how far back, `r:` radius. Use `/sg page 2` to see more results. Everything is listed in [Search keys and flags](../reference/query.md).
@@ -30,8 +30,10 @@ Search first to check what will change, then swap `search` for `rollback`:
 
 ```
 /sg search p:griefer t:6h r:100
-/sg rollback p:griefer t:6h r:100
+/sg rollback p:griefer t:6h r:100 --containers
 ```
+
+`--containers` also puts back chests and other containers the griefer broke, and items they took out of them. Without it, a rollback only restores blocks and leaves every container alone, so broken chests stay missing.
 
 ## 4. Changed your mind? Undo it
 
@@ -45,7 +47,7 @@ Undo reverses your last rollback, however big it was.
 
 - **Searches are local by default.** Without `r:`, Spyglass only looks 250 blocks around you. Add `-g` to search the whole server.
 - **Searches only go back 4 hours by default.** Add `t:` to look further, like `t:1w`.
-- **Rollbacks leave chests alone unless you ask.** Add `--containers` to also restore chest contents, and `--entities` to bring back animals and mobs that players killed.
+- **Rollbacks leave animals alone unless you ask.** Add `--entities` to bring back animals and mobs that players killed.
 - **Items are never lost.** If a rollback destroys a chest that had items in it, open `/sg inventory` to get them back.
 
-Next: [Searching](searching.md) and [Rollback, restore and undo](rollback.md) explain each step in depth.
+Next: [Common situations](situations.md) has ready-made commands for the problems staff run into most. [Searching](searching.md) and [Rollback, restore and undo](rollback.md) explain each step in depth.

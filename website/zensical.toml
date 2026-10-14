@@ -13,6 +13,7 @@ nav = [
   { "Getting started" = [
     "guide/installation.md",
     "guide/quick-start.md",
+    "guide/situations.md",
   ] },
   { "Using Spyglass" = [
     "guide/inspecting.md",
