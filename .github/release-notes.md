@@ -1,3 +1,2 @@
-- One jar now runs on every supported Minecraft version. Menus moved from InvUI to inventory-framework.
-- Fixed salvage items paying out twice when clicks or staff overlapped.
-- `/sg migrate` from ClickHouse now copies every event, not just block changes.
+- `/sg version` shows the new support Discord: discord.gg/7kxDxMYKyW.
+- The default `config.conf` now recommends ClickHouse as the database.

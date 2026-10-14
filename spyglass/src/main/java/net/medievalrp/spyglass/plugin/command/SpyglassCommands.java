@@ -125,7 +125,7 @@ public final class SpyglassCommands {
     private static final List<String> VERSION_ALIASES = List.of("version", "ver");
 
     /** Support Discord shown by /sg version - the invite the README publishes. */
-    private static final String SUPPORT_INVITE = "discord.gg/XkpVHcHvH";
+    private static final String SUPPORT_INVITE = "discord.gg/7kxDxMYKyW";
     private static final String SUPPORT_URL = "https://" + SUPPORT_INVITE;
     private static final List<String> STATS_ALIASES = List.of("stats", "analytics");
 

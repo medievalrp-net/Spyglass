@@ -6,7 +6,7 @@ Forensic logging and rollback for Paper 26.1.2, 26.2 and 26.3. Spyglass records 
 
 A standalone CLI imports existing CoreProtect databases into Spyglass — see [`docs/importer.md`](docs/importer.md) and [Migrating from CoreProtect](#migrating-from-coreprotect).
 
-Support: [discord.gg/XkpVHcHvH](https://discord.gg/XkpVHcHvH)
+Support: [discord.gg/7kxDxMYKyW](https://discord.gg/7kxDxMYKyW)
 
 **Docs:** [Documentation site](https://medievalrp-net.github.io/Spyglass/) · [Commands & query reference](COMMANDS.md) · [Live config & updates](docs/live-configuration-and-updates.md) · [API](API.md) · [Licensing](LICENSING.md) · [Contributing](CONTRIBUTING.md) · [AI policy](AI-POLICY.md)
 

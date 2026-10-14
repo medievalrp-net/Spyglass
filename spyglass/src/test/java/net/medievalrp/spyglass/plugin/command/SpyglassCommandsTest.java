@@ -42,10 +42,10 @@ class SpyglassCommandsTest {
     void versionLinesCarryTheSupportInviteAsPlainTextAndAsALink() {
         List<Component> lines = SpyglassCommands.versionLines("1.0.0", List.of("MedievalRP"), "1.21.8");
         // Readable without clicking (console senders can't click at all).
-        assertThat(plain(lines)).contains("Support: discord.gg/XkpVHcHvH");
+        assertThat(plain(lines)).contains("Support: discord.gg/7kxDxMYKyW");
         // And clickable for in-game senders.
         assertThat(lines).anySatisfy(line ->
-                assertThat(openUrls(line)).contains("https://discord.gg/XkpVHcHvH"));
+                assertThat(openUrls(line)).contains("https://discord.gg/7kxDxMYKyW"));
     }
 
     @Test
