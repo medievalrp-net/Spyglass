@@ -1,7 +1,12 @@
-# Spyglass importer + ClickHouse test rig
+# Spyglass test tooling
 
-Self-contained Docker environment for exercising the CoreProtect
-importer against a real ClickHouse instance, without polluting the host.
+Developer test tooling; nothing here ships in the plugin.
+
+- This folder: a self-contained Docker environment for exercising the
+  CoreProtect importer against a real ClickHouse instance, without
+  polluting the host.
+- [`regression/`](regression/): the in-game regression harness and
+  Mineflayer bot probes, run against a local test server at `../RP_Server`.
 
 ## Layout
 

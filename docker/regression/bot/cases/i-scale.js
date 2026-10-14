@@ -15,7 +15,7 @@ function chCount(sql) {
 
 export default [
 
-{ id: 'I1', title: '2M-cube standard bench', manual: 'run regression/bot/compare.js — 2026-06-10: SG 7.7s/107ms worst tick vs CP 9.4s/288ms, both flat-20 TPS for SG' },
+{ id: 'I1', title: '2M-cube standard bench', manual: 'run docker/regression/bot/compare.js — 2026-06-10: SG 7.7s/107ms worst tick vs CP 9.4s/288ms, both flat-20 TPS for SG' },
 { id: 'I2', title: '10M-block rollback', manual: 'heavy bench; run compare.js SIZES=10M on a dedicated session' },
 { id: 'I3', title: 'speed vs history depth', manual: 'tracked across the perf campaign: SG flat via keyset+projection at 77M→160M rows; CP variance 9.2–16.7s' },
 { id: 'I4', title: '100 sequential small rollbacks', manual: 'heavy; dedicated session' },

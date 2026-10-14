@@ -1,4 +1,4 @@
-// Shared infrastructure for the use-case runner (regression/use-cases.md).
+// Shared infrastructure for the use-case runner (docker/regression/use-cases.md).
 //
 // Conventions lifted from compare.js / verify-rollback.js:
 //  - RCON for server-truth and world setup (fills are unlogged).

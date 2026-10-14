@@ -2,7 +2,7 @@
 // Runs the #105 op matrix against an isolated throwaway Paper 1.21.8 + FAWE 2.15.0
 // server (ports 25590/25580, SQLite backend) and prints exact per-op
 // break/place counts straight from the SQLite records table.
-// Standalone on purpose: regression/bot/cases/lib.js and scenario-worldedit.js
+// Standalone on purpose: docker/regression/bot/cases/lib.js and scenario-worldedit.js
 // belong to the shared harness (RP_Server ports + ClickHouse) — do not edit them.
 import mineflayer from 'mineflayer';
 import net from 'net';

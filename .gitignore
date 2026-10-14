@@ -11,9 +11,9 @@ bin/
 plugin/libs/
 
 # Regression harness local state
-regression/bot/node_modules/
-regression/bot/package-lock.json
-regression/.runtime/
+docker/regression/bot/node_modules/
+docker/regression/bot/package-lock.json
+docker/regression/.runtime/
 
 # Local IDE scratch
 *.swp

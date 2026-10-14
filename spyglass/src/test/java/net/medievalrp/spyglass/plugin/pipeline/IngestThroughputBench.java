@@ -65,7 +65,7 @@ import org.testcontainers.containers.MongoDBContainer;
  * :spyglass:ingestBench}. Gated on Docker availability; skipped
  * gracefully otherwise.
  *
- * <p><b>Why an in-process bench?</b> The existing {@code regression/bench.py}
+ * <p><b>Why an in-process bench?</b> The existing {@code docker/regression/bench.py}
  * measures end-to-end query latency over RCON with a live server. For
  * ingest we care about the write pipeline itself — queue semantics, drop
  * behavior under backpressure, save-path cost — not the network hop. An

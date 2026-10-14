@@ -20,7 +20,7 @@ Automated regression for Spyglass, for Spyglass.
 ./gradlew regression
 ```
 
-Which expands to: `./gradlew deployToRpServer` (builds + drops `Spyglass.jar` into `../RP_Server/plugins/`) → `python3 regression/run.py`.
+Which expands to: `./gradlew deployToRpServer` (builds + drops `Spyglass.jar` into `../RP_Server/plugins/`) → `python3 docker/regression/run.py`.
 
 ## Requirements
 
@@ -54,5 +54,5 @@ Edit `cases.json`. Each case is:
 
 ## Known limitations
 
-- No live-event reproduction yet — we seed Mongo directly. That means event-extractor logic (what fires on each Bukkit event) is covered by unit tests, not by regression. Mineflayer bot integration is the planned follow-up; stubbed at `regression/bot/`.
+- No live-event reproduction yet — we seed Mongo directly. That means event-extractor logic (what fires on each Bukkit event) is covered by unit tests, not by regression. Mineflayer bot integration is the planned follow-up; stubbed at `docker/regression/bot/`.
 - v1's paging doesn't survive RCON disconnects, so v1 comparisons that use `page` retrieve nothing. For those cases the runner falls back to counting matches from the `search` command's response, if v1 emits anything there.

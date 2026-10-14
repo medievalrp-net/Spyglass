@@ -1,4 +1,4 @@
-// Use-case runner: executes the automatable rows of regression/use-cases.md
+// Use-case runner: executes the automatable rows of docker/regression/use-cases.md
 // against Spyglass AND CoreProtect on the live bench server, scoring each
 // case pass / fail / n/a-capability / error, plus manual-deferred stubs so
 // coverage is explicit. Results: JSON + markdown matrix under cases/out/.

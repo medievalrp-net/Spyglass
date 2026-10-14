@@ -57,7 +57,7 @@ class SqliteBench {
     private static final int ROLLBACK_WINDOW = 4_000;
     private static final long CP_SQLITE_MIB = 160; // the figure to beat (#106)
 
-    // The dataset mirrors regression/bot/compare.js exactly — the scenario
+    // The dataset mirrors docker/regression/bot/compare.js exactly — the scenario
     // CoreProtect's ~160 MiB was measured on — so the disk comparison is
     // apples-to-apples: a `/fill stone` then `//replace stone air` over a
     // contiguous cube. One player, one world, one block transition

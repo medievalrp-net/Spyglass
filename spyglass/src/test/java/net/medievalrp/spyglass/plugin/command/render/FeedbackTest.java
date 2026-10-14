@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * {@code TextComponent.Builder.build()} descriptor changed, which threw
  * {@code NoSuchMethodError} from every command. {@code ComponentLike.asComponent()}
  * is stable across Adventure versions. (The cross-version runtime guard is the
- * RCON WorldEdit-rollback test under regression/scripts/.)
+ * RCON WorldEdit-rollback test under docker/regression/scripts/.)
  */
 class FeedbackTest {
 

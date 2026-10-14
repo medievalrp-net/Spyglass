@@ -8,7 +8,7 @@
 # during these profiling rollbacks — never during the compare.js timing
 # run, where it would bias SG's MSPT via forced safepoints.
 TAG="$1"
-RP="${RP_SERVER:-$(cd "$(dirname "$0")/../../../RP_Server" 2>/dev/null && pwd)}"
+RP="${RP_SERVER:-$(cd "$(dirname "$0")/../../../../RP_Server" 2>/dev/null && pwd)}"
 LOG="$RP/logs/latest.log"
 cd "$(dirname "$0")" || exit 2
 

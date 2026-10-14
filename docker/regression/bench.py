@@ -18,13 +18,13 @@ sync-side cost. page-N timings, in contrast, are fully synchronous on
 the main thread and reflect the actual cache-render cost.
 
 Usage:
-  python3 regression/bench.py # default: 50k records, 5 queries
-  python3 regression/bench.py --records 250000 --trials 50 # larger
-  python3 regression/bench.py --sizes 10000 50000 250000 # size sweep (no pageturn/seed options combine)
-  python3 regression/bench.py --skip-seed # bench against current DB
-  python3 regression/bench.py --skip-seed --only queries # only query bench
-  python3 regression/bench.py --skip-seed --only pageturn # only page-turn bench
-  python3 regression/bench.py --only ingest --ingest-docs 100000 # raw save-side bulk_write bench
+  python3 docker/regression/bench.py # default: 50k records, 5 queries
+  python3 docker/regression/bench.py --records 250000 --trials 50 # larger
+  python3 docker/regression/bench.py --sizes 10000 50000 250000 # size sweep (no pageturn/seed options combine)
+  python3 docker/regression/bench.py --skip-seed # bench against current DB
+  python3 docker/regression/bench.py --skip-seed --only queries # only query bench
+  python3 docker/regression/bench.py --skip-seed --only pageturn # only page-turn bench
+  python3 docker/regression/bench.py --only ingest --ingest-docs 100000 # raw save-side bulk_write bench
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from pathlib import Path
 from mcrcon import MCRcon
 from pymongo import MongoClient
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORT_PATH = REPO_ROOT / "spyglass" / "build" / "reports" / "regression" / "bench.json"
 
 RCON_HOST = "127.0.0.1"

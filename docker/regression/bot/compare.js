@@ -26,7 +26,7 @@ import path from 'path';
 const HOST = '127.0.0.1', PORT = 25566;
 const RCON_PORT = 25576, PASS = 'test123';
 
-// Disk-footprint measurement (regression/disk.py). Which two backends the run
+// Disk-footprint measurement (docker/regression/disk.py). Which two backends the run
 // is actually exercising — Spyglass on mongo|clickhouse, CoreProtect on
 // sqlite|mysql — so the report records the disk those two spend on the dataset.
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));

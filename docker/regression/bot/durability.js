@@ -19,7 +19,7 @@ const RCON_PORT = 25576;
 const RCON_PASS = 'test123';
 const BOT_NAME = 'rolltest';
 const BOT2_NAME = 'rolltest2';
-const SERVER_DIR = process.env.RP_SERVER || new URL('../../../RP_Server', import.meta.url).pathname;
+const SERVER_DIR = process.env.RP_SERVER || new URL('../../../../RP_Server', import.meta.url).pathname;
 const SERVER_LOG = SERVER_DIR + '/logs/latest.log';
 
 // --- RCON ---

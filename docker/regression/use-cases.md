@@ -1,6 +1,6 @@
 # Spyglass vs CoreProtect — use-case catalog
 
-> Runner: `regression/bot/cases/` (`node cases/runner.js [--cat A,G] [--only A1]`).
+> Runner: `docker/regression/bot/cases/` (`node cases/runner.js [--cat A,G] [--only A1]`).
 
 106 scenarios for head-to-head testing against CoreProtect-ClickHouse. Each case is run on both plugins where both claim the capability; cases one side cannot attempt are scored **N/A-capability** (and that asymmetry is itself a result).
 
@@ -8,7 +8,7 @@
 
 **Comparison dimensions:** `C` correctness (world/data state) · `K` capability (can it at all) · `P` performance (wall-clock + worst tick + GC log) · `S` storage (rows/bytes written) · `U` UX (what the operator sees).
 
-**Automation:** `bot` = scriptable today with the mineflayer harness (`regression/bot/`) · `rcon` = console commands suffice · `man` = needs a human or a purpose-built rig.
+**Automation:** `bot` = scriptable today with the mineflayer harness (`docker/regression/bot/`) · `rcon` = console commands suffice · `man` = needs a human or a purpose-built rig.
 
 Measurement discipline (from the perf campaign): same-run comparisons only; judge lag by WORST SINGLE TICK + the GC log, never MSPT averages; world-state verification by server-truth sampling (`verify-rollback.js`), not plugin summaries.
 
@@ -183,7 +183,7 @@ Going in, these are the *expected* capability splits to confirm or refute — ea
 
 ## Suggested execution order
 
-1. **Automate the `bot` rows** as scripted scenarios in `regression/bot/` (one `cases/` module per category; `compare.js` stays the perf harness). ~60 cases automatable.
+1. **Automate the `bot` rows** as scripted scenarios in `docker/regression/bot/` (one `cases/` module per category; `compare.js` stays the perf harness). ~60 cases automatable.
 2. Run A–C + G + H first (correctness core), both backends (J4), same server boot.
 3. The `man` rows become a checklist run on the staging server once per release.
 4. Every case failure or CP-ahead discovery → GitHub issue with the case ID in the title.

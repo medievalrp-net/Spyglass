@@ -207,7 +207,7 @@ tasks.register<Exec>("regression") {
     description = "Runs the Spyglass regression harness (requires ../RP_Server up)."
     dependsOn("deployToRpServer")
     workingDir = rootProject.rootDir
-    commandLine = listOf("python3", "regression/run.py")
+    commandLine = listOf("python3", "docker/regression/run.py")
 }
 
 tasks.register("deployToRpServer") {

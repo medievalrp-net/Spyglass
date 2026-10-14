@@ -7,7 +7,7 @@
 # enables cleanly and the server reaches "Done". It never touches the live
 # RP_Server.
 #
-# Usage:  regression/scripts/boot-smoke.sh <jar> <version> [<version> ...]
+# Usage:  docker/regression/scripts/boot-smoke.sh <jar> <version> [<version> ...]
 # Env:    BOOT_SMOKE_DIR  scratch dir (default /Volumes/External-NVME/tmp-bootmatrix)
 #         BOOT_TIMEOUT    seconds to wait for "Done" per boot (default 360)
 set -u
@@ -23,7 +23,7 @@ label="$(basename "$JAR")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Backend selection (optional). Empty -> let the plugin generate its default
 # SQLite config. Otherwise inject a config.conf pointing at the chosen store.
-CONFIG_SRC="${CONFIG_SRC:-$SCRIPT_DIR/../../spyglass/src/main/resources/config.conf}"
+CONFIG_SRC="${CONFIG_SRC:-$SCRIPT_DIR/../../../spyglass/src/main/resources/config.conf}"
 BACKEND="${BACKEND:-}"
 
 paper_jar() {  # version -> cached local paper jar path (download if needed)

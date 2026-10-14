@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """On-disk footprint reporter for the benchmark backends.
 
-The rollback comparison (regression/bot/compare.js) and the search bench
-(regression/bench.py) measure speed; this measures the other axis the
+The rollback comparison (docker/regression/bot/compare.js) and the search bench
+(docker/regression/bench.py) measure speed; this measures the other axis the
 benchmarks were missing -- how much disk each backend spends to store the
 same dataset. Reports all four backends the 4-way comparison covers:
 
@@ -16,9 +16,9 @@ two that were actually active) are meaningful. Unreachable backends are
 reported as skipped, never fail the run.
 
 Usage:
-  python3 regression/disk.py                     # human table, all reachable
-  python3 regression/disk.py --json              # machine-readable JSON
-  python3 regression/disk.py --which spyglass-mongo,cp-sqlite
+  python3 docker/regression/disk.py                     # human table, all reachable
+  python3 docker/regression/disk.py --json              # machine-readable JSON
+  python3 docker/regression/disk.py --which spyglass-mongo,cp-sqlite
 """
 from __future__ import annotations
 
@@ -138,9 +138,9 @@ def main():
     p.add_argument("--clickhouse", default="http://localhost:8123")
     p.add_argument("--ch-db", default="spyglass")
     p.add_argument("--sqlite", default=str(
-        (os.path.dirname(__file__) or ".") + "/../../RP_Server/plugins/CoreProtect/database.db"))
+        (os.path.dirname(__file__) or ".") + "/../../../RP_Server/plugins/CoreProtect/database.db"))
     p.add_argument("--sg-sqlite", default=str(
-        (os.path.dirname(__file__) or ".") + "/../../RP_Server/plugins/Spyglass/spyglass.db"))
+        (os.path.dirname(__file__) or ".") + "/../../../RP_Server/plugins/Spyglass/spyglass.db"))
     p.add_argument("--mysql-host", default=os.environ.get("MYSQL_HOST", "127.0.0.1"))
     p.add_argument("--mysql-port", type=int, default=int(os.environ.get("MYSQL_PORT", "3306")))
     p.add_argument("--mysql-user", default=os.environ.get("MYSQL_USER", "root"))

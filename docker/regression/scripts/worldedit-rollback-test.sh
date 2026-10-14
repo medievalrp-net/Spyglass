@@ -4,11 +4,11 @@
 # EditSessions (#105), so a console //set is a real, rollbackable edit with no
 # player. Isolated ports (25599/25579) - never touches the live RP_Server.
 #
-# Usage: regression/scripts/worldedit-rollback-test.sh <jar> <version> [sqlite|mongo|clickhouse]
+# Usage: docker/regression/scripts/worldedit-rollback-test.sh <jar> <version> [sqlite|mongo|clickhouse]
 set -u
 JAR_IN="${1:?jar}"; V="${2:?version}"; BE="${3:-sqlite}"
 JAR="$(cd "$(dirname "$JAR_IN")" && pwd)/$(basename "$JAR_IN")"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORK="${BOOT_SMOKE_DIR:-/Volumes/External-NVME/tmp-bootmatrix}"
 WE_JAR="$WORK/worldedit.jar"
 pj="$WORK/paper-cache/paper-$V.jar"
@@ -61,7 +61,7 @@ done
 sleep 3
 
 export SG_RCON_PORT="$RPORT" SG_RCON_PASS=test123 SG_HOST=127.0.0.1
-R() { node "$ROOT/regression/bot/rcon-cli.js" "$@"; }
+R() { node "$ROOT/docker/regression/bot/rcon-cli.js" "$@"; }
 isblk() { R "execute if block $1 $2 $3 minecraft:$4" | grep -qi passed; }
 
 x0=16000; y=80; z0=16000; x1=16004; z1=16004

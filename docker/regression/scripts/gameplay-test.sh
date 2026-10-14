@@ -3,12 +3,12 @@
 # gameplay+rollback scenario bot against it, capture PASS/FAIL, stop the server.
 # Reuses the Paper jar cached by boot-smoke.sh. Never touches the live RP_Server.
 #
-# Usage: regression/scripts/gameplay-test.sh <jar> <version> [sqlite|mongo|clickhouse]
+# Usage: docker/regression/scripts/gameplay-test.sh <jar> <version> [sqlite|mongo|clickhouse]
 set -u
 JAR_IN="${1:?usage: gameplay-test.sh <jar> <version> [backend]}"
 V="${2:?version}"; BE="${3:-sqlite}"
 JAR="$(cd "$(dirname "$JAR_IN")" && pwd)/$(basename "$JAR_IN")"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORK="${BOOT_SMOKE_DIR:-/Volumes/External-NVME/tmp-bootmatrix}"
 pj="$WORK/paper-cache/paper-$V.jar"
 [ -s "$pj" ] || { echo "FAIL  $V  $BE  no cached paper jar (run boot-smoke first)"; exit 2; }
@@ -71,7 +71,7 @@ sleep 3
 
 export BOT_VERSION="$V" BOT_NAME="gp$(echo "$V" | tr -cd '0-9')"
 export SG_HOST=127.0.0.1 SG_PORT="$GAME_PORT" SG_RCON_PORT="$RCON_PORT" SG_RCON_PASS=test123
-node "$ROOT/regression/bot/_version-gameplay.js"; rc=$?
+node "$ROOT/docker/regression/bot/_version-gameplay.js"; rc=$?
 
 kill -TERM "$pid" 2>/dev/null
 w=0; while kill -0 "$pid" 2>/dev/null && [ "$w" -lt 30 ]; do sleep 1; w=$((w+1)); done

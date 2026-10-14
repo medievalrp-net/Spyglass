@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORT_DIR = REPO_ROOT / "plugin" / "build" / "reports" / "regression"
 REPORT_FILE = REPORT_DIR / "report.json"
 
@@ -93,7 +93,7 @@ def ensure_seed(*, preserve_existing=False):
     from prior dev sessions or live gameplay. Pass preserve_existing=True
     to fall back to the legacy tag-scoped delete.
     """
-    seed_script = REPO_ROOT / "regression" / "seed.py"
+    seed_script = REPO_ROOT / "docker" / "regression" / "seed.py"
     argv = [sys.executable, str(seed_script)]
     if not preserve_existing:
         argv.append("--drop")
@@ -267,7 +267,7 @@ def main():
     parser.add_argument("--skip-seed", action="store_true", help="Don't re-seed the Mongo databases.")
     parser.add_argument("--preserve-existing", action="store_true",
                         help="Keep untagged records during seeding (default drops the whole collection).")
-    parser.add_argument("--cases", default=str(REPO_ROOT / "regression" / "cases.json"))
+    parser.add_argument("--cases", default=str(REPO_ROOT / "docker" / "regression" / "cases.json"))
     args = parser.parse_args()
 
     mcrcon_cls = find_rcon_client()
