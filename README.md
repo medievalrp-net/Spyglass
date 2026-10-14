@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/medievalrp-net/Spyglass/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/medievalrp-net/Spyglass?style=for-the-badge&label=Download&color=2ea44f"></a>
   <a href="https://github.com/medievalrp-net/Spyglass/releases/tag/v1.0.13"><img alt="Spyglass legacy for Minecraft 1.21.11" src="https://img.shields.io/badge/Legacy-1.21.11-6e7681?style=for-the-badge"></a>
-  <a href="https://medievalrp-net.github.io/Spyglass/"><img alt="Documentation" src="https://img.shields.io/badge/Docs-Read%20the%20docs-4b6bfb?style=for-the-badge&logo=materialformkdocs&logoColor=white"></a>
+  <a href="https://medievalrp-net.github.io/Spyglass/"><img alt="Documentation" src="https://img.shields.io/badge/Docs-Read-4b6bfb?style=for-the-badge&logo=materialformkdocs&logoColor=white"></a>
   <a href="https://discord.gg/XkpVHcHvH"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
 </p>
 
