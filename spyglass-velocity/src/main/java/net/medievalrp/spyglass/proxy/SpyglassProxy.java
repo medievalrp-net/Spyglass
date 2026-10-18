@@ -105,9 +105,11 @@ public final class SpyglassProxy {
                     db.mongo().uri(), db.mongo().database(), db.mongo().collection(), new IndexManager(), false);
             case CLICKHOUSE -> {
                 SpyglassProxyConfig.ClickHouse ch = db.clickhouse();
+                // Read-only companion: skip schema DDL, so the proxy can
+                // run under a SELECT-only ClickHouse user.
                 yield new ClickHouseRecordStore(
                         ch.host(), ch.port(), ch.database(), ch.table(),
-                        ch.user(), ch.password(), ch.ssl());
+                        ch.user(), ch.password(), ch.ssl(), true);
             }
             case SQLITE -> {
                 // Read-only: the embedded file must be reachable on the

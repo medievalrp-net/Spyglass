@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 val paperApiVersion: String by rootProject.extra
@@ -81,6 +82,36 @@ dependencies {
 
 tasks.withType<JacocoReport>().configureEach {
     dependsOn(tasks.named<Test>("test"))
+}
+
+// Local-only publication: lets companion projects (e.g. spyglass-web's query
+// service) vendor core as a file-based Maven repo with its POM, so the storage
+// drivers resolve transitively. Not part of the Central aggregation in the root
+// build - core stays an unpublished GPL internal with no compatibility promise.
+publishing {
+    publications {
+        create<MavenPublication>("core") {
+            from(components["java"])
+            groupId = "net.medievalrp"
+            artifactId = "spyglass-core"
+            pom {
+                name.set("Spyglass Core (internal)")
+                description.set("Spyglass storage internals. No API stability guarantee.")
+                licenses {
+                    license {
+                        name.set("GNU General Public License v3.0")
+                        url.set("https://www.gnu.org/licenses/gpl-3.0.txt")
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri(rootProject.layout.buildDirectory.dir("repo"))
+        }
+    }
 }
 
 tasks.test {
