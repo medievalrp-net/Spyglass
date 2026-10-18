@@ -233,16 +233,33 @@ public final class ClickHouseRecordStore implements RecordStore {
     // (legacy global-retention behaviour, kept for tests/ITs); set = compute the
     // stored expires_at per event type from the policy.
     private final RetentionPolicy retentionPolicy;
+    // Read-only companions (Velocity, external query services) skip schema
+    // DDL and drop saves, so they can run under a ClickHouse user granted
+    // SELECT only. The writing Paper plugin owns schema and migrations.
+    private final boolean readOnly;
 
     public ClickHouseRecordStore(String host, int port, String database, String table,
                                  String user, String password, boolean ssl) {
-        this(host, port, database, table, user, password, ssl, null);
+        this(host, port, database, table, user, password, ssl, null, false);
+    }
+
+    public ClickHouseRecordStore(String host, int port, String database, String table,
+                                 String user, String password, boolean ssl,
+                                 boolean readOnly) {
+        this(host, port, database, table, user, password, ssl, null, readOnly);
     }
 
     public ClickHouseRecordStore(String host, int port, String database, String table,
                                  String user, String password, boolean ssl,
                                  RetentionPolicy retentionPolicy) {
+        this(host, port, database, table, user, password, ssl, retentionPolicy, false);
+    }
+
+    public ClickHouseRecordStore(String host, int port, String database, String table,
+                                 String user, String password, boolean ssl,
+                                 RetentionPolicy retentionPolicy, boolean readOnly) {
         this.retentionPolicy = retentionPolicy;
+        this.readOnly = readOnly;
         this.database = database;
         this.table = table;
         this.qualifiedTable = ClickHouseSchema.qualifiedTable(database, table);
@@ -263,7 +280,9 @@ public final class ClickHouseRecordStore implements RecordStore {
                 .compressClientRequest(true)
                 .compressServerResponse(false)
                 .build();
-        ClickHouseSchema.ensure(client, database, table);
+        if (!readOnly) {
+            ClickHouseSchema.ensure(client, database, table);
+        }
         this.tableSchema = client.getTableSchema(table, database);
     }
 
@@ -283,7 +302,7 @@ public final class ClickHouseRecordStore implements RecordStore {
 
     @Override
     public void save(List<EventRecord> records) {
-        if (records.isEmpty()) {
+        if (records.isEmpty() || readOnly) {
             return;
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(records.size() * 256);

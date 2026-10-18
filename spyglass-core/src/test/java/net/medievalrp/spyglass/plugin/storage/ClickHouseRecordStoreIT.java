@@ -1,6 +1,7 @@
 package net.medievalrp.spyglass.plugin.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.time.Instant;
@@ -147,6 +148,50 @@ class ClickHouseRecordStoreIT {
         } finally {
             policyStore.close();
         }
+    }
+
+    @Test
+    void readOnlyStoreReadsWriterRecordsAndDropsItsOwnSaves() {
+        Instant now = Instant.now().minusSeconds(60);
+        BlockLocation location = new BlockLocation(WORLD, "world", 30, 64, 40);
+        ChatRecord written = new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
+                Origin.player(), Source.player(ALICE, "Alice"), location, "test", "Alice",
+                "from the writer", List.of(), Map.of());
+        store.save(List.of(written));
+        flushAsyncInserts();
+
+        ClickHouseRecordStore readOnly = new ClickHouseRecordStore(
+                container.getHost(), container.getMappedPort(8123), "spyglass_it",
+                "event_records_it", container.getUsername(), container.getPassword(), false, true);
+        try {
+            readOnly.save(List.of(new ChatRecord(UUID.randomUUID(), "say", now, now.plusSeconds(3600),
+                    Origin.player(), Source.player(ALICE, "Alice"), location, "test", "Alice",
+                    "from the reader", List.of(), Map.of())));
+            flushAsyncInserts();
+
+            QueryResult result = readOnly.query(new QueryRequest(
+                    List.of(new QueryPredicate.Eq("source.playerId", ALICE)),
+                    Sort.NEWEST_FIRST, 50, EnumSet.noneOf(Flag.class), false));
+            assertThat(result.records())
+                    .map(r -> ((ChatRecord) r).message())
+                    .as("read-only store sees the writer's row and never inserts its own")
+                    .containsExactly(written.message());
+        } finally {
+            readOnly.close();
+        }
+    }
+
+    @Test
+    void readOnlyStoreDoesNotCreateSchema() throws Exception {
+        assertThatThrownBy(() -> new ClickHouseRecordStore(
+                container.getHost(), container.getMappedPort(8123), "spyglass_ro_missing",
+                "event_records", container.getUsername(), container.getPassword(), false, true))
+                .as("no DDL: a missing database is an error, not created")
+                .isInstanceOf(Exception.class);
+
+        var rows = store.client().queryAll(
+                "SELECT count() AS c FROM system.databases WHERE name = 'spyglass_ro_missing'");
+        assertThat(rows.get(0).getLong("c")).isZero();
     }
 
     @Test
