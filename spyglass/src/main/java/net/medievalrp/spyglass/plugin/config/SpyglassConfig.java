@@ -25,7 +25,8 @@ public record SpyglassConfig(
         Analytics analytics,
         Commands commands,
         WorldEdit worldedit,
-        Snapshot snapshot) {
+        Snapshot snapshot,
+        Integrations integrations) {
 
     /**
      * Default heads for {@code events.command.redact} (#47): the common
@@ -248,7 +249,8 @@ public record SpyglassConfig(
                 // only gate hand place/break - flipping those does nothing
                 // to a WorldEdit op.
                 new WorldEdit(root.node("worldedit", "enabled").getBoolean(true)),
-                parseSnapshot(root));
+                parseSnapshot(root),
+                parseIntegrations(root));
     }
 
     /**
@@ -301,6 +303,54 @@ public record SpyglassConfig(
             interval = Duration.parse("5s");
         }
         return new Analytics(enabled, interval);
+    }
+
+    /**
+     * The {@code integrations} block. Everything in it is off by default and stays off
+     * for an absent key: an integration that publishes a server's forensic log to
+     * somewhere else must be asked for, never inherited from an upgrade.
+     *
+     * <p>No config-version bump accompanies this block for that reason — an existing
+     * config.conf without it reads every default, which is "disabled".
+     */
+    static Integrations parseIntegrations(ConfigurationNode root) {
+        ConfigurationNode node = root.node("integrations", "crusalis-platform");
+        return new Integrations(new CrusalisPlatform(
+                node.node("enabled").getBoolean(false),
+                // include-actions, not include: `include` is a HOCON reserved word
+                // (file inclusion), so an unquoted one is a parse error that stops the
+                // plugin booting. A quoted "include" is still honoured for anyone who
+                // copied the key from the Crusalis spec.
+                strings(firstPresent(node.node("include-actions"), node.node("include")),
+                        java.util.List.of("*")),
+                strings(firstPresent(node.node("exclude-actions"), node.node("exclude")),
+                        java.util.List.of()),
+                strings(node.node("redact-commands"), DEFAULT_COMMAND_REDACT),
+                strings(node.node("private-commands"),
+                        java.util.List.of("msg", "tell", "w", "whisper", "r", "reply",
+                                "m", "pm", "dm")),
+                node.node("publish-rollbacks").getBoolean(true)));
+    }
+
+    private static ConfigurationNode firstPresent(ConfigurationNode preferred,
+                                                  ConfigurationNode fallback) {
+        return preferred.virtual() || preferred.empty() ? fallback : preferred;
+    }
+
+    private static java.util.List<String> strings(ConfigurationNode node,
+                                                  java.util.List<String> fallback) {
+        if (node.virtual() || node.empty()) {
+            return fallback;
+        }
+        try {
+            java.util.List<String> values = node.getList(String.class);
+            return values == null || values.isEmpty() ? fallback : java.util.List.copyOf(values);
+        } catch (org.spongepowered.configurate.serialize.SerializationException ex) {
+            // A hand-edited list that isn't a list. The defaults are the safe reading:
+            // for redact-commands and private-commands they are the protective values,
+            // and for include/exclude they publish everything the action map knows.
+            return fallback;
+        }
     }
 
     /**
@@ -648,6 +698,43 @@ public record SpyglassConfig(
      * {@link SpyglassConfig}) so a future non-player snapshot knob has
      * somewhere to live without another top-level config key.
      */
+    /** Optional hooks into other systems. One so far. */
+    public record Integrations(CrusalisPlatform crusalisPlatform) {
+    }
+
+    /**
+     * {@code integrations.crusalis-platform} — publishing committed records to the
+     * Crusalis event fabric (Crusalis phase 5 §6). Off unless asked for.
+     *
+     * <p>Spyglass's own storage is unaffected either way: this is a copy for someone
+     * else's dashboards, and the plugin's behaviour with it off is bit-for-bit what it
+     * was before the integration existed.
+     */
+    public record CrusalisPlatform(
+            boolean enabled,
+            java.util.List<String> include,
+            java.util.List<String> exclude,
+            java.util.List<String> redactCommands,
+            java.util.List<String> privateCommands,
+            boolean publishRollbacks) {
+
+        /**
+         * The settings as plain JDK types, which is the only shape the integration
+         * module is given. It is loaded reflectively and shares no class with this one,
+         * so a map is the contract — see {@code CrusalisPlatformLoader}.
+         */
+        public Map<String, Object> asMap() {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("enabled", enabled);
+            map.put("include-actions", include);
+            map.put("exclude-actions", exclude);
+            map.put("redact-commands", redactCommands);
+            map.put("private-commands", privateCommands);
+            map.put("publish-rollbacks", publishRollbacks);
+            return map;
+        }
+    }
+
     public record Snapshot(SnapshotPlayers players) {
     }
 

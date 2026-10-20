@@ -8,6 +8,9 @@ softdepend:
   - WorldEdit
   - FastAsyncWorldEdit
   - CraftBook
+  # The Crusalis event fabric's SDK. Soft: the integration is off by default, and with
+  # it on but the SDK absent the loader logs one line and does nothing.
+  - CrusalisPlatformSDK
 permissions:
   spyglass.reload:
     description: Reload live Spyglass configuration settings.

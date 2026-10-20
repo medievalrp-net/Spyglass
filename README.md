@@ -44,9 +44,10 @@ Proudly sponsored by and running on:
 - `spyglass-core/`: shared internals, like storage and codecs.
 - `spyglass-velocity/`: an optional, read-only Velocity companion for cross-server search.
 - `spyglass-importer/`: a command-line CoreProtect importer.
+- `spyglass-platform/`: an optional integration that mirrors committed records to the [Crusalis](https://github.com/The60th/CrusalisEnterprise) event fabric. Off by default, and a server without it loads no class from the module — see [its README](spyglass-platform/README.md). Drop it from the build entirely with `-PwithoutCrusalisPlatform`.
 
 ## License
 
-The plugin (`spyglass`, `spyglass-core`, `spyglass-velocity`) is licensed under [GPL-3.0](LICENSE). The API (`spyglass-api`) is [Apache-2.0](spyglass-api/LICENSE), so other plugins can depend on it freely. See [licensing](.github/LICENSING.md) for details; contributions are covered by the [CLA](.github/CLA.md).
+The plugin (`spyglass`, `spyglass-core`, `spyglass-velocity`, `spyglass-platform`) is licensed under [GPL-3.0](LICENSE). The API (`spyglass-api`) is [Apache-2.0](spyglass-api/LICENSE), so other plugins can depend on it freely. See [licensing](.github/LICENSING.md) for details; contributions are covered by the [CLA](.github/CLA.md).
 
 The CoreProtect importer is a clean-room implementation, written from paraphrased schema notes rather than CoreProtect's GPL source.

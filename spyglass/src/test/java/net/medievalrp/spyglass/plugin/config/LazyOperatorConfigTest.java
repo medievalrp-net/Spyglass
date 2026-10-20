@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -89,6 +90,48 @@ class LazyOperatorConfigTest {
         ConfigurationNode written = HoconConfigurationLoader.builder().path(file).build().load();
         assertThat(written.node("config-version").getInt())
                 .isEqualTo(SpyglassConfig.CONFIG_VERSION);
+    }
+
+    @Test
+    void theIntegrationsBlockDefaultsToOffAndIsAbsentFromOldConfigs(@TempDir Path dataFolder)
+            throws Exception {
+        // An upgrade must not start publishing this server's forensic log anywhere, so
+        // an absent block reads as off — which is also why the block needs no
+        // config-version bump.
+        write(dataFolder, "database {\n  backend = \"sqlite\"\n}\n");
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        assertThat(config.integrations().crusalisPlatform().enabled()).isFalse();
+        assertThat(config.integrations().crusalisPlatform().include()).containsExactly("*");
+    }
+
+    @Test
+    void theIntegrationsBlockReadsItsHoconSafeKeys(@TempDir Path dataFolder) throws Exception {
+        // include-actions, NOT include: `include` is a HOCON reserved word, and an
+        // unquoted one is a parse error that stops the plugin booting. This test exists
+        // because the first draft of the shipped config.conf used the reserved spelling
+        // and took every config test with it.
+        write(dataFolder, """
+                database { backend = "sqlite" }
+                integrations {
+                  crusalis-platform {
+                    enabled = true
+                    include-actions = ["break", "place"]
+                    exclude-actions = ["say"]
+                    publish-rollbacks = false
+                  }
+                }
+                """);
+
+        SpyglassConfig config = SpyglassConfig.load(pluginIn(dataFolder));
+
+        SpyglassConfig.CrusalisPlatform crusalis = config.integrations().crusalisPlatform();
+        assertThat(crusalis.enabled()).isTrue();
+        assertThat(crusalis.include()).containsExactly("break", "place");
+        assertThat(crusalis.exclude()).containsExactly("say");
+        assertThat(crusalis.publishRollbacks()).isFalse();
+        assertThat(crusalis.asMap()).containsEntry("include-actions", List.of("break", "place"));
     }
 
     @Test

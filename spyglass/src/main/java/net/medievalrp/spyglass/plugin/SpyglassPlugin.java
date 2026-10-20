@@ -190,6 +190,11 @@ public final class SpyglassPlugin extends JavaPlugin {
     // #168: repeating async task that logs the ingest analytics report. Null
     // unless analytics.enabled; cancelled in onDisable.
     private org.bukkit.scheduler.BukkitTask analyticsTask;
+    /**
+     * The optional Crusalis platform integration, or null — which is the normal case.
+     * Held only to close it on disable; nothing in the plugin calls into it.
+     */
+    private AutoCloseable crusalisPlatform;
     private UndoStack undoStack;
     private ToolStateStore toolStateStore;
     private SalvageStore salvageStore;
@@ -908,6 +913,12 @@ public final class SpyglassPlugin extends JavaPlugin {
                     + config.analytics().interval().seconds() + "s and via /spyglass stats.");
         }
 
+        // Optional, off by default, and loaded reflectively: a server without the
+        // Crusalis SDK loads no class from the integration module at all. See
+        // CrusalisPlatformLoader.
+        this.crusalisPlatform = net.medievalrp.spyglass.plugin.integration.CrusalisPlatformLoader
+                .start(this, config.integrations().crusalisPlatform().asMap());
+
         getLogger().info("Spyglass enabled; events=" + enabledEvents);
     }
 
@@ -928,6 +939,17 @@ public final class SpyglassPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // Stop publishing to the Crusalis fabric first: it listens for committed
+        // records, and the stores below are what commits them.
+        if (crusalisPlatform != null) {
+            try {
+                crusalisPlatform.close();
+            } catch (Exception e) {
+                getLogger().log(java.util.logging.Level.WARNING,
+                        "The Crusalis platform integration did not shut down cleanly.", e);
+            }
+            crusalisPlatform = null;
+        }
         // Cancel the FallingBlockTracker purge task before touching any other
         // state so it cannot fire concurrently with teardown.
         if (fallingBlockPurgeTask != null) {

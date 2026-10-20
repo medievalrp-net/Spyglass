@@ -66,6 +66,16 @@ dependencies {
     // works without the per-dep declaration.
     implementation(project(":spyglass-core"))
 
+    // The optional Crusalis platform integration. Shipped inside the jar but never
+    // loaded unless the server asks for it AND has the SDK — CrusalisPlatformLoader is
+    // the only reference to it, and it is by name. Conditional because
+    // settings.gradle.kts lets a fork drop the module with
+    // -PwithoutCrusalisPlatform; the loader then simply never finds the class, which is
+    // the same path as "the SDK is not installed".
+    if (findProject(":spyglass-platform") != null) {
+        implementation(project(":spyglass-platform"))
+    }
+
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     compileOnly("org.jetbrains:annotations:$jetbrainsAnnotationsVersion")
     compileOnly("com.sk89q.worldedit:worldedit-core:$worldeditVersion")
