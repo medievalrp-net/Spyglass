@@ -55,6 +55,10 @@ command = { enabled = true, past-tense = "ran",
 
 ### Logging blocked chat and commands
 
+!!! info "Newer than 1.1.2"
+
+    Spyglass 1.1.2 and older don't have this setting. It arrives in the next release.
+
 Chat and commands that another plugin cancels (a mute, a command blocker, or a proxy plugin that forwards chat itself) aren't recorded by default. Set `log-cancelled = true` on `say` or `command` to record them anyway:
 
 ```hocon
