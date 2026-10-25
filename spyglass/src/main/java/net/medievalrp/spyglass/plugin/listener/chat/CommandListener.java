@@ -28,12 +28,14 @@ public final class CommandListener implements RecordingListener {
     private final Recorder recorder;
     private final RecordingSupport support;
     private final CommandRedaction redaction;
+    private final boolean logCancelled;
 
     public CommandListener(Recorder recorder, RecordingSupport support,
-                           CommandRedaction redaction) {
+                           CommandRedaction redaction, boolean logCancelled) {
         this.recorder = recorder;
         this.support = support;
         this.redaction = redaction;
+        this.logCancelled = logCancelled;
     }
 
     @Override
@@ -41,8 +43,11 @@ public final class CommandListener implements RecordingListener {
         return Set.of("command");
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onCommand(PlayerCommandPreprocessEvent event) {
+        if (event.isCancelled() && !logCancelled) {
+            return;
+        }
         String line = RecordingSupport.safeText(event.getMessage());
         BlockLocation location = BlockLocations.fromLocation(event.getPlayer().getLocation());
         RecordContext ctx = support.playerContext(event.getPlayer(), location);
@@ -54,8 +59,11 @@ public final class CommandListener implements RecordingListener {
      * Logs commands issued from the console, RCON, or command blocks.
      * Player commands are handled by {@link #onCommand} above.
      */
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onServerCommand(ServerCommandEvent event) {
+        if (event.isCancelled() && !logCancelled) {
+            return;
+        }
         CommandSender sender = event.getSender();
         String line = RecordingSupport.safeText(event.getCommand());
         String head = extractHead(line);
