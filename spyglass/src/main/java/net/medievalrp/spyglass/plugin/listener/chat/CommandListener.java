@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.plugin.listener.chat;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import net.medievalrp.spyglass.api.event.CommandRecord;
 import net.medievalrp.spyglass.api.event.Origin;
 import net.medievalrp.spyglass.api.event.RecordContext;
@@ -28,10 +29,11 @@ public final class CommandListener implements RecordingListener {
     private final Recorder recorder;
     private final RecordingSupport support;
     private final CommandRedaction redaction;
-    private final boolean logCancelled;
+    // Read per event, so /sg reload applies a changed events.command.log-cancelled.
+    private final BooleanSupplier logCancelled;
 
     public CommandListener(Recorder recorder, RecordingSupport support,
-                           CommandRedaction redaction, boolean logCancelled) {
+                           CommandRedaction redaction, BooleanSupplier logCancelled) {
         this.recorder = recorder;
         this.support = support;
         this.redaction = redaction;
@@ -45,7 +47,7 @@ public final class CommandListener implements RecordingListener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onCommand(PlayerCommandPreprocessEvent event) {
-        if (event.isCancelled() && !logCancelled) {
+        if (event.isCancelled() && !logCancelled.getAsBoolean()) {
             return;
         }
         String line = RecordingSupport.safeText(event.getMessage());
@@ -61,7 +63,7 @@ public final class CommandListener implements RecordingListener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onServerCommand(ServerCommandEvent event) {
-        if (event.isCancelled() && !logCancelled) {
+        if (event.isCancelled() && !logCancelled.getAsBoolean()) {
             return;
         }
         CommandSender sender = event.getSender();

@@ -8,6 +8,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.kyori.adventure.text.Component;
 import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.EventRecord;
@@ -35,7 +36,7 @@ class ChatListenerTest {
     void setUp() {
         recorder = new CapturingRecorder();
         support = new RecordingSupport(new Duration(3600), "test");
-        listener = new ChatListener(recorder, support, false);
+        listener = new ChatListener(recorder, support, () -> false);
     }
 
     @Test
@@ -85,7 +86,7 @@ class ChatListenerTest {
 
     @Test
     void recordsCancelledChatWhenLogCancelledEnabled() {
-        ChatListener logging = new ChatListener(recorder, support, true);
+        ChatListener logging = new ChatListener(recorder, support, () -> true);
         Player alice = mockPlayer(ALICE, "Alice");
         AsyncChatEvent event = mockChat(alice, "muted words", List.of(alice));
         when(event.isCancelled()).thenReturn(true);
@@ -94,6 +95,23 @@ class ChatListenerTest {
 
         assertThat(recorder.records).hasSize(1);
         assertThat(((ChatRecord) recorder.records.get(0)).message()).isEqualTo("muted words");
+    }
+
+    @Test
+    void logCancelledChangeAppliesWithoutRebuildingTheListener() {
+        // /sg reload swaps the config but keeps the registered listener.
+        AtomicBoolean logCancelled = new AtomicBoolean(false);
+        ChatListener live = new ChatListener(recorder, support, logCancelled::get);
+        Player alice = mockPlayer(ALICE, "Alice");
+        AsyncChatEvent event = mockChat(alice, "muted words", List.of(alice));
+        when(event.isCancelled()).thenReturn(true);
+
+        live.onAsyncChat(event);
+        assertThat(recorder.records).isEmpty();
+
+        logCancelled.set(true);
+        live.onAsyncChat(event);
+        assertThat(recorder.records).hasSize(1);
     }
 
     @Test

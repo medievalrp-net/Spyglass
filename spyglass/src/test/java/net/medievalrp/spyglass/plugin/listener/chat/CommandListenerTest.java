@@ -35,7 +35,7 @@ class CommandListenerTest {
         recorder = new CapturingRecorder();
         support = new RecordingSupport(new Duration(3600), "test");
         listener = new CommandListener(recorder, support,
-                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), false);
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), () -> false);
     }
 
     @Test
@@ -126,7 +126,7 @@ class CommandListenerTest {
     @Test
     void recordsCancelledPlayerCommandWhenLogCancelledEnabled() {
         CommandListener logging = new CommandListener(recorder, support,
-                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), true);
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), () -> true);
         Player alice = mockPlayer();
         PlayerCommandPreprocessEvent event = mock(PlayerCommandPreprocessEvent.class);
         when(event.getPlayer()).thenReturn(alice);
@@ -159,7 +159,7 @@ class CommandListenerTest {
     @Test
     void recordsCancelledConsoleCommandWhenLogCancelledEnabled() {
         CommandListener logging = new CommandListener(recorder, support,
-                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), true);
+                new CommandRedaction(SpyglassConfig.DEFAULT_COMMAND_REDACT), () -> true);
         org.bukkit.event.server.ServerCommandEvent event =
                 mock(org.bukkit.event.server.ServerCommandEvent.class);
         when(event.getSender()).thenReturn(mock(org.bukkit.command.CommandSender.class));

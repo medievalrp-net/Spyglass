@@ -4,6 +4,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.medievalrp.spyglass.api.event.ChatRecord;
 import net.medievalrp.spyglass.api.event.RecordContext;
@@ -22,9 +23,10 @@ public final class ChatListener implements RecordingListener {
 
     private final Recorder recorder;
     private final RecordingSupport support;
-    private final boolean logCancelled;
+    // Read per event, so /sg reload applies a changed events.say.log-cancelled.
+    private final BooleanSupplier logCancelled;
 
-    public ChatListener(Recorder recorder, RecordingSupport support, boolean logCancelled) {
+    public ChatListener(Recorder recorder, RecordingSupport support, BooleanSupplier logCancelled) {
         this.recorder = recorder;
         this.support = support;
         this.logCancelled = logCancelled;
@@ -37,7 +39,7 @@ public final class ChatListener implements RecordingListener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onAsyncChat(AsyncChatEvent event) {
-        if (event.isCancelled() && !logCancelled) {
+        if (event.isCancelled() && !logCancelled.getAsBoolean()) {
             return;
         }
         Player sender = event.getPlayer();

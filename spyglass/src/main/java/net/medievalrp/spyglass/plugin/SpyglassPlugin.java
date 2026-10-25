@@ -431,10 +431,11 @@ public final class SpyglassPlugin extends JavaPlugin {
                 new net.medievalrp.spyglass.plugin.listener.block.StrawBedListener(recorder, support,
                         task -> getServer().getScheduler().runTask(this, task)),
                 new ContainerDropListener(recorder, support),
-                new ChatListener(recorder, support, config.logCancelled("say")),
+                // Suppliers read the live config, so /sg reload applies log-cancelled.
+                new ChatListener(recorder, support, () -> config.logCancelled("say")),
                 new CommandListener(recorder, support,
                         commandRedaction,
-                        config.logCancelled("command")),
+                        () -> config.logCancelled("command")),
                 new JoinListener(recorder, support),
                 new QuitListener(recorder, support),
                 new LeavesDecayListener(recorder, support),
