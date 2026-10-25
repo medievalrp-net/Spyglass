@@ -3,6 +3,7 @@ package net.medievalrp.spyglass.plugin.listener.item;
 import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import com.destroystokyo.paper.event.server.ServerTickStartEvent;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import net.medievalrp.spyglass.api.capture.ItemSerialization;
 import net.medievalrp.spyglass.api.event.*;
 import net.medievalrp.spyglass.api.util.BlockLocation;
@@ -27,10 +28,12 @@ import org.bukkit.plugin.Plugin;
 public final class CopperGolemTransferListener implements RecordingListener {
     private final Recorder recorder;
     private final RecordingSupport support;
-    private final Map<UUID, Watch> watches = new HashMap<>();
-    private final Map<UUID, Frame> frames = new HashMap<>();
-    // Written from every world thread under Leaf parallel world ticking.
-    private final Set<BlockLocation> contaminated = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // All three are written from every world thread under Leaf parallel world
+    // ticking (the validate-target and inventory events fire on the world's
+    // own thread); the tick start/end handlers run on main between ticks.
+    private final Map<UUID, Watch> watches = new ConcurrentHashMap<>();
+    private final Map<UUID, Frame> frames = new ConcurrentHashMap<>();
+    private final Set<BlockLocation> contaminated = ConcurrentHashMap.newKeySet();
 
     public CopperGolemTransferListener(Recorder recorder, RecordingSupport support) {
         this.recorder = recorder; this.support = support;
@@ -64,8 +67,9 @@ public final class CopperGolemTransferListener implements RecordingListener {
         List<Endpoint> endpoints = new ArrayList<>();
         Set<BlockLocation> seen = new HashSet<>();
         for (Block block : watch.targets.values()) {
-            if (!block.getWorld().isChunkLoaded(block.getX() >> 4, block.getZ() >> 4)
-                    || !block.getWorld().equals(watch.golem.getWorld())
+            // World check first: a world thread must not query another world's chunks.
+            if (!block.getWorld().equals(watch.golem.getWorld())
+                    || !block.getWorld().isChunkLoaded(block.getX() >> 4, block.getZ() >> 4)
                     || block.getLocation().distanceSquared(watch.golem.getLocation()) > 16) continue;
             if (!(block.getState() instanceof Container container)) continue;
             Inventory inventory = container.getInventory();
