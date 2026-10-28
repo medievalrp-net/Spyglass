@@ -1,2 +1,2 @@
-- `/sg version` shows the new support Discord: discord.gg/7kxDxMYKyW.
-- The default `config.conf` now recommends ClickHouse as the database.
+- Hopper logging no longer throws errors on Leaf and other forks that tick worlds in parallel, and costs less server time around chests (#373, thanks @IbanEtchep).
+- New `log-cancelled` option for `say` and `command` records chat and commands that another plugin cancelled. Off by default, applies on `/sg reload` (#346, thanks @IbanEtchep).
