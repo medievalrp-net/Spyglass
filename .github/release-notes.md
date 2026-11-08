@@ -1,7 +1,6 @@
 **Minecraft 1.21.11 - Java 21.** Download `Spyglass.jar`; use `Spyglass-shaded.jar` if your host cannot download dependencies. Velocity and API jars are optional. Checksums: `SHA256SUMS`.
 
-Rebuilt for #371. Existing installations of 1.0.13 should download the jar again.
-
+- Command search results show the whole command line, not just the command name.
 - `/sg tool` or throwing away the wand deactivates inspection and removes tagged tools. Ordinary items are preserved.
 - Inventory snapshots, accurate automated/copper-golem transfers and FAWE fixes.
 - Wand protection, location indexes, live config reload and compatible update notices.
