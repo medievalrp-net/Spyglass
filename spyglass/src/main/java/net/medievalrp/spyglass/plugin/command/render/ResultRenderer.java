@@ -468,6 +468,17 @@ public final class ResultRenderer {
         return item + " IN " + containerType;
     }
 
+    /** Full command line with one leading slash. Player lines already
+     *  carry the slash, console lines don't; legacy rows without a
+     *  stored line fall back to the command head. */
+    private static String commandText(CommandRecord command) {
+        String line = command.commandLine();
+        if (line == null || line.isBlank()) {
+            return "/" + command.target();
+        }
+        return line.startsWith("/") ? line : "/" + line;
+    }
+
     private static String targetOf(EventRecord record, boolean showIp) {
         return switch (record) {
             case BlockBreakRecord breakRec -> breakRec.target();
@@ -483,7 +494,7 @@ public final class ResultRenderer {
             // Generic integrator event: render "target: message" (like chat),
             // so a voice transcript reads "spoke voice to 3 players: <text>".
             case CustomRecord custom -> customText(custom);
-            case CommandRecord command -> "/" + command.target();
+            case CommandRecord command -> commandText(command);
             // Join's "target" in the data model is the player's own
             // name, which duplicates the source — show the IP instead
             // so the line reads "<player> joined <ip>". Quit has no
