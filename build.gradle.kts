@@ -50,7 +50,7 @@ val releaseTarget = "26.1.2"
 val minecraftTarget = providers.gradleProperty("minecraftTarget").getOrElse(releaseTarget)
 val targets = mapOf(
     "26.1.2" to "26.1.2.build.74-stable",
-    "26.2" to "26.2.build.135-stable",
+    "26.2" to "26.2.build.129-stable",
     "26.3" to "26.3.build.38-alpha",
 )
 val paperApiVersion = targets[minecraftTarget]
